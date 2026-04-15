@@ -12712,40 +12712,6 @@ const TradeModal = ({
   );
 };
 
-const WALLET_LEDGER_REASONS = [
-  'TRADE_PNL',
-  'BROKERAGE',
-  'GAME_PROFIT',
-  'GAMES_TRANSFER',
-  'FUND_ADD',
-  'FUND_WITHDRAW',
-  'TRADING_FUND_ADD',
-  'TRADING_FUND_WITHDRAW',
-  'PROFIT_SHARE',
-  'ADMIN_DEPOSIT',
-  'ADMIN_WITHDRAW',
-  'ADMIN_TRANSFER',
-  'REFUND',
-  'ADJUSTMENT',
-  'BONUS',
-  'PENALTY',
-  'CRYPTO_TRANSFER',
-  'FOREX_TRANSFER',
-  'MCX_TRANSFER',
-  'INTERNAL_TRANSFER',
-];
-
-function formatAllTxOwner(tx) {
-  const o = tx.ownerId;
-  if (!o || typeof o !== 'object') {
-    return tx.ownerType === 'USER' ? '—' : '—';
-  }
-  if (tx.ownerType === 'USER') {
-    return o.username || o.fullName || o.email || (o._id ? String(o._id).slice(-8) : '—');
-  }
-  return o.name || o.username || o.adminCode || (o._id ? String(o._id).slice(-8) : '—');
-}
-
 function formatAllTxReference(tx) {
   const r = tx.reference;
   if (!r || !r.type) return '—';
@@ -12753,54 +12719,107 @@ function formatAllTxReference(tx) {
   return id ? `${r.type} ·…${id}` : r.type;
 }
 
-// All Transactions (Super Admin only)
+const ALL_TX_SEGMENTS = [
+  { id: 'users', label: 'Users', hint: 'Trading wallet ledger', color: 'bg-blue-600' },
+  { id: 'admin', label: 'Admins', hint: 'ADMIN role', color: 'bg-purple-600' },
+  { id: 'broker', label: 'Brokers', hint: 'BROKER role', color: 'bg-indigo-600' },
+  { id: 'subbroker', label: 'Sub-brokers', hint: 'SUB_BROKER role', color: 'bg-violet-600' },
+];
+
+// All Transactions (Super Admin only) — pick group → pick person → credits / debits
 const AllTransactions = () => {
   const { admin } = useAuth();
+  const [segment, setSegment] = useState('users');
+  const [listSearch, setListSearch] = useState('');
+  const [usersList, setUsersList] = useState([]);
+  const [staffList, setStaffList] = useState([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [selected, setSelected] = useState(null);
+  /** null | '' | CREDIT | DEBIT */
+  const [txKind, setTxKind] = useState('');
   const [transactions, setTransactions] = useState([]);
   const [summary, setSummary] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('');
-  const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
-  const [reasonGroup, setReasonGroup] = useState('');
-  const [reasonExact, setReasonExact] = useState('');
-  const [adminCodeFilter, setAdminCodeFilter] = useState('');
-  const [userSearch, setUserSearch] = useState('');
-  const [referenceType, setReferenceType] = useState('');
-  const [gameKey, setGameKey] = useState('all');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [txLoading, setTxLoading] = useState(false);
+  const [rowSearch, setRowSearch] = useState('');
 
-  const allTxFiltersRef = useRef({});
-  allTxFiltersRef.current = {
-    typeFilter,
-    reasonGroup,
-    reasonExact,
-    adminCodeFilter,
-    userSearch,
-    referenceType,
-    gameKey,
-    dateFrom,
-    dateTo,
+  useEffect(() => {
+    setSelected(null);
+    setTransactions([]);
+    setSummary(null);
+    setTxKind('');
+    setRowSearch('');
+  }, [segment]);
+
+  useEffect(() => {
+    if (!admin?.token) return;
+    const load = async () => {
+      setListLoading(true);
+      try {
+        if (segment === 'users') {
+          const { data } = await axios.get('/api/admin/manage/all-users', {
+            headers: { Authorization: `Bearer ${admin.token}` },
+          });
+          setUsersList(Array.isArray(data) ? data : []);
+        } else {
+          const { data } = await axios.get('/api/admin/manage/admins', {
+            headers: { Authorization: `Bearer ${admin.token}` },
+          });
+          setStaffList(Array.isArray(data) ? data : []);
+        }
+      } catch (e) {
+        console.error('AllTransactions list load:', e);
+        if (segment === 'users') setUsersList([]);
+        else setStaffList([]);
+      } finally {
+        setListLoading(false);
+      }
+    };
+    load();
+  }, [admin?.token, segment]);
+
+  const roleForSegment = (seg) => {
+    if (seg === 'admin') return 'ADMIN';
+    if (seg === 'broker') return 'BROKER';
+    if (seg === 'subbroker') return 'SUB_BROKER';
+    return null;
   };
 
-  const fetchTransactions = useCallback(async () => {
-    setLoading(true);
-    const f = allTxFiltersRef.current;
+  const filteredUsers = useMemo(() => {
+    const q = listSearch.trim().toLowerCase();
+    if (!q) return usersList;
+    return usersList.filter((u) => {
+      const ac = u.admin?.adminCode || u.adminCode || '';
+      const blob = [u.username, u.fullName, u.email, ac].filter(Boolean).join(' ').toLowerCase();
+      return blob.includes(q);
+    });
+  }, [usersList, listSearch]);
+
+  const filteredStaff = useMemo(() => {
+    const role = roleForSegment(segment);
+    let rows = staffList.filter((a) => a.role === role);
+    const q = listSearch.trim().toLowerCase();
+    if (!q) return rows;
+    rows = rows.filter((a) => {
+      const blob = [a.name, a.username, a.adminCode, a.email].filter(Boolean).join(' ').toLowerCase();
+      return blob.includes(q);
+    });
+    return rows;
+  }, [staffList, segment, listSearch]);
+
+  const fetchLedgerForSelection = useCallback(async () => {
+    if (!selected || !admin?.token) {
+      setTransactions([]);
+      setSummary(null);
+      return;
+    }
+    setTxLoading(true);
     try {
       const params = new URLSearchParams();
       params.set('limit', '2000');
       params.set('includeSummary', '1');
-      if (filter) params.set('ownerType', filter);
-      if (f.typeFilter) params.set('type', f.typeFilter);
-      if (f.reasonGroup) params.set('reasonGroup', f.reasonGroup);
-      if (f.reasonExact) params.set('reason', f.reasonExact);
-      if (f.adminCodeFilter.trim()) params.set('adminCode', f.adminCodeFilter.trim());
-      if (f.userSearch.trim()) params.set('userSearch', f.userSearch.trim());
-      if (f.referenceType) params.set('referenceType', f.referenceType);
-      if (f.gameKey && f.gameKey !== 'all') params.set('gameKey', f.gameKey);
-      if (f.dateFrom) params.set('dateFrom', new Date(f.dateFrom).toISOString());
-      if (f.dateTo) params.set('dateTo', new Date(f.dateTo).toISOString());
+      params.set('ownerType', selected.ownerType);
+      params.set('ownerId', selected.ownerId);
+      if (txKind === 'CREDIT' || txKind === 'DEBIT') params.set('type', txKind);
 
       const { data } = await axios.get(`/api/admin/manage/all-transactions?${params.toString()}`, {
         headers: { Authorization: `Bearer ${admin.token}` },
@@ -12808,363 +12827,333 @@ const AllTransactions = () => {
       if (data && Array.isArray(data.transactions)) {
         setTransactions(data.transactions);
         setSummary(data.summary || null);
-      } else if (Array.isArray(data)) {
-        setTransactions(data);
-        setSummary(null);
       } else {
         setTransactions([]);
         setSummary(null);
       }
-    } catch (error) {
-      console.error('Error:', error);
+    } catch (e) {
+      console.error('AllTransactions ledger:', e);
       setTransactions([]);
       setSummary(null);
     } finally {
-      setLoading(false);
+      setTxLoading(false);
     }
-  }, [admin?.token, filter]);
+  }, [admin?.token, selected, txKind]);
 
   useEffect(() => {
-    fetchTransactions();
-  }, [fetchTransactions]);
+    fetchLedgerForSelection();
+  }, [fetchLedgerForSelection]);
 
-  const filteredTransactions = useMemo(() => {
-    if (!search.trim()) return transactions;
-    const q = search.trim().toLowerCase();
+  const filteredRows = useMemo(() => {
+    if (!rowSearch.trim()) return transactions;
+    const q = rowSearch.trim().toLowerCase();
     return transactions.filter((tx) => {
-      const ownerStr = formatAllTxOwner(tx).toLowerCase();
       return (
-        tx.adminCode?.toLowerCase().includes(q) ||
         tx.reason?.toLowerCase().includes(q) ||
         tx.description?.toLowerCase().includes(q) ||
-        tx.performedBy?.name?.toLowerCase().includes(q) ||
-        tx.performedBy?.username?.toLowerCase().includes(q) ||
-        ownerStr.includes(q) ||
+        tx.adminCode?.toLowerCase().includes(q) ||
         formatAllTxReference(tx).toLowerCase().includes(q) ||
         (tx.meta?.gameKey && String(tx.meta.gameKey).toLowerCase().includes(q))
       );
     });
-  }, [transactions, search]);
-
-  const getOwnerBadge = (ownerType) => {
-    switch (ownerType) {
-      case 'ADMIN':
-        return 'bg-purple-500/20 text-purple-400';
-      case 'USER':
-        return 'bg-blue-500/20 text-blue-400';
-      default:
-        return 'bg-gray-500/20 text-gray-400';
-    }
-  };
+  }, [transactions, rowSearch]);
 
   const gameLabel = (key) =>
     WALLET_LEDGER_GAME_OPTIONS.find((g) => g.key === key)?.label || key || '—';
 
-  const resetFilters = () => {
-    setTypeFilter('');
-    setReasonGroup('');
-    setReasonExact('');
-    setAdminCodeFilter('');
-    setUserSearch('');
-    setReferenceType('');
-    setGameKey('all');
-    setDateFrom('');
-    setDateTo('');
-    setSearch('');
+  const pickUser = (u) => {
+    setSelected({
+      ownerType: 'USER',
+      ownerId: String(u._id),
+      title: u.fullName || u.username || 'User',
+      subtitle: `@${u.username || '—'} · ${u.admin?.adminCode ? `Under ${u.admin.adminCode}` : '—'}`,
+    });
+    setTxKind('');
+    setRowSearch('');
+  };
+
+  const pickStaff = (a) => {
+    setSelected({
+      ownerType: 'ADMIN',
+      ownerId: String(a._id),
+      title: a.name || a.username || 'Admin',
+      subtitle: `${a.adminCode || '—'} · ${a.role}`,
+    });
+    setTxKind('');
+    setRowSearch('');
   };
 
   return (
-    <div className="p-4 md:p-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-        <h1 className="text-2xl font-bold">All Transactions</h1>
+    <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+        <div>
+          <h1 className="text-2xl font-bold">All Transactions</h1>
+          <p className="text-xs text-gray-500 mt-1">
+            Choose a group, pick one person, then filter credits or debits. Main trading wallet ledger only.
+          </p>
+        </div>
         <button
           type="button"
-          onClick={() => fetchTransactions()}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-dark-600 text-sm"
+          onClick={() => fetchLedgerForSelection()}
+          disabled={!selected || txLoading}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-dark-600 text-sm disabled:opacity-40"
         >
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          Refresh
+          <RefreshCw size={16} className={txLoading ? 'animate-spin' : ''} />
+          Reload ledger
         </button>
       </div>
 
-      {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <div className="rounded-lg border border-green-500/30 bg-green-950/20 px-3 py-2">
-            <div className="text-[10px] text-gray-400 uppercase">Credits (match)</div>
-            <div className="text-lg font-bold text-green-400 tabular-nums">
-              +₹{Number(summary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-            </div>
-            <div className="text-[10px] text-gray-500">{summary.creditCount ?? 0} lines</div>
-          </div>
-          <div className="rounded-lg border border-red-500/30 bg-red-950/20 px-3 py-2">
-            <div className="text-[10px] text-gray-400 uppercase">Debits (match)</div>
-            <div className="text-lg font-bold text-red-400 tabular-nums">
-              −₹{Number(summary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-            </div>
-            <div className="text-[10px] text-gray-500">{summary.debitCount ?? 0} lines</div>
-          </div>
-          <div className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 px-3 py-2 col-span-2 sm:col-span-2">
-            <div className="text-[10px] text-gray-400 uppercase">Net (credits − debits, all matching rows)</div>
-            <div
-              className={`text-lg font-bold tabular-nums ${
-                Number(summary.net || 0) >= 0 ? 'text-cyan-300' : 'text-orange-300'
-              }`}
-            >
-              {Number(summary.net || 0) >= 0 ? '+' : ''}₹
-              {Number(summary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-            </div>
-            <div className="text-[10px] text-gray-500 mt-1">
-              Totals use every row matching filters (not only the table page). Table shows up to 2000 newest.
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="flex gap-2 flex-wrap mb-3">
-        <button
-          type="button"
-          onClick={() => setFilter('')}
-          className={`px-4 py-2 rounded ${!filter ? 'bg-yellow-600' : 'bg-dark-700'}`}
-        >
-          All owners
-        </button>
-        <button
-          type="button"
-          onClick={() => setFilter('ADMIN')}
-          className={`px-4 py-2 rounded ${filter === 'ADMIN' ? 'bg-purple-600' : 'bg-dark-700'}`}
-        >
-          Admins/Brokers
-        </button>
-        <button
-          type="button"
-          onClick={() => setFilter('USER')}
-          className={`px-4 py-2 rounded ${filter === 'USER' ? 'bg-blue-600' : 'bg-dark-700'}`}
-        >
-          Users
-        </button>
-      </div>
-
-      <div className="bg-dark-800 border border-dark-600 rounded-lg p-4 mb-4 space-y-3">
-        <div className="text-xs font-semibold text-yellow-400/90 uppercase tracking-wide">Filters</div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Credit / Debit</label>
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-2 text-sm"
-            >
-              <option value="">All</option>
-              <option value="CREDIT">Credits only</option>
-              <option value="DEBIT">Debits only</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Activity group</label>
-            <select
-              value={reasonGroup}
-              onChange={(e) => {
-                setReasonGroup(e.target.value);
-                if (e.target.value) setReasonExact('');
-              }}
-              className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-2 text-sm"
-            >
-              <option value="">All kinds</option>
-              <option value="trading">Trading (TRADE_PNL, BROKERAGE)</option>
-              <option value="games">Games (GAME_PROFIT, GAMES_TRANSFER)</option>
-              <option value="funds">Funds &amp; admin wallet</option>
-              <option value="adjustments">Adjustments / bonus / penalty</option>
-              <option value="transfers">Wallet transfers (crypto/forex/mcx/internal)</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Exact reason</label>
-            <select
-              value={reasonExact}
-              onChange={(e) => {
-                setReasonExact(e.target.value);
-                if (e.target.value) setReasonGroup('');
-              }}
-              className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-2 text-sm"
-            >
-              <option value="">(any)</option>
-              {WALLET_LEDGER_REASONS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Game (GAME_PROFIT / legacy text)</label>
-            <select
-              value={gameKey}
-              onChange={(e) => setGameKey(e.target.value)}
-              className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-2 text-sm"
-            >
-              <option value="all">All games</option>
-              {WALLET_LEDGER_GAME_OPTIONS.map((g) => (
-                <option key={g.key} value={g.key}>
-                  {g.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Reference (trade / order …)</label>
-            <select
-              value={referenceType}
-              onChange={(e) => setReferenceType(e.target.value)}
-              className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-2 text-sm"
-            >
-              <option value="">Any</option>
-              <option value="Trade">Trade</option>
-              <option value="Order">Order</option>
-              <option value="Position">Position</option>
-              <option value="FundRequest">FundRequest</option>
-              <option value="Manual">Manual</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Admin / broker code (partial)</label>
-            <input
-              type="text"
-              value={adminCodeFilter}
-              onChange={(e) => setAdminCodeFilter(e.target.value)}
-              placeholder="e.g. ADM…"
-              className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-2 text-sm font-mono"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">User search (wallet owner)</label>
-            <input
-              type="text"
-              value={userSearch}
-              onChange={(e) => setUserSearch(e.target.value)}
-              placeholder="Username, name, or email"
-              className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-2 text-sm"
-            />
-            <p className="text-[9px] text-gray-600 mt-1">Restricts to USER owners matching text.</p>
-          </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">From (local → sent as ISO)</label>
-            <input
-              type="datetime-local"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">To</label>
-            <input
-              type="datetime-local"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-full bg-dark-700 border border-dark-600 rounded px-2 py-2 text-sm"
-            />
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2 pt-1">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
+        {ALL_TX_SEGMENTS.map((s) => (
           <button
+            key={s.id}
             type="button"
-            onClick={() => fetchTransactions()}
-            className="px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-500 text-sm font-medium"
+            onClick={() => setSegment(s.id)}
+            className={`rounded-xl border px-3 py-3 text-left transition ${
+              segment === s.id
+                ? `${s.color} border-white/20 text-white shadow-lg`
+                : 'bg-dark-800 border-dark-600 text-gray-300 hover:border-dark-500'
+            }`}
           >
-            Apply filters
+            <div className="font-bold text-sm">{s.label}</div>
+            <div className="text-[10px] opacity-90 mt-0.5">{s.hint}</div>
           </button>
-          <button type="button" onClick={resetFilters} className="px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-sm">
-            Clear filter fields
-          </button>
-        </div>
+        ))}
       </div>
 
-      <div className="flex flex-col md:flex-row gap-3 mb-4 items-stretch md:items-center">
-        <input
-          type="text"
-          placeholder="Narrow loaded rows: description, game key, ref…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="px-4 py-2 bg-dark-700 rounded border border-dark-600 focus:border-yellow-500 outline-none flex-1"
-        />
-        <div className="text-sm text-gray-400 whitespace-nowrap">
-          Showing{' '}
-          <span className="text-white font-bold">{filteredTransactions.length}</span> / {transactions.length} loaded
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <div className="lg:col-span-5 bg-dark-800 border border-dark-600 rounded-xl flex flex-col min-h-[280px] max-h-[70vh]">
+          <div className="p-3 border-b border-dark-600 shrink-0">
+            <div className="text-xs font-semibold text-yellow-400/90 uppercase tracking-wide mb-2">
+              {segment === 'users' ? 'User list' : 'Staff list'}
+            </div>
+            <input
+              type="search"
+              placeholder={segment === 'users' ? 'Search name, username, email, admin code…' : 'Search name, code, username…'}
+              value={listSearch}
+              onChange={(e) => setListSearch(e.target.value)}
+              className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-sm"
+            />
+            <div className="text-[10px] text-gray-500 mt-1">
+              {segment === 'users'
+                ? `${filteredUsers.length} user(s)`
+                : `${filteredStaff.length} ${ALL_TX_SEGMENTS.find((x) => x.id === segment)?.label || ''}(s)`}
+            </div>
+          </div>
+          <div className="overflow-y-auto flex-1 p-2 space-y-1">
+            {listLoading ? (
+              <div className="flex justify-center py-8 text-gray-500">
+                <RefreshCw className="animate-spin" size={22} />
+              </div>
+            ) : segment === 'users' ? (
+              filteredUsers.map((u) => (
+                <button
+                  key={u._id}
+                  type="button"
+                  onClick={() => pickUser(u)}
+                  className={`w-full text-left rounded-lg px-3 py-2.5 border transition ${
+                    selected?.ownerId === String(u._id) && selected?.ownerType === 'USER'
+                      ? 'bg-blue-900/40 border-blue-500/50'
+                      : 'bg-dark-700/40 border-dark-600 hover:border-dark-500'
+                  }`}
+                >
+                  <div className="font-medium text-sm text-white truncate">{u.fullName || u.username}</div>
+                  <div className="text-[11px] text-gray-400 font-mono">@{u.username}</div>
+                  {u.admin?.adminCode && (
+                    <div className="text-[10px] text-purple-300 mt-0.5">Under {u.admin.adminCode}</div>
+                  )}
+                </button>
+              ))
+            ) : (
+              filteredStaff.map((a) => (
+                <button
+                  key={a._id}
+                  type="button"
+                  onClick={() => pickStaff(a)}
+                  className={`w-full text-left rounded-lg px-3 py-2.5 border transition ${
+                    selected?.ownerId === String(a._id) && selected?.ownerType === 'ADMIN'
+                      ? 'bg-purple-900/40 border-purple-500/50'
+                      : 'bg-dark-700/40 border-dark-600 hover:border-dark-500'
+                  }`}
+                >
+                  <div className="font-medium text-sm text-white truncate">{a.name || a.username}</div>
+                  <div className="text-[11px] text-yellow-400 font-mono">{a.adminCode}</div>
+                  <div className="text-[10px] text-gray-500">{a.role}</div>
+                </button>
+              ))
+            )}
+            {!listLoading && segment === 'users' && filteredUsers.length === 0 && (
+              <p className="text-center text-gray-500 text-sm py-6">No users match.</p>
+            )}
+            {!listLoading && segment !== 'users' && filteredStaff.length === 0 && (
+              <p className="text-center text-gray-500 text-sm py-6">No staff in this group.</p>
+            )}
+          </div>
         </div>
-      </div>
 
-      {loading ? (
-        <div className="text-center py-8">
-          <RefreshCw className="animate-spin inline" />
-        </div>
-      ) : filteredTransactions.length === 0 ? (
-        <div className="text-center py-8 text-gray-400">No transactions found</div>
-      ) : (
-        <div className="bg-dark-800 rounded-lg overflow-hidden overflow-x-auto">
-          <table className="w-full text-sm min-w-[980px]">
-            <thead className="bg-dark-700">
-              <tr>
-                <th className="text-left px-3 py-3 text-gray-400">Date</th>
-                <th className="text-left px-3 py-3 text-gray-400">Owner</th>
-                <th className="text-left px-3 py-3 text-gray-400">Type</th>
-                <th className="text-left px-3 py-3 text-gray-400">Code</th>
-                <th className="text-left px-3 py-3 text-gray-400">Reason</th>
-                <th className="text-left px-3 py-3 text-gray-400">Game</th>
-                <th className="text-left px-3 py-3 text-gray-400">Reference</th>
-                <th className="text-left px-3 py-3 text-gray-400">Performed By</th>
-                <th className="text-right px-3 py-3 text-gray-400">Amount</th>
-                <th className="text-right px-3 py-3 text-gray-400">Balance After</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredTransactions.map((tx) => (
-                <tr key={tx._id} className="border-t border-dark-600 hover:bg-dark-700/50">
-                  <td className="px-3 py-2 whitespace-nowrap text-xs">{new Date(tx.createdAt).toLocaleString()}</td>
-                  <td className="px-3 py-2">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${getOwnerBadge(tx.ownerType)}`}>
-                      {tx.ownerType}
-                    </span>
-                    <div className="text-[11px] text-gray-300 mt-0.5 truncate max-w-[140px]" title={formatAllTxOwner(tx)}>
-                      {formatAllTxOwner(tx)}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`px-2 py-0.5 rounded text-xs ${
-                        tx.type === 'CREDIT' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+        <div className="lg:col-span-7 flex flex-col gap-3 min-h-0">
+          {!selected ? (
+            <div className="flex-1 rounded-xl border border-dashed border-dark-600 flex items-center justify-center text-gray-500 text-sm p-8">
+              Select someone on the left to load their debit and credit lines.
+            </div>
+          ) : (
+            <>
+              <div className="bg-dark-800 border border-dark-600 rounded-xl p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <div className="text-lg font-bold text-white">{selected.title}</div>
+                    <div className="text-xs text-gray-400 mt-0.5">{selected.subtitle}</div>
+                    <div className="text-[10px] text-gray-600 mt-1 font-mono">ownerId: {selected.ownerId}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(null)}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 border border-dark-600"
+                  >
+                    Clear selection
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  {[
+                    { id: '', label: 'All lines' },
+                    { id: 'CREDIT', label: 'Credits only' },
+                    { id: 'DEBIT', label: 'Debits only' },
+                  ].map((t) => (
+                    <button
+                      key={t.id || 'all'}
+                      type="button"
+                      onClick={() => setTxKind(t.id)}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium border ${
+                        (txKind || '') === t.id
+                          ? t.id === 'CREDIT'
+                            ? 'bg-green-900/50 border-green-500/50 text-green-300'
+                            : t.id === 'DEBIT'
+                              ? 'bg-red-900/50 border-red-500/50 text-red-300'
+                              : 'bg-yellow-900/40 border-yellow-500/50 text-yellow-200'
+                          : 'bg-dark-700 border-dark-600 text-gray-300 hover:border-dark-500'
                       }`}
                     >
-                      {tx.type}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 font-mono text-yellow-400 text-xs">{tx.adminCode || '—'}</td>
-                  <td className="px-3 py-2 text-gray-400 max-w-[200px]">
-                    <div className="truncate font-medium text-gray-300">{tx.reason || '—'}</div>
-                    <div className="truncate text-[10px] text-gray-500">{tx.description || ''}</div>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-cyan-300/90 whitespace-nowrap">
-                    {tx.meta?.gameKey ? gameLabel(tx.meta.gameKey) : '—'}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-[10px] text-gray-400 whitespace-nowrap" title={tx.reference?.id}>
-                    {formatAllTxReference(tx)}
-                  </td>
-                  <td className="px-3 py-2 text-gray-400 text-xs">
-                    {tx.performedBy?.name || tx.performedBy?.username || '—'}
-                  </td>
-                  <td
-                    className={`px-3 py-2 text-right font-medium text-xs ${
-                      tx.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
-                    }`}
-                  >
-                    {tx.type === 'CREDIT' ? '+' : '−'}₹{Number(tx.amount || 0).toLocaleString('en-IN')}
-                  </td>
-                  <td className="px-3 py-2 text-right text-xs">₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {summary && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
+                    <div className="text-[10px] text-gray-500 uppercase">Credits</div>
+                    <div className="text-base font-bold text-green-400 tabular-nums">
+                      +₹{Number(summary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] text-gray-600">{summary.creditCount ?? 0} lines</div>
+                  </div>
+                  <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
+                    <div className="text-[10px] text-gray-500 uppercase">Debits</div>
+                    <div className="text-base font-bold text-red-400 tabular-nums">
+                      −₹{Number(summary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] text-gray-600">{summary.debitCount ?? 0} lines</div>
+                  </div>
+                  <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2">
+                    <div className="text-[10px] text-gray-500 uppercase">Net</div>
+                    <div
+                      className={`text-base font-bold tabular-nums ${
+                        Number(summary.net || 0) >= 0 ? 'text-cyan-300' : 'text-orange-300'
+                      }`}
+                    >
+                      {Number(summary.net || 0) >= 0 ? '+' : ''}₹
+                      {Number(summary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] text-gray-600">For current filter (max 2000 rows shown)</div>
+                  </div>
+                </div>
+              )}
+
+              <input
+                type="search"
+                placeholder="Search in loaded lines (reason, note, ref, game)…"
+                value={rowSearch}
+                onChange={(e) => setRowSearch(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm"
+              />
+
+              {txLoading ? (
+                <div className="text-center py-12 text-gray-500">
+                  <RefreshCw className="animate-spin inline" size={24} />
+                </div>
+              ) : filteredRows.length === 0 ? (
+                <div className="text-center py-10 text-gray-500 text-sm rounded-xl border border-dark-600 bg-dark-800/50">
+                  No ledger lines for this selection{txKind ? ` (${txKind})` : ''}.
+                </div>
+              ) : (
+                <div className="bg-dark-800 rounded-xl border border-dark-600 overflow-hidden overflow-x-auto flex-1 min-h-0">
+                  <div className="text-[10px] text-gray-500 px-3 py-2 border-b border-dark-600">
+                    Showing {filteredRows.length} of {transactions.length} loaded
+                  </div>
+                  <table className="w-full text-sm min-w-[720px]">
+                    <thead className="bg-dark-700">
+                      <tr>
+                        <th className="text-left px-3 py-2 text-gray-400">Date</th>
+                        <th className="text-left px-3 py-2 text-gray-400">Type</th>
+                        <th className="text-left px-3 py-2 text-gray-400">Code</th>
+                        <th className="text-left px-3 py-2 text-gray-400">Reason</th>
+                        <th className="text-left px-3 py-2 text-gray-400">Game</th>
+                        <th className="text-left px-3 py-2 text-gray-400">Ref</th>
+                        <th className="text-left px-3 py-2 text-gray-400">By</th>
+                        <th className="text-right px-3 py-2 text-gray-400">Amount</th>
+                        <th className="text-right px-3 py-2 text-gray-400">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredRows.map((tx) => (
+                        <tr key={tx._id} className="border-t border-dark-600 hover:bg-dark-700/40">
+                          <td className="px-3 py-2 whitespace-nowrap text-[11px]">
+                            {new Date(tx.createdAt).toLocaleString()}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                                tx.type === 'CREDIT' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                              }`}
+                            >
+                              {tx.type}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 font-mono text-yellow-400/90 text-[11px]">{tx.adminCode || '—'}</td>
+                          <td className="px-3 py-2 text-gray-400 max-w-[200px]">
+                            <div className="truncate text-gray-200 text-[12px]">{tx.reason || '—'}</div>
+                            <div className="truncate text-[10px] text-gray-600">{tx.description || ''}</div>
+                          </td>
+                          <td className="px-3 py-2 text-[11px] text-cyan-300/90 whitespace-nowrap">
+                            {tx.meta?.gameKey ? gameLabel(tx.meta.gameKey) : '—'}
+                          </td>
+                          <td className="px-3 py-2 font-mono text-[10px] text-gray-500 whitespace-nowrap">
+                            {formatAllTxReference(tx)}
+                          </td>
+                          <td className="px-3 py-2 text-[11px] text-gray-500">
+                            {tx.performedBy?.name || tx.performedBy?.username || '—'}
+                          </td>
+                          <td
+                            className={`px-3 py-2 text-right font-medium text-[12px] ${
+                              tx.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
+                            }`}
+                          >
+                            {tx.type === 'CREDIT' ? '+' : '−'}₹{Number(tx.amount || 0).toLocaleString('en-IN')}
+                          </td>
+                          <td className="px-3 py-2 text-right text-[11px] text-gray-400">
+                            ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 };
