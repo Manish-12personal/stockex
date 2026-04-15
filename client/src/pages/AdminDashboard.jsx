@@ -12719,6 +12719,24 @@ function formatAllTxReference(tx) {
   return id ? `${r.type} ·…${id}` : r.type;
 }
 
+function summarizeLedgerRows(rows) {
+  let credits = 0;
+  let debits = 0;
+  let creditCount = 0;
+  let debitCount = 0;
+  for (const t of rows) {
+    const amt = Number(t.amount) || 0;
+    if (t.type === 'CREDIT') {
+      credits += amt;
+      creditCount += 1;
+    } else if (t.type === 'DEBIT') {
+      debits += amt;
+      debitCount += 1;
+    }
+  }
+  return { credits, debits, creditCount, debitCount, net: credits - debits };
+}
+
 const ALL_TX_SEGMENTS = [
   { id: 'users', label: 'Users', hint: 'Trading wallet ledger', color: 'bg-blue-600' },
   { id: 'admin', label: 'Admins', hint: 'ADMIN role', color: 'bg-purple-600' },
@@ -12741,6 +12759,13 @@ const AllTransactions = () => {
   const [summary, setSummary] = useState(null);
   const [txLoading, setTxLoading] = useState(false);
   const [rowSearch, setRowSearch] = useState('');
+  /** `USER:id` | `ADMIN:id` — rows with wallet dropdown open */
+  const [expandedRows, setExpandedRows] = useState([]);
+  /** Per-row cached ledger from all-transactions */
+  const [inlineLedgerByKey, setInlineLedgerByKey] = useState({});
+  /** Per-row filter inside dropdown: '' | CREDIT | DEBIT */
+  const [inlineKindByKey, setInlineKindByKey] = useState({});
+  const inlineFetchedRef = useRef(new Set());
 
   useEffect(() => {
     setSelected(null);
@@ -12748,6 +12773,10 @@ const AllTransactions = () => {
     setSummary(null);
     setTxKind('');
     setRowSearch('');
+    setExpandedRows([]);
+    setInlineLedgerByKey({});
+    setInlineKindByKey({});
+    inlineFetchedRef.current = new Set();
   }, [segment]);
 
   useEffect(() => {
@@ -12843,6 +12872,71 @@ const AllTransactions = () => {
   useEffect(() => {
     fetchLedgerForSelection();
   }, [fetchLedgerForSelection]);
+
+  const loadInlineLedger = useCallback(
+    async (rowKey, ownerType, ownerId, force = false) => {
+      if (!admin?.token) return;
+      if (!force && inlineFetchedRef.current.has(rowKey)) return;
+      inlineFetchedRef.current.add(rowKey);
+      setInlineLedgerByKey((prev) => ({
+        ...prev,
+        [rowKey]: { status: 'loading', transactions: [], summary: null },
+      }));
+      try {
+        const params = new URLSearchParams();
+        params.set('limit', '2000');
+        params.set('includeSummary', '1');
+        params.set('ownerType', ownerType);
+        params.set('ownerId', ownerId);
+        const { data } = await axios.get(`/api/admin/manage/all-transactions?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${admin.token}` },
+        });
+        const transactions = Array.isArray(data?.transactions) ? data.transactions : [];
+        setInlineLedgerByKey((prev) => ({
+          ...prev,
+          [rowKey]: {
+            status: 'ok',
+            transactions,
+            summary: data?.summary ?? null,
+          },
+        }));
+      } catch (e) {
+        console.error('AllTransactions inline ledger:', e);
+        inlineFetchedRef.current.delete(rowKey);
+        setInlineLedgerByKey((prev) => ({
+          ...prev,
+          [rowKey]: {
+            status: 'err',
+            transactions: [],
+            summary: null,
+            error: e.response?.data?.message || e.message || 'Failed to load',
+          },
+        }));
+      }
+    },
+    [admin?.token]
+  );
+
+  const toggleRowExpand = useCallback(
+    (rowKey, ownerType, ownerId) => {
+      setExpandedRows((prev) => {
+        if (prev.includes(rowKey)) {
+          return prev.filter((k) => k !== rowKey);
+        }
+        loadInlineLedger(rowKey, ownerType, ownerId, false);
+        return [...prev, rowKey];
+      });
+    },
+    [loadInlineLedger]
+  );
+
+  const refreshInlineLedger = useCallback(
+    (rowKey, ownerType, ownerId) => {
+      inlineFetchedRef.current.delete(rowKey);
+      loadInlineLedger(rowKey, ownerType, ownerId, true);
+    },
+    [loadInlineLedger]
+  );
 
   const filteredRows = useMemo(() => {
     if (!rowSearch.trim()) return transactions;
