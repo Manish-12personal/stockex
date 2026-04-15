@@ -13229,11 +13229,10 @@ const AllTransactions = () => {
                   <div className="text-[10px] text-gray-500 px-3 py-2 border-b border-dark-600">
                     Showing {filteredRows.length} of {transactions.length} loaded
                   </div>
-                  <table className="w-full text-sm min-w-[720px]">
+                  <table className="w-full text-sm min-w-[640px]">
                     <thead className="bg-dark-700">
                       <tr>
                         <th className="text-left px-3 py-2 text-gray-400">Date</th>
-                        <th className="text-left px-3 py-2 text-gray-400">Type</th>
                         <th className="text-left px-3 py-2 text-gray-400">Code</th>
                         <th className="text-left px-3 py-2 text-gray-400">Reason</th>
                         <th className="text-left px-3 py-2 text-gray-400">Game</th>
@@ -13248,15 +13247,6 @@ const AllTransactions = () => {
                         <tr key={tx._id} className="border-t border-dark-600 hover:bg-dark-700/40">
                           <td className="px-3 py-2 whitespace-nowrap text-[11px]">
                             {new Date(tx.createdAt).toLocaleString()}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[11px] font-medium ${
-                                tx.type === 'CREDIT' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                              }`}
-                            >
-                              {tx.type}
-                            </span>
                           </td>
                           <td className="px-3 py-2 font-mono text-yellow-400/90 text-[11px]">{tx.adminCode || '—'}</td>
                           <td className="px-3 py-2 text-gray-400 max-w-[200px]">
@@ -13598,8 +13588,8 @@ function SuperAdminClientWallet({ embedded = false }) {
           {(txKind === 'CREDIT' || txKind === 'DEBIT') && (
             <p className="text-[11px] text-amber-200/90 bg-amber-950/25 border border-amber-500/25 rounded-lg px-3 py-2">
               Tip: pick <span className="font-semibold text-amber-100">All lines</span> for both sides. The chips filter
-              the server list by <span className="font-semibold text-amber-100">your account</span>, not by the client
-              Type column.
+              the server list by <span className="font-semibold text-amber-100">your account</span> (CREDIT / DEBIT),
+              not by raw client-ledger direction.
             </p>
           )}
         </div>
@@ -13755,11 +13745,10 @@ function SuperAdminClientWallet({ embedded = false }) {
               <span className="text-amber-500/90"> ({transactions.length} from server)</span>
             ) : null}
           </div>
-          <table className="w-full text-sm min-w-[1020px]">
+          <table className="w-full text-sm min-w-[820px]">
             <thead className="bg-dark-700">
               <tr>
                 <th className="text-left px-3 py-2 text-gray-400">When</th>
-                <th className="text-left px-3 py-2 text-gray-400">Type</th>
                 <th className="text-left px-3 py-2 text-gray-400">Client</th>
                 <th className="text-left px-3 py-2 text-gray-400">Code</th>
                 <th className="text-left px-3 py-2 text-gray-400">Reason</th>
@@ -13768,11 +13757,10 @@ function SuperAdminClientWallet({ embedded = false }) {
                 <th className="text-left px-3 py-2 text-gray-400">By</th>
                 <th
                   className="text-right px-3 py-2 text-gray-400"
-                  title="Opposite of client Amount: client credit = your debit (payout); client debit = your credit (inflow). Same rupees."
+                  title="Effect on the platform wallet for this line (same rupees as the client line, opposite sign)."
                 >
                   Your account
                 </th>
-                <th className="text-right px-3 py-2 text-gray-400">Amount</th>
                 <th className="text-right px-3 py-2 text-gray-400">Balance</th>
               </tr>
             </thead>
@@ -13781,15 +13769,6 @@ function SuperAdminClientWallet({ embedded = false }) {
                 <tr key={tx._id} className="border-t border-dark-600 hover:bg-dark-700/40">
                   <td className="px-3 py-2 whitespace-nowrap text-[11px]">
                     {new Date(tx.createdAt).toLocaleString()}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`px-2 py-0.5 rounded text-[11px] font-medium ${
-                        tx.type === 'CREDIT' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                      }`}
-                    >
-                      {tx.type}
-                    </span>
                   </td>
                   <td className="px-3 py-2 text-[11px] max-w-[160px]">
                     <div className="text-gray-200 truncate">{tx.ownerFullName || tx.ownerUsername || '—'}</div>
@@ -13823,13 +13802,6 @@ function SuperAdminClientWallet({ embedded = false }) {
                         </div>
                       );
                     })()}
-                  </td>
-                  <td
-                    className={`px-3 py-2 text-right font-medium text-[12px] ${
-                      tx.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
-                    }`}
-                  >
-                    {tx.type === 'CREDIT' ? '+' : '−'}₹{Number(tx.amount || 0).toLocaleString('en-IN')}
                   </td>
                   <td className="px-3 py-2 text-right text-[11px] text-gray-400">
                     ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
