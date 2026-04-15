@@ -3299,6 +3299,270 @@ router.get('/user-games-wallet-ledger', protectAdmin, superAdminOnly, async (req
   }
 });
 
+/**
+ * Super Admin: platform-wide client (USER) wallet activity — easy audit of credits/debits.
+ * scope=main → WalletLedger ownerType USER only (same filters spirit as /all-transactions).
+ * scope=games → GamesWalletLedger across all users (bets, wins, transfers between main↔games).
+ */
+router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const scope = String(req.query.scope || 'main').toLowerCase() === 'games' ? 'games' : 'main';
+    const lim = Math.min(Math.max(parseInt(String(req.query.limit || '500'), 10) || 500, 1), 2000);
+    const wantSummary = req.query.includeSummary === '1' || req.query.includeSummary === 'true';
+
+    if (scope === 'games') {
+      const {
+        type,
+        userSearch,
+        dateFrom,
+        dateTo,
+        gameId: gameIdParam,
+      } = req.query;
+      const filter = {};
+      const gameIdRaw = typeof gameIdParam === 'string' ? gameIdParam.trim() : '';
+      if (gameIdRaw && SUPER_ADMIN_GAMES_LEDGER_GAME_IDS.includes(gameIdRaw)) {
+        filter.gameId = gameIdRaw;
+      }
+      const tUpper = type != null ? String(type).toUpperCase() : '';
+      if (tUpper === 'CREDIT') filter.entryType = 'credit';
+      else if (tUpper === 'DEBIT') filter.entryType = 'debit';
+
+      if (userSearch && String(userSearch).trim()) {
+        const uq = new RegExp(escapeRegExpForQuery(String(userSearch).trim()), 'i');
+        const users = await User.find({
+          $or: [{ username: uq }, { fullName: uq }, { email: uq }],
+        })
+          .select('_id')
+          .limit(200)
+          .lean();
+        const ids = users.map((u) => u._id);
+        filter.user = ids.length ? { $in: ids } : { $in: [] };
+      }
+
+      if (dateFrom || dateTo) {
+        filter.createdAt = {};
+        if (dateFrom) filter.createdAt.$gte = new Date(String(dateFrom));
+        if (dateTo) filter.createdAt.$lte = new Date(String(dateTo));
+      }
+
+      let summary = null;
+      if (wantSummary) {
+        const agg = await GamesWalletLedger.aggregate([
+          { $match: filter },
+          { $group: { _id: '$entryType', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+        ]);
+        summary = {
+          credits: 0,
+          debits: 0,
+          creditCount: 0,
+          debitCount: 0,
+          net: 0,
+        };
+        for (const row of agg) {
+          if (row._id === 'credit') {
+            summary.credits = row.total || 0;
+            summary.creditCount = row.count || 0;
+          } else if (row._id === 'debit') {
+            summary.debits = row.total || 0;
+            summary.debitCount = row.count || 0;
+          }
+        }
+        summary.net = (summary.credits || 0) - (summary.debits || 0);
+      }
+
+      const rows = await GamesWalletLedger.find(filter).sort({ createdAt: -1 }).limit(lim).lean();
+      const userIds = [...new Set(rows.map((r) => String(r.user)))].filter((id) =>
+        mongoose.Types.ObjectId.isValid(id)
+      );
+      const oidList = userIds.map((id) => new mongoose.Types.ObjectId(id));
+      const users =
+        oidList.length > 0
+          ? await User.find({ _id: { $in: oidList } })
+              .select('username fullName adminCode')
+              .lean()
+          : [];
+      const uMap = new Map(users.map((u) => [String(u._id), u]));
+
+      const transactions = rows.map((row) => {
+        const u = uMap.get(String(row.user));
+        return {
+          _id: row._id,
+          createdAt: row.createdAt,
+          type: row.entryType === 'credit' ? 'CREDIT' : 'DEBIT',
+          reason: 'GAMES_WALLET',
+          description: row.description || row.gameLabel || '',
+          amount: row.amount,
+          balanceAfter: row.balanceAfter,
+          adminCode: u?.adminCode || '',
+          ownerId: row.user,
+          ownerUsername: u?.username || '',
+          ownerFullName: u?.fullName || '',
+          meta: {
+            ...(row.meta && typeof row.meta === 'object' ? row.meta : {}),
+            gameKey: row.gameId,
+            gameLabel: row.gameLabel,
+          },
+          reference: { type: 'Manual', id: null },
+          performedBy: null,
+          gamesWallet: true,
+        };
+      });
+
+      return res.json({ transactions, summary, scope: 'games' });
+    }
+
+    const {
+      limit,
+      type,
+      reason,
+      reasons,
+      reasonGroup,
+      adminCode,
+      ownerId,
+      userSearch,
+      referenceType,
+      gameKey,
+      dateFrom,
+      dateTo,
+    } = req.query;
+
+    const query = { ownerType: 'USER' };
+
+    const tUpper = type != null ? String(type).toUpperCase() : '';
+    if (tUpper === 'CREDIT' || tUpper === 'DEBIT') query.type = tUpper;
+
+    if (reason && String(reason).trim()) {
+      query.reason = String(reason).trim();
+    } else if (reasons && String(reasons).trim()) {
+      const rlist = String(reasons)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (rlist.length) query.reason = { $in: rlist };
+    } else if (reasonGroup && String(reasonGroup).trim()) {
+      const g = String(reasonGroup).toLowerCase().trim();
+      const TRADING = ['TRADE_PNL', 'BROKERAGE'];
+      const GAMES = ['GAME_PROFIT', 'GAMES_TRANSFER'];
+      const FUNDS = [
+        'FUND_ADD',
+        'FUND_WITHDRAW',
+        'TRADING_FUND_ADD',
+        'TRADING_FUND_WITHDRAW',
+        'ADMIN_DEPOSIT',
+        'ADMIN_WITHDRAW',
+        'ADMIN_TRANSFER',
+        'REFUND',
+      ];
+      const ADJ = ['ADJUSTMENT', 'BONUS', 'PENALTY'];
+      const XFER = ['CRYPTO_TRANSFER', 'FOREX_TRANSFER', 'MCX_TRANSFER', 'INTERNAL_TRANSFER'];
+      if (g === 'trading') query.reason = { $in: TRADING };
+      else if (g === 'games') query.reason = { $in: GAMES };
+      else if (g === 'funds') query.reason = { $in: FUNDS };
+      else if (g === 'adjustments') query.reason = { $in: ADJ };
+      else if (g === 'transfers') query.reason = { $in: XFER };
+    }
+
+    if (adminCode && String(adminCode).trim()) {
+      query.adminCode = new RegExp(escapeRegExpForQuery(String(adminCode).trim()), 'i');
+    }
+
+    if (ownerId && mongoose.Types.ObjectId.isValid(String(ownerId))) {
+      query.ownerId = new mongoose.Types.ObjectId(String(ownerId));
+    }
+
+    if (userSearch && String(userSearch).trim()) {
+      const uq = new RegExp(escapeRegExpForQuery(String(userSearch).trim()), 'i');
+      const users = await User.find({
+        $or: [{ username: uq }, { fullName: uq }, { email: uq }],
+      })
+        .select('_id')
+        .limit(200)
+        .lean();
+      const ids = users.map((u) => u._id);
+      query.ownerId = ids.length ? { $in: ids } : { $in: [] };
+    }
+
+    if (referenceType && String(referenceType).trim()) {
+      query['reference.type'] = String(referenceType).trim();
+    }
+
+    if (dateFrom || dateTo) {
+      query.createdAt = {};
+      if (dateFrom) query.createdAt.$gte = new Date(String(dateFrom));
+      if (dateTo) query.createdAt.$lte = new Date(String(dateTo));
+    }
+
+    let finalQuery = query;
+    const gk = gameKey != null ? String(gameKey).trim() : '';
+    if (gk && gk !== 'all') {
+      const frag = matchAdminLedgerGameKey(gk);
+      if (frag && Object.keys(frag).length) {
+        finalQuery = Object.keys(query).length ? { $and: [query, frag] } : frag;
+      }
+    }
+
+    const effectiveLimit = Math.min(
+      Math.max(parseInt(String(limit ?? lim), 10) || lim, 1),
+      2000
+    );
+
+    let summary = null;
+    if (wantSummary) {
+      const agg = await WalletLedger.aggregate([
+        { $match: finalQuery },
+        { $group: { _id: '$type', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]);
+      summary = {
+        credits: 0,
+        debits: 0,
+        creditCount: 0,
+        debitCount: 0,
+        net: 0,
+      };
+      for (const row of agg) {
+        if (row._id === 'CREDIT') {
+          summary.credits = row.total || 0;
+          summary.creditCount = row.count || 0;
+        } else if (row._id === 'DEBIT') {
+          summary.debits = row.total || 0;
+          summary.debitCount = row.count || 0;
+        }
+      }
+      summary.net = (summary.credits || 0) - (summary.debits || 0);
+    }
+
+    const rawTx = await WalletLedger.find(finalQuery)
+      .sort({ createdAt: -1 })
+      .limit(effectiveLimit)
+      .populate('performedBy', 'username name')
+      .lean();
+
+    const ownerIds = [...new Set(rawTx.map((t) => String(t.ownerId)))].filter((id) =>
+      mongoose.Types.ObjectId.isValid(id)
+    );
+    const oidList = ownerIds.map((id) => new mongoose.Types.ObjectId(id));
+    const users =
+      oidList.length > 0
+        ? await User.find({ _id: { $in: oidList } }).select('username fullName').lean()
+        : [];
+    const uMap = new Map(users.map((u) => [String(u._id), u]));
+
+    const transactions = rawTx.map((t) => {
+      const u = uMap.get(String(t.ownerId));
+      return {
+        ...t,
+        ownerUsername: u?.username || '',
+        ownerFullName: u?.fullName || '',
+      };
+    });
+
+    return res.json({ transactions, summary, scope: 'main' });
+  } catch (error) {
+    console.error('client-wallet-feed:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Get comprehensive stats (Super Admin only)
 router.get('/comprehensive-stats', protectAdmin, superAdminOnly, async (req, res) => {
   try {

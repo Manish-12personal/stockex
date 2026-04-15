@@ -344,6 +344,7 @@ const AdminDashboard = () => {
         { path: `${basePath}/admin-fund-requests`, icon: Wallet, label: 'Admin Fund Requests' },
         { path: `${basePath}/broker-change-requests`, icon: RefreshCw, label: 'Transfer Requests' },
         { path: `${basePath}/all-transactions`, icon: FileText, label: 'All Transactions' },
+        { path: `${basePath}/client-wallet`, icon: Coins, label: 'Client Wallet' },
         { path: `${basePath}/market-control`, icon: TrendingUp, label: 'Market Control' },
         { path: `${basePath}/broker-certificates`, icon: Award, label: 'Broker Certificates' },
         { path: `${basePath}/system-settings`, icon: Settings, label: 'Default Settings' },
@@ -557,6 +558,7 @@ const AdminDashboard = () => {
           {isSuperAdmin && <Route path="market-control" element={<MarketControl />} />}
           {isSuperAdmin && <Route path="bank-management" element={<BankManagement />} />}
           {isSuperAdmin && <Route path="all-transactions" element={<AllTransactions />} />}
+          {isSuperAdmin && <Route path="client-wallet" element={<SuperAdminClientWallet />} />}
           {isSuperAdmin && <Route path="broker-certificates" element={<BrokerCertificatesManagement />} />}
           {isSuperAdmin && <Route path="system-settings" element={<SystemDefaultSettings />} />}
           {isSuperAdmin && <Route path="delivery-pledge" element={<DeliveryPledgeManagement />} />}
@@ -13250,6 +13252,423 @@ const AllTransactions = () => {
           )}
         </div>
       </div>
+    </div>
+  );
+};
+
+const CLIENT_WALLET_REASON_GROUPS = [
+  { id: '', label: 'All categories' },
+  { id: 'funds', label: 'Funds & admin' },
+  { id: 'trading', label: 'Trading (PnL, brokerage)' },
+  { id: 'games', label: 'Games (main ledger)' },
+  { id: 'transfers', label: 'Wallet transfers' },
+  { id: 'adjustments', label: 'Adjustments / bonus / penalty' },
+];
+
+/** Super Admin — all clients’ credits & debits (main trading wallet + optional games ledger). */
+const SuperAdminClientWallet = () => {
+  const { admin } = useAuth();
+  const [scope, setScope] = useState('main');
+  const [txKind, setTxKind] = useState('');
+  const [reasonGroup, setReasonGroup] = useState('');
+  const [mainGameKey, setMainGameKey] = useState('');
+  const [gamesGameId, setGamesGameId] = useState('');
+  const [adminCodeFilter, setAdminCodeFilter] = useState('');
+  const [userSearch, setUserSearch] = useState('');
+  const [debouncedUserSearch, setDebouncedUserSearch] = useState('');
+  const [debouncedAdminCode, setDebouncedAdminCode] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [transactions, setTransactions] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [rowSearch, setRowSearch] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedUserSearch(userSearch.trim()), 450);
+    return () => clearTimeout(t);
+  }, [userSearch]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedAdminCode(adminCodeFilter.trim()), 450);
+    return () => clearTimeout(t);
+  }, [adminCodeFilter]);
+
+  useEffect(() => {
+    if (scope === 'main') setGamesGameId('');
+    else {
+      setReasonGroup('');
+      setMainGameKey('');
+    }
+  }, [scope]);
+
+  const fetchFeed = useCallback(async () => {
+    if (!admin?.token) return;
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set('includeSummary', '1');
+      params.set('scope', scope);
+      params.set('limit', '1000');
+      if (txKind === 'CREDIT' || txKind === 'DEBIT') params.set('type', txKind);
+      if (debouncedUserSearch) params.set('userSearch', debouncedUserSearch);
+      if (debouncedAdminCode) params.set('adminCode', debouncedAdminCode);
+      if (dateFrom) params.set('dateFrom', new Date(dateFrom).toISOString());
+      if (dateTo) params.set('dateTo', new Date(`${dateTo}T23:59:59.999`).toISOString());
+      if (scope === 'main') {
+        if (reasonGroup) params.set('reasonGroup', reasonGroup);
+        if (mainGameKey) params.set('gameKey', mainGameKey);
+      } else if (gamesGameId) {
+        params.set('gameId', gamesGameId);
+      }
+      const { data } = await axios.get(`/api/admin/manage/client-wallet-feed?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${admin.token}` },
+      });
+      setTransactions(Array.isArray(data?.transactions) ? data.transactions : []);
+      setSummary(data?.summary ?? null);
+    } catch (e) {
+      console.error('SuperAdminClientWallet:', e);
+      setTransactions([]);
+      setSummary(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    admin?.token,
+    scope,
+    txKind,
+    debouncedUserSearch,
+    debouncedAdminCode,
+    dateFrom,
+    dateTo,
+    reasonGroup,
+    mainGameKey,
+    gamesGameId,
+  ]);
+
+  useEffect(() => {
+    fetchFeed();
+  }, [fetchFeed]);
+
+  const gameLabel = (key) =>
+    WALLET_LEDGER_GAME_OPTIONS.find((g) => g.key === key)?.label || key || '—';
+
+  const gameColumnLabelForTx = (tx) => {
+    if (tx.meta?.gameLabel) return tx.meta.gameLabel;
+    if (tx.meta?.gameKey) return gameLabel(tx.meta.gameKey);
+    return '—';
+  };
+
+  const filteredRows = useMemo(() => {
+    if (!rowSearch.trim()) return transactions;
+    const q = rowSearch.trim().toLowerCase();
+    return transactions.filter((tx) => {
+      const blob = [
+        tx.reason,
+        tx.description,
+        tx.adminCode,
+        tx.ownerUsername,
+        tx.ownerFullName,
+        formatAllTxReference(tx),
+        tx.meta?.gameKey,
+        tx.meta?.gameLabel,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return blob.includes(q);
+    });
+  }, [transactions, rowSearch]);
+
+  return (
+    <div className="p-4 md:p-6 max-w-[1500px] mx-auto space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Coins className="text-yellow-400" size={26} />
+            Client Wallet
+          </h1>
+          <p className="text-xs text-gray-500 mt-1 max-w-2xl">
+            All client (user) credits and debits across the platform. Use Main for trading wallet movements (funds,
+            transfers, P&amp;L, games transfers on the main ledger). Use Games for in-app bets, wins, and games-wallet
+            transfers — same sources as user order history.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => fetchFeed()}
+          disabled={loading}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-dark-600 text-sm disabled:opacity-40 shrink-0"
+        >
+          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          Refresh
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 max-w-xl">
+        <button
+          type="button"
+          onClick={() => setScope('main')}
+          className={`rounded-xl border px-3 py-3 text-left transition ${
+            scope === 'main'
+              ? 'bg-blue-600 border-white/20 text-white shadow-lg'
+              : 'bg-dark-800 border-dark-600 text-gray-300 hover:border-dark-500'
+          }`}
+        >
+          <div className="font-bold text-sm">Main wallet</div>
+          <div className="text-[10px] opacity-90 mt-0.5">Trading ledger (all users)</div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setScope('games')}
+          className={`rounded-xl border px-3 py-3 text-left transition ${
+            scope === 'games'
+              ? 'bg-violet-600 border-white/20 text-white shadow-lg'
+              : 'bg-dark-800 border-dark-600 text-gray-300 hover:border-dark-500'
+          }`}
+        >
+          <div className="font-bold text-sm">Games wallet</div>
+          <div className="text-[10px] opacity-90 mt-0.5">Bets, wins, refunds (all users)</div>
+        </button>
+      </div>
+
+      <div className="bg-dark-800 border border-dark-600 rounded-xl p-4 space-y-3">
+        <div className="text-xs font-semibold text-yellow-400/90 uppercase tracking-wide">Filters</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div>
+            <label className="text-[10px] text-gray-500 block mb-1">Search client (name, username, email)</label>
+            <input
+              type="search"
+              value={userSearch}
+              onChange={(e) => setUserSearch(e.target.value)}
+              placeholder="Type to filter…"
+              className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500 block mb-1">Admin code (client&apos;s broker)</label>
+            <input
+              type="text"
+              value={adminCodeFilter}
+              onChange={(e) => setAdminCodeFilter(e.target.value)}
+              placeholder="Partial match"
+              className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500 block mb-1">From date</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500 block mb-1">To date</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-sm"
+            />
+          </div>
+        </div>
+        {scope === 'main' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] text-gray-500 block mb-1">Category</label>
+              <select
+                value={reasonGroup}
+                onChange={(e) => setReasonGroup(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-sm text-white"
+              >
+                {CLIENT_WALLET_REASON_GROUPS.map((o) => (
+                  <option key={o.id || 'all'} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-500 block mb-1">Game (main-ledger game lines only)</label>
+              <select
+                value={mainGameKey}
+                onChange={(e) => setMainGameKey(e.target.value)}
+                className="w-full px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-sm text-white"
+              >
+                <option value="">All games / not filtered by game</option>
+                {WALLET_LEDGER_GAME_OPTIONS.map((g) => (
+                  <option key={g.key} value={g.key}>
+                    {g.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <label className="text-[10px] text-gray-500 block mb-1">Game (games wallet)</label>
+            <select
+              value={gamesGameId}
+              onChange={(e) => setGamesGameId(e.target.value)}
+              className="w-full max-w-md px-3 py-2 bg-dark-700 border border-dark-600 rounded-lg text-sm text-white"
+            >
+              <option value="">All games + transfers</option>
+              {ALL_TX_GAMES_WALLET_OPTIONS.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className="flex flex-wrap gap-2 pt-1">
+          {[
+            { id: '', label: 'All lines' },
+            { id: 'CREDIT', label: 'Credits only' },
+            { id: 'DEBIT', label: 'Debits only' },
+          ].map((t) => (
+            <button
+              key={t.id || 'all'}
+              type="button"
+              onClick={() => setTxKind(t.id)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium border ${
+                (txKind || '') === t.id
+                  ? t.id === 'CREDIT'
+                    ? 'bg-green-900/50 border-green-500/50 text-green-300'
+                    : t.id === 'DEBIT'
+                      ? 'bg-red-900/50 border-red-500/50 text-red-300'
+                      : 'bg-yellow-900/40 border-yellow-500/50 text-yellow-200'
+                  : 'bg-dark-700 border-dark-600 text-gray-300 hover:border-dark-500'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {summary && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
+            <div className="text-[10px] text-gray-500 uppercase">Credits</div>
+            <div className="text-base font-bold text-green-400 tabular-nums">
+              +₹{Number(summary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+            </div>
+            <div className="text-[10px] text-gray-600">{summary.creditCount ?? 0} lines (filtered set)</div>
+          </div>
+          <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
+            <div className="text-[10px] text-gray-500 uppercase">Debits</div>
+            <div className="text-base font-bold text-red-400 tabular-nums">
+              −₹{Number(summary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+            </div>
+            <div className="text-[10px] text-gray-600">{summary.debitCount ?? 0} lines (filtered set)</div>
+          </div>
+          <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2">
+            <div className="text-[10px] text-gray-500 uppercase">Net</div>
+            <div
+              className={`text-base font-bold tabular-nums ${
+                Number(summary.net || 0) >= 0 ? 'text-cyan-300' : 'text-orange-300'
+              }`}
+            >
+              {Number(summary.net || 0) >= 0 ? '+' : ''}₹
+              {Number(summary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+            </div>
+            <div className="text-[10px] text-gray-600">Up to 1000 rows loaded · refine dates to narrow</div>
+          </div>
+        </div>
+      )}
+
+      <input
+        type="search"
+        placeholder="Search in loaded rows…"
+        value={rowSearch}
+        onChange={(e) => setRowSearch(e.target.value)}
+        className="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-sm"
+      />
+
+      {loading ? (
+        <div className="text-center py-16 text-gray-500">
+          <RefreshCw className="animate-spin inline" size={28} />
+        </div>
+      ) : filteredRows.length === 0 ? (
+        <div className="text-center py-14 text-gray-500 text-sm rounded-xl border border-dark-600 bg-dark-800/50">
+          No lines for these filters. Try widening dates or clearing category / game filters.
+        </div>
+      ) : (
+        <div className="bg-dark-800 rounded-xl border border-dark-600 overflow-x-auto">
+          <div className="text-[10px] text-gray-500 px-3 py-2 border-b border-dark-600">
+            Showing {filteredRows.length} of {transactions.length} loaded
+          </div>
+          <table className="w-full text-sm min-w-[900px]">
+            <thead className="bg-dark-700">
+              <tr>
+                <th className="text-left px-3 py-2 text-gray-400">When</th>
+                <th className="text-left px-3 py-2 text-gray-400">Type</th>
+                <th className="text-left px-3 py-2 text-gray-400">Client</th>
+                <th className="text-left px-3 py-2 text-gray-400">Code</th>
+                <th className="text-left px-3 py-2 text-gray-400">Reason</th>
+                <th className="text-left px-3 py-2 text-gray-400">Game</th>
+                <th className="text-left px-3 py-2 text-gray-400">Ref</th>
+                <th className="text-left px-3 py-2 text-gray-400">By</th>
+                <th className="text-right px-3 py-2 text-gray-400">Amount</th>
+                <th className="text-right px-3 py-2 text-gray-400">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRows.map((tx) => (
+                <tr key={tx._id} className="border-t border-dark-600 hover:bg-dark-700/40">
+                  <td className="px-3 py-2 whitespace-nowrap text-[11px]">
+                    {new Date(tx.createdAt).toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                        tx.type === 'CREDIT' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                      }`}
+                    >
+                      {tx.type}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-[11px] max-w-[160px]">
+                    <div className="text-gray-200 truncate">{tx.ownerFullName || tx.ownerUsername || '—'}</div>
+                    {tx.ownerUsername && (
+                      <div className="text-gray-500 font-mono truncate">@{tx.ownerUsername}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-yellow-400/90 text-[11px]">{tx.adminCode || '—'}</td>
+                  <td className="px-3 py-2 text-gray-400 max-w-[200px]">
+                    <div className="truncate text-gray-200 text-[12px]">
+                      {tx.gamesWallet ? 'Games wallet' : tx.reason || '—'}
+                    </div>
+                    <div className="truncate text-[10px] text-gray-600">{tx.description || ''}</div>
+                  </td>
+                  <td className="px-3 py-2 text-[11px] text-cyan-300/90 whitespace-nowrap">
+                    {gameColumnLabelForTx(tx)}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-[10px] text-gray-500 whitespace-nowrap">
+                    {formatAllTxReference(tx)}
+                  </td>
+                  <td className="px-3 py-2 text-[11px] text-gray-500">
+                    {tx.performedBy?.name || tx.performedBy?.username || '—'}
+                  </td>
+                  <td
+                    className={`px-3 py-2 text-right font-medium text-[12px] ${
+                      tx.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
+                    }`}
+                  >
+                    {tx.type === 'CREDIT' ? '+' : '−'}₹{Number(tx.amount || 0).toLocaleString('en-IN')}
+                  </td>
+                  <td className="px-3 py-2 text-right text-[11px] text-gray-400">
+                    ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 };
