@@ -7618,6 +7618,15 @@ const BuySellModal = ({
   const liveBid = isUsdSpot ? (Number(liveData.bid) || ltp || Number(instrument?.ltp) || 0) : (liveData.bid || ltp);
   const liveAsk = isUsdSpot ? (Number(liveData.ask) || ltp || Number(instrument?.ltp) || 0) : (liveData.ask || ltp);
 
+  const feedRow = instrument?.token ? marketData[instrument.token] : null;
+  const ltpFromLiveFeed = !!(
+    feedRow &&
+    (feedRow.ltp != null ||
+      feedRow.last_price != null ||
+      feedRow.bid != null ||
+      feedRow.ask != null)
+  );
+
   // Determine segment type
   const isFnO = instrument?.segment === 'FNO' || instrument?.instrumentType === 'OPTIONS' || instrument?.instrumentType === 'FUTURES';
   const isMCX = instrument?.segment === 'MCX' || instrument?.exchange === 'MCX' || instrument?.displaySegment === 'MCX' || 
@@ -8253,13 +8262,17 @@ const BuySellModal = ({
             </div>
           )}
 
-          {/* LTP Display */}
+          {/* LTP Display — use scalar `ltp` (BuySellModal has no livePrice object; stray refs crashed MCX modal) */}
           <div className="bg-dark-700 rounded-lg p-3">
             <div className="flex justify-between items-center">
               <span className="text-gray-400 text-sm">Last Traded Price</span>
               <span className="text-xl font-bold">
-                ₹{(livePrice?.ltp || fallbackPrice?.ltp || ltp || 0).toLocaleString() || '--'}
-                {!livePrice && fallbackPrice && (
+                ₹
+                {Number(ltp || 0).toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+                {!ltpFromLiveFeed && Number(ltp) > 0 && (
                   <span className="text-xs text-blue-400 ml-2">(Last Price)</span>
                 )}
               </span>
