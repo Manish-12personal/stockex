@@ -13353,6 +13353,7 @@ function SuperAdminClientWallet({ embedded = false }) {
       params.set('includeSummary', '1');
       params.set('scope', scope);
       params.set('limit', '1000');
+      params.set('perspective', 'superadmin');
       if (txKind === 'CREDIT' || txKind === 'DEBIT') params.set('type', txKind);
       if (debouncedUserSearch) params.set('userSearch', debouncedUserSearch);
       if (debouncedAdminCode) params.set('adminCode', debouncedAdminCode);
@@ -13402,10 +13403,36 @@ function SuperAdminClientWallet({ embedded = false }) {
     return '—';
   };
 
+  /** When a chip is on, drop any row that does not match Your account (belt-and-suspenders vs API). */
+  const rowsMatchingYourWalletChip = useMemo(() => {
+    if (txKind !== 'CREDIT' && txKind !== 'DEBIT') return transactions;
+    const want = txKind === 'CREDIT' ? 'CREDIT' : 'DEBIT';
+    return transactions.filter((tx) => yourAccountFromClientTx(tx).state === want);
+  }, [transactions, txKind]);
+
+  const displaySummary = useMemo(() => {
+    if (!txKind) return summary;
+    let credits = 0;
+    let debits = 0;
+    let creditCount = 0;
+    let debitCount = 0;
+    for (const tx of rowsMatchingYourWalletChip) {
+      const a = Number(tx.amount) || 0;
+      if (tx.type === 'CREDIT') {
+        credits += a;
+        creditCount += 1;
+      } else {
+        debits += a;
+        debitCount += 1;
+      }
+    }
+    return { credits, debits, creditCount, debitCount, net: credits - debits };
+  }, [summary, txKind, rowsMatchingYourWalletChip]);
+
   const filteredRows = useMemo(() => {
-    if (!rowSearch.trim()) return transactions;
+    if (!rowSearch.trim()) return rowsMatchingYourWalletChip;
     const q = rowSearch.trim().toLowerCase();
-    return transactions.filter((tx) => {
+    return rowsMatchingYourWalletChip.filter((tx) => {
       const y = yourAccountFromClientTx(tx);
       const blob = [
         tx.reason,
@@ -13424,7 +13451,7 @@ function SuperAdminClientWallet({ embedded = false }) {
         .toLowerCase();
       return blob.includes(q);
     });
-  }, [transactions, rowSearch]);
+  }, [rowsMatchingYourWalletChip, rowSearch]);
 
   return (
     <div className={embedded ? 'space-y-4' : 'p-4 md:p-6 max-w-[1500px] mx-auto space-y-4'}>
@@ -13493,55 +13520,86 @@ function SuperAdminClientWallet({ embedded = false }) {
         </button>
       </div>
 
-      {summary && (
+      {displaySummary && (
         <div className="space-y-2">
           <div className="text-xs font-semibold text-cyan-400/90 uppercase tracking-wide">
             Where to see credited vs debited totals
           </div>
           <p className="text-[11px] text-gray-400">
-            The three boxes below are your answer: <span className="text-green-400/90">total credits</span>,{' '}
-            <span className="text-red-400/90">total debits</span>, and <span className="text-cyan-300/90">net</span>{' '}
-            (credits minus debits) for everything you have filtered (main/games, dates, client search, category, and
-            the All lines / Credits only / Debits only chips).
+            {!txKind ? (
+              <>
+                Totals below count <span className="text-green-400/90">client credits</span> and{' '}
+                <span className="text-red-400/90">client debits</span> on the loaded rows. Use{' '}
+                <span className="text-amber-200/90">Debited to you</span> /{' '}
+                <span className="text-amber-200/90">Credited to you</span> to filter by what hits{' '}
+                <span className="text-cyan-300/90">your</span> account (see Your account column).
+              </>
+            ) : txKind === 'DEBIT' ? (
+              <>
+                You are viewing only rows where <span className="text-red-300/90">your account is debited</span> (money
+                out to clients — client-side CREDIT lines in the ledger).
+              </>
+            ) : (
+              <>
+                You are viewing only rows where <span className="text-green-300/90">your account is credited</span>{' '}
+                (money in from clients — client-side DEBIT lines).
+              </>
+            )}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
-              <div className="text-[10px] text-gray-500 uppercase">Total credits</div>
-              <div className="text-base font-bold text-green-400 tabular-nums">
-                +₹{Number(summary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-              </div>
-              <div className="text-[10px] text-gray-600">{summary.creditCount ?? 0} credit lines in this view</div>
-            </div>
-            <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
-              <div className="text-[10px] text-gray-500 uppercase">Total debits</div>
-              <div className="text-base font-bold text-red-400 tabular-nums">
-                −₹{Number(summary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-              </div>
-              <div className="text-[10px] text-gray-600">{summary.debitCount ?? 0} debit lines in this view</div>
-            </div>
+            {!txKind ? (
+              <>
+                <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
+                  <div className="text-[10px] text-gray-500 uppercase">Total credits (client)</div>
+                  <div className="text-base font-bold text-green-400 tabular-nums">
+                    +₹{Number(displaySummary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[10px] text-gray-600">{displaySummary.creditCount ?? 0} lines</div>
+                </div>
+                <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
+                  <div className="text-[10px] text-gray-500 uppercase">Total debits (client)</div>
+                  <div className="text-base font-bold text-red-400 tabular-nums">
+                    −₹{Number(displaySummary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[10px] text-gray-600">{displaySummary.debitCount ?? 0} lines</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
+                  <div className="text-[10px] text-gray-500 uppercase">Debited to you</div>
+                  <div className="text-base font-bold text-red-400 tabular-nums">
+                    −₹{Number(displaySummary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[10px] text-gray-600">{displaySummary.creditCount ?? 0} lines</div>
+                </div>
+                <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
+                  <div className="text-[10px] text-gray-500 uppercase">Credited to you</div>
+                  <div className="text-base font-bold text-green-400 tabular-nums">
+                    +₹{Number(displaySummary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-[10px] text-gray-600">{displaySummary.debitCount ?? 0} lines</div>
+                </div>
+              </>
+            )}
             <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2">
-              <div className="text-[10px] text-gray-500 uppercase">Net</div>
+              <div className="text-[10px] text-gray-500 uppercase">Net (client cr − dr)</div>
               <div
                 className={`text-base font-bold tabular-nums ${
-                  Number(summary.net || 0) >= 0 ? 'text-cyan-300' : 'text-orange-300'
+                  Number(displaySummary.net || 0) >= 0 ? 'text-cyan-300' : 'text-orange-300'
                 }`}
               >
-                {Number(summary.net || 0) >= 0 ? '+' : ''}₹
-                {Number(summary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                {Number(displaySummary.net || 0) >= 0 ? '+' : ''}₹
+                {Number(displaySummary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </div>
-              <div className="text-[10px] text-gray-600">Up to 1000 rows loaded · narrow dates if needed</div>
+              <div className="text-[10px] text-gray-600">Up to 1000 rows · narrow dates if needed</div>
             </div>
           </div>
           {(txKind === 'CREDIT' || txKind === 'DEBIT') && (
             <p className="text-[11px] text-amber-200/90 bg-amber-950/25 border border-amber-500/25 rounded-lg px-3 py-2">
-              You have{' '}
-              <span className="font-semibold text-amber-100">
-                {txKind === 'DEBIT' ? 'Debits only' : 'Credits only'}
-              </span>{' '}
-              selected, so the other side shows{' '}
-              <span className="font-semibold text-amber-100">₹0</span> on purpose — the summary matches that filter. Tap{' '}
-              <span className="font-semibold text-amber-100">All lines</span> to see both total credits and total debits
-              together.
+              Tip: pick <span className="font-semibold text-amber-100">All lines</span> for both sides. The chips filter
+              the server list by <span className="font-semibold text-amber-100">your account</span>, not by the client
+              Type column.
             </p>
           )}
         </div>
@@ -13640,13 +13698,22 @@ function SuperAdminClientWallet({ embedded = false }) {
         )}
         <div className="flex flex-wrap gap-2 pt-1">
           {[
-            { id: '', label: 'All lines' },
-            { id: 'CREDIT', label: 'Credits only' },
-            { id: 'DEBIT', label: 'Debits only' },
+            { id: '', label: 'All lines', title: 'All loaded rows (client + your account columns)' },
+            {
+              id: 'CREDIT',
+              label: 'Credited to you',
+              title: 'Only rows that credit your account (client debited — e.g. money from client)',
+            },
+            {
+              id: 'DEBIT',
+              label: 'Debited to you',
+              title: 'Only rows that debit your account (client credited — e.g. payout to client)',
+            },
           ].map((t) => (
             <button
               key={t.id || 'all'}
               type="button"
+              title={t.title}
               onClick={() => setTxKind(t.id)}
               className={`px-4 py-2 rounded-lg text-sm font-medium border ${
                 (txKind || '') === t.id
@@ -13683,7 +13750,10 @@ function SuperAdminClientWallet({ embedded = false }) {
       ) : (
         <div className="bg-dark-800 rounded-xl border border-dark-600 overflow-x-auto">
           <div className="text-[10px] text-gray-500 px-3 py-2 border-b border-dark-600">
-            Showing {filteredRows.length} of {transactions.length} loaded
+            Showing {filteredRows.length} of {rowsMatchingYourWalletChip.length} loaded
+            {rowsMatchingYourWalletChip.length !== transactions.length ? (
+              <span className="text-amber-500/90"> ({transactions.length} from server)</span>
+            ) : null}
           </div>
           <table className="w-full text-sm min-w-[1020px]">
             <thead className="bg-dark-700">

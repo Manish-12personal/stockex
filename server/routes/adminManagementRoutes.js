@@ -3303,12 +3303,19 @@ router.get('/user-games-wallet-ledger', protectAdmin, superAdminOnly, async (req
  * Super Admin: platform-wide client (USER) wallet activity — easy audit of credits/debits.
  * scope=main → WalletLedger ownerType USER only (same filters spirit as /all-transactions).
  * scope=games → GamesWalletLedger across all users (bets, wins, transfers between main↔games).
+ * perspective: defaults to superadmin for this route — `type` means effect on you (DEBIT = debited to you /
+ *   client CREDIT + games credit); CREDIT = credited to you / client DEBIT + games debit. Pass perspective=client
+ *   only if you need raw client ledger type filtering.
  */
 router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res) => {
   try {
     const scope = String(req.query.scope || 'main').toLowerCase() === 'games' ? 'games' : 'main';
     const lim = Math.min(Math.max(parseInt(String(req.query.limit || '500'), 10) || 500, 1), 2000);
     const wantSummary = req.query.includeSummary === '1' || req.query.includeSummary === 'true';
+    const pRaw = String(req.query.perspective || 'superadmin')
+      .toLowerCase()
+      .replace(/-/g, '');
+    const perspectiveSuper = pRaw !== 'client';
 
     if (scope === 'games') {
       const {
@@ -3324,8 +3331,13 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
         filter.gameId = gameIdRaw;
       }
       const tUpper = type != null ? String(type).toUpperCase() : '';
-      if (tUpper === 'CREDIT') filter.entryType = 'credit';
-      else if (tUpper === 'DEBIT') filter.entryType = 'debit';
+      if (perspectiveSuper && (tUpper === 'CREDIT' || tUpper === 'DEBIT')) {
+        if (tUpper === 'DEBIT') filter.entryType = 'credit';
+        else filter.entryType = 'debit';
+      } else {
+        if (tUpper === 'CREDIT') filter.entryType = 'credit';
+        else if (tUpper === 'DEBIT') filter.entryType = 'debit';
+      }
 
       if (userSearch && String(userSearch).trim()) {
         const uq = new RegExp(escapeRegExpForQuery(String(userSearch).trim()), 'i');
@@ -3429,7 +3441,13 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
     const query = { ownerType: 'USER' };
 
     const tUpper = type != null ? String(type).toUpperCase() : '';
-    if (tUpper === 'CREDIT' || tUpper === 'DEBIT') query.type = tUpper;
+    const effType =
+      perspectiveSuper && (tUpper === 'CREDIT' || tUpper === 'DEBIT')
+        ? tUpper === 'DEBIT'
+          ? 'CREDIT'
+          : 'DEBIT'
+        : tUpper;
+    if (effType === 'CREDIT' || effType === 'DEBIT') query.type = effType;
 
     if (reason && String(reason).trim()) {
       query.reason = String(reason).trim();
