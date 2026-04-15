@@ -1,0 +1,4479 @@
+import express from 'express';
+import User from '../models/User.js';
+import Admin from '../models/Admin.js';
+import BankSettings from '../models/BankSettings.js';
+import BankAccount from '../models/BankAccount.js';
+import FundRequest from '../models/FundRequest.js';
+import Notification from '../models/Notification.js';
+import BrokerChangeRequest from '../models/BrokerChangeRequest.js';
+import GameSettings from '../models/GameSettings.js';
+import GameResult from '../models/GameResult.js';
+import NiftyNumberBet from '../models/NiftyNumberBet.js';
+import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
+import { getDummyNiftyWhenMarketClosedForTesting } from '../utils/dummyNiftyLtp.js';
+import {
+  isNiftyJackpotBiddingHoursBypassedForTesting,
+  isNiftyBracketBiddingHoursBypassedForTesting,
+} from '../utils/niftyJackpotTestMode.js';
+import { isCurrentTimeWithinBracketBiddingIST } from '../utils/niftyBracketBiddingWindow.js';
+import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
+import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
+import { protectUser, protectAdmin, generateToken, generateSessionToken } from '../middleware/auth.js';
+import {
+  distributeGameProfit,
+  distributeWinBrokerage,
+  computeNiftyJackpotGrossHierarchyBreakdown,
+  creditNiftyJackpotGrossHierarchyFromPool,
+} from '../services/gameProfitDistribution.js';
+import { resolveNiftyBracketTrade } from '../services/niftyBracketResolve.js';
+import { getNextBracketSettlementDateIST } from '../utils/niftyBracketSettlementTime.js';
+import {
+  creditBtcUpDownSuperAdminPool,
+  debitBtcUpDownSuperAdminPool,
+} from '../utils/btcUpDownSuperAdminPool.js';
+import {
+  validateBtcUpDownBetPlacement,
+  currentTotalSecondsIST,
+  btcResultRefSecForUiWindow,
+  btcOpenRefSecForUiWindow,
+  getBtcUpDownWindowState,
+} from '../../lib/btcUpDownWindows.js';
+import { fetchBtcUsdt1mCloseAtIstRef } from '../utils/binanceBtcKline.js';
+import { resolveBtcUpDownPriceAtIstRef } from '../utils/btcUpDownOpenPrice.js';
+import {
+  validateNiftyUpDownBetPlacement,
+  getNiftyUpDownWindowState,
+  niftyResultSecForWindow,
+} from '../../lib/niftyUpDownWindows.js';
+import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate, atomicGamesWalletDebit } from '../utils/gamesWallet.js';
+import { recordGamesWalletLedger, GAMES_WALLET_GAME_LABELS } from '../utils/gamesWalletLedger.js';
+import GamesWalletLedger from '../models/GamesWalletLedger.js';
+import { getMarketData } from '../services/zerodhaWebSocket.js';
+import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
+import {
+  sortJackpotBidsByDistanceToReference,
+  resolveNiftyJackpotSpotPrice,
+  getBidTimeMs,
+} from '../utils/niftyJackpotRank.js';
+import { resolveJackpotPrizePercentForRank } from '../utils/niftyJackpotPrize.js';
+import { buildNiftyJackpotIstDayQuery } from '../utils/niftyJackpotDayScope.js';
+import UpDownWindowSettlement from '../models/UpDownWindowSettlement.js';
+import { settleUpDownFromPrices, computeUpDownWinPayout } from '../utils/upDownSettlementMath.js';
+import { 
+  createTransactionSlip, 
+  addDebitEntry, 
+  findTransactionSlipByTransactionId,
+  addCreditEntry,
+  addBrokerageDistributionEntries
+} from '../services/gameTransactionSlipService.js';
+import { getTodayISTString, startOfISTDayFromKey, endOfISTDayFromKey } from '../utils/istDate.js';
+import {
+  sumUpDownSideTicketsInWindow,
+  sumBracketSideTicketsInDay,
+} from '../utils/gameStakeSideLimits.js';
+
+const router = express.Router();
+
+/** Nifty Jackpot: ticket units per bid (new bids store ticketCount; legacy = amount / unit). */
+function niftyJackpotTicketUnitsForBid(bid, oneTicketRs) {
+  const unit = Number(oneTicketRs);
+  const n = Number(bid?.ticketCount);
+  if (Number.isFinite(n) && n >= 1) return Math.round(n);
+  if (Number.isFinite(unit) && unit > 0) {
+    const k = Math.round((Number(bid?.amount) || 0) / unit);
+    return k >= 1 ? k : 1;
+  }
+  return 1;
+}
+
+// PUBLIC: Get Broker Info by Referral Code (for signup page)
+router.get('/broker-info/:referralCode', async (req, res) => {
+  try {
+    const { referralCode } = req.params;
+    
+    const broker = await Admin.findOne({ 
+      referralCode: referralCode.toUpperCase(),
+      status: 'ACTIVE'
+    })
+    .select('name username branding certificate adminCode referralCode')
+    .lean();
+
+    if (!broker) {
+      return res.status(404).json({ message: 'Broker not found' });
+    }
+
+    res.json({
+      name: broker.name || broker.branding?.brandName || broker.username,
+      username: broker.username,
+      adminCode: broker.adminCode,
+      referralCode: broker.referralCode,
+      certificateNumber: broker.certificate?.certificateNumber || '',
+      specialization: broker.certificate?.specialization || '',
+      isVerified: broker.certificate?.isVerified || false,
+      brandName: broker.branding?.brandName || '',
+      logoUrl: broker.branding?.logoUrl || ''
+    });
+  } catch (error) {
+    console.error('Error fetching broker info:', error);
+    res.status(500).json({ message: 'Failed to fetch broker info' });
+  }
+});
+
+// PUBLIC: Get Certified Brokers for Landing Page (No Auth Required)
+router.get('/certified-brokers', async (req, res) => {
+  try {
+    const brokers = await Admin.find({
+      role: 'BROKER',
+      status: 'ACTIVE',
+      'certificate.showOnLandingPage': true,
+      'certificate.isVerified': true
+    })
+    .select('name username branding certificate referralCode adminCode stats.totalUsers')
+    .sort({ 'certificate.displayOrder': 1, 'certificate.rating': -1 })
+    .lean();
+
+    const formattedBrokers = brokers.map(broker => ({
+      id: broker._id,
+      name: broker.name || broker.branding?.brandName || broker.username,
+      brandName: broker.branding?.brandName || '',
+      logoUrl: broker.branding?.logoUrl || '',
+      certificateNumber: broker.certificate?.certificateNumber || '',
+      description: broker.certificate?.description || '',
+      specialization: broker.certificate?.specialization || '',
+      yearsOfExperience: broker.certificate?.yearsOfExperience || 0,
+      totalClients: broker.certificate?.totalClients || broker.stats?.totalUsers || 0,
+      rating: broker.certificate?.rating || 5,
+      referralCode: broker.referralCode,
+      adminCode: broker.adminCode
+    }));
+
+    res.json({ brokers: formattedBrokers });
+  } catch (error) {
+    console.error('Error fetching certified brokers:', error);
+    res.status(500).json({ message: 'Failed to fetch brokers' });
+  }
+});
+
+// User Registration
+router.post('/register', async (req, res) => {
+  try {
+    const { username, email, password, fullName, phone, adminCode, referralCode } = req.body;
+    
+    let admin;
+    
+    // If admin code or referral code provided, use that admin
+    if (adminCode || referralCode) {
+      const lookup = adminCode
+        ? { adminCode: adminCode.trim().toUpperCase() }
+        : { referralCode: referralCode.trim().toUpperCase() };
+
+      admin = await Admin.findOne(lookup);
+
+      if (!admin) {
+        return res.status(400).json({ message: 'Invalid admin or referral code' });
+      }
+
+      if (admin.status !== 'ACTIVE') {
+        return res.status(400).json({ message: 'Admin is not active. Contact support.' });
+      }
+    } else {
+      // No admin code provided - assign to Super Admin by default
+      admin = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' });
+      
+      if (!admin) {
+        return res.status(400).json({ message: 'System not configured. Please contact support.' });
+      }
+    }
+    
+    const userExists = await User.findOne({ $or: [{ email }, { username }] });
+    if (userExists) {
+      return res.status(400).json({ message: 'User with this email or username already exists' });
+    }
+
+    const user = await User.create({
+      username,
+      email,
+      password,
+      fullName,
+      phone,
+      admin: admin._id,
+      adminCode: admin.adminCode
+    });
+
+    // Update admin stats - increment user count
+    admin.stats.totalUsers = (admin.stats.totalUsers || 0) + 1;
+    admin.stats.activeUsers = (admin.stats.activeUsers || 0) + 1;
+    await admin.save();
+
+    res.status(201).json({
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+      adminCode: user.adminCode,
+      wallet: user.wallet,
+      marginAvailable: user.marginAvailable,
+      token: generateToken(user._id)
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Create Demo Account - No admin required, 7-day trial with 100,000 demo balance
+router.post('/demo-register', async (req, res) => {
+  try {
+    const { username, email, password, fullName, phone } = req.body;
+    
+    // Check if user already exists
+    const userExists = await User.findOne({ $or: [{ email }, { username }] });
+    if (userExists) {
+      return res.status(400).json({ message: 'User with this email or username already exists' });
+    }
+    
+    // Calculate expiry date (7 days from now)
+    const demoExpiresAt = new Date();
+    demoExpiresAt.setDate(demoExpiresAt.getDate() + 7);
+    
+    // Create demo user without admin
+    const user = await User.create({
+      username,
+      email,
+      password,
+      fullName,
+      phone,
+      isDemo: true,
+      demoExpiresAt,
+      demoCreatedAt: new Date(),
+      adminCode: null,
+      admin: null,
+      hierarchyPath: [],
+      wallet: {
+        balance: 1000000,
+        cashBalance: 1000000,
+        tradingBalance: 0,
+        usedMargin: 0,
+        collateralValue: 0,
+        realizedPnL: 0,
+        unrealizedPnL: 0,
+        todayRealizedPnL: 0,
+        todayUnrealizedPnL: 0,
+        transactions: []
+      },
+      settings: {
+        isDemo: true,
+        isActivated: true
+      }
+    });
+
+    res.status(201).json({
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+      isDemo: true,
+      demoExpiresAt: user.demoExpiresAt,
+      wallet: user.wallet,
+      token: generateToken(user._id),
+      message: 'Demo account created! Valid for 7 days with ₹10,00,000 demo balance.'
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// User Login
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role');
+
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    if (!user.isActive) {
+      return res.status(401).json({ message: 'Your account is not active. Please contact your admin.' });
+    }
+    
+    // Check if demo account has expired
+    if (user.isDemo && user.demoExpiresAt && new Date() > user.demoExpiresAt) {
+      return res.status(401).json({ message: 'Your demo account has expired. Please create a new account.' });
+    }
+
+    if (await user.comparePassword(password)) {
+      // Generate unique session token for single device login
+      // This will invalidate any previous session (force logout from other devices)
+      const sessionToken = generateSessionToken();
+      
+      // Get device info from user agent
+      const userAgent = req.headers['user-agent'] || 'Unknown device';
+      const deviceType = userAgent.includes('Mobile') ? 'Mobile' : 'Desktop';
+      
+      // Update user with new session token and login info
+      await User.updateOne(
+        { _id: user._id },
+        { 
+          activeSessionToken: sessionToken,
+          isLogin: true,
+          lastLoginAt: new Date(),
+          lastLoginDevice: deviceType
+        }
+      );
+      
+      // Get parent admin info
+      const parentAdmin = user.createdBy ? {
+        adminCode: user.createdBy.adminCode,
+        name: user.createdBy.name || user.createdBy.username,
+        role: user.createdBy.role
+      } : null;
+      
+      res.json({
+        _id: user._id,
+        userId: user.userId,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        phone: user.phone,
+        role: user.role,
+        wallet: user.wallet,
+        marginAvailable: user.marginAvailable,
+        isReadOnly: user.isReadOnly || false,
+        isDemo: user.isDemo || false,
+        demoExpiresAt: user.demoExpiresAt,
+        createdAt: user.createdAt,
+        parentAdmin: parentAdmin,
+        token: generateToken(user._id, sessionToken)
+      });
+    } else {
+      res.status(401).json({ message: 'Invalid email or password' });
+    }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get parent admin info by email (for showing on login form)
+router.post('/parent-info', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+    
+    const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    if (!user.createdBy) {
+      return res.json({ parentAdmin: null });
+    }
+    
+    res.json({
+      parentAdmin: {
+        adminCode: user.createdBy.adminCode,
+        name: user.createdBy.name || user.createdBy.username,
+        role: user.createdBy.role
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// User Logout - Clear session token to allow login from other devices
+router.post('/logout', protectUser, async (req, res) => {
+  try {
+    await User.updateOne(
+      { _id: req.user._id },
+      { 
+        activeSessionToken: null,
+        isLogin: false
+      }
+    );
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get user profile
+router.get('/profile', protectUser, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('-password');
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get bank details for deposits - Shows admin's bank accounts, not Super Admin's
+router.get('/bank-details', protectUser, async (req, res) => {
+  try {
+    // Get the user's admin code to fetch their admin's bank accounts
+    const userAdminCode = req.user.adminCode;
+    
+    // First try to get the admin's bank accounts
+    const adminBankAccounts = await BankAccount.find({ 
+      adminCode: userAdminCode, 
+      type: 'BANK',
+      isActive: true 
+    }).sort({ isPrimary: -1 });
+    
+    const adminUpiAccounts = await BankAccount.find({ 
+      adminCode: userAdminCode, 
+      type: 'UPI',
+      isActive: true 
+    }).sort({ isPrimary: -1 });
+    
+    // Get global settings for limits and instructions
+    const settings = await BankSettings.getSettings();
+    
+    // If admin has bank accounts configured, use them
+    if (adminBankAccounts.length > 0 || adminUpiAccounts.length > 0) {
+      const bankAccount = adminBankAccounts[0]; // Primary or first active
+      const upiAccount = adminUpiAccounts[0]; // Primary or first active
+      
+      res.json({
+        bankName: bankAccount?.bankName || 'Not configured',
+        accountName: bankAccount?.holderName || 'Not configured',
+        accountNumber: bankAccount?.accountNumber || 'Not configured',
+        ifscCode: bankAccount?.ifsc || 'Not configured',
+        branch: bankAccount?.accountType || '',
+        upiId: upiAccount?.upiId || 'Not configured',
+        upiName: upiAccount?.holderName || 'Not configured',
+        depositInstructions: settings.depositInstructions,
+        minimumDeposit: settings.minimumDeposit,
+        maximumDeposit: settings.maximumDeposit
+      });
+    } else {
+      // Fallback to global settings (Super Admin's bank) if admin hasn't configured any
+      const bankAccount = settings.bankAccounts.find(acc => acc.isPrimary && acc.isActive) 
+        || settings.bankAccounts.find(acc => acc.isActive);
+      
+      const upiAccount = settings.upiAccounts.find(acc => acc.isPrimary && acc.isActive)
+        || settings.upiAccounts.find(acc => acc.isActive);
+      
+      res.json({
+        bankName: bankAccount?.bankName || 'Not configured',
+        accountName: bankAccount?.accountName || 'Not configured',
+        accountNumber: bankAccount?.accountNumber || 'Not configured',
+        ifscCode: bankAccount?.ifscCode || 'Not configured',
+        branch: bankAccount?.branch || '',
+        upiId: upiAccount?.upiId || 'Not configured',
+        upiName: upiAccount?.name || 'Not configured',
+        depositInstructions: settings.depositInstructions,
+        minimumDeposit: settings.minimumDeposit,
+        maximumDeposit: settings.maximumDeposit
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Submit deposit request
+router.post('/deposit-request', protectUser, async (req, res) => {
+  try {
+    const { amount, utrNumber, paymentMethod, remarks } = req.body;
+    
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid amount' });
+    }
+    if (!utrNumber) {
+      return res.status(400).json({ message: 'UTR/Transaction ID is required' });
+    }
+
+    const request = await FundRequest.create({
+      user: req.user._id,
+      userId: req.user.userId,
+      adminCode: req.user.adminCode || 'SUPER',
+      hierarchyPath: req.user.hierarchyPath || [],
+      type: 'DEPOSIT',
+      amount,
+      paymentMethod: paymentMethod || 'BANK',
+      referenceId: utrNumber,
+      userRemarks: remarks || ''
+    });
+    
+    res.status(201).json({ 
+      message: 'Deposit request submitted successfully',
+      requestId: request.requestId
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Submit withdrawal request
+router.post('/withdraw-request', protectUser, async (req, res) => {
+  try {
+    const { amount, accountDetails, paymentMethod, remarks } = req.body;
+    
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid amount' });
+    }
+
+    const user = await User.findById(req.user._id);
+    
+    // Check if trading account has negative balance - block withdrawal until P&L is settled
+    const tradingBalance = user.wallet.tradingBalance || 0;
+    const unrealizedPnL = user.wallet.unrealizedPnL || 0;
+    const effectiveTradingBalance = tradingBalance + unrealizedPnL;
+    
+    if (effectiveTradingBalance < 0) {
+      return res.status(400).json({ 
+        message: `Withdrawal blocked! Your trading account has negative balance of ₹${Math.abs(effectiveTradingBalance).toLocaleString()}. Please settle your P&L first by depositing funds to your trading account.`,
+        code: 'NEGATIVE_TRADING_BALANCE',
+        deficit: Math.abs(effectiveTradingBalance)
+      });
+    }
+    
+    if (amount > user.wallet.cashBalance) {
+      return res.status(400).json({ message: 'Insufficient balance' });
+    }
+    
+    const request = await FundRequest.create({
+      user: req.user._id,
+      userId: req.user.userId,
+      adminCode: req.user.adminCode || 'SUPER',
+      hierarchyPath: req.user.hierarchyPath || [],
+      type: 'WITHDRAWAL',
+      amount,
+      paymentMethod: paymentMethod || 'BANK',
+      userRemarks: remarks || '',
+      withdrawalDetails: {
+        notes: accountDetails || ''
+      }
+    });
+    
+    res.status(201).json({ 
+      message: 'Withdrawal request submitted successfully',
+      requestId: request.requestId
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get wallet info (enhanced with dual wallet system)
+router.get('/wallet', protectUser, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('wallet cryptoWallet forexWallet mcxWallet gamesWallet marginSettings rmsSettings');
+    let gamesTicketValue = 300;
+    try {
+      const gs = await GameSettings.getSettings();
+      gamesTicketValue = gs?.tokenValue || 300;
+    } catch {
+      /* default */
+    }
+    
+    // Dual wallet system - Main Wallet (cashBalance) and Trading Account (tradingBalance)
+    // Handle legacy: if cashBalance is 0 but balance has value, use balance as cashBalance
+    let mainWalletBalance = user.wallet.cashBalance || 0;
+    if (mainWalletBalance === 0 && user.wallet.balance > 0) {
+      mainWalletBalance = user.wallet.balance;
+      // Migrate to cashBalance
+      user.wallet.cashBalance = mainWalletBalance;
+      await user.save();
+    }
+    
+    const tradingBalance = user.wallet.tradingBalance || 0;
+    const usedMargin = user.wallet.usedMargin || 0;
+    
+    // Calculate available margin (for trading)
+    const availableMargin = tradingBalance 
+      + (user.wallet.collateralValue || 0)
+      + Math.max(0, user.wallet.unrealizedPnL || 0)
+      - Math.abs(Math.min(0, user.wallet.unrealizedPnL || 0))
+      - usedMargin;
+
+    res.json({
+      gamesTicketValue,
+      // Core wallet fields - Dual Wallet System
+      cashBalance: mainWalletBalance,           // Main Wallet (for deposit/withdraw with admin)
+      tradingBalance: tradingBalance,           // Trading Account (for trading)
+      usedMargin: usedMargin,
+      collateralValue: user.wallet.collateralValue || 0,
+      realizedPnL: user.wallet.realizedPnL || 0,
+      unrealizedPnL: user.wallet.unrealizedPnL || 0,
+      todayRealizedPnL: user.wallet.todayRealizedPnL || 0,
+      todayUnrealizedPnL: user.wallet.todayUnrealizedPnL || 0,
+      
+      // Calculated fields
+      availableMargin,
+      totalBalance: mainWalletBalance + tradingBalance,
+      
+      // Separate Crypto Wallet - No margin system
+      cryptoWallet: {
+        balance: user.cryptoWallet?.balance || 0,
+        realizedPnL: user.cryptoWallet?.realizedPnL || 0,
+        unrealizedPnL: user.cryptoWallet?.unrealizedPnL || 0,
+        todayRealizedPnL: user.cryptoWallet?.todayRealizedPnL || 0
+      },
+
+      forexWallet: {
+        balance: user.forexWallet?.balance || 0,
+        realizedPnL: user.forexWallet?.realizedPnL || 0,
+        unrealizedPnL: user.forexWallet?.unrealizedPnL || 0,
+        todayRealizedPnL: user.forexWallet?.todayRealizedPnL || 0
+      },
+      
+      // Separate MCX Wallet - For MCX Futures and Options trading
+      mcxWallet: {
+        balance: user.mcxWallet?.balance || 0,
+        usedMargin: user.mcxWallet?.usedMargin || 0,
+        realizedPnL: user.mcxWallet?.realizedPnL || 0,
+        unrealizedPnL: user.mcxWallet?.unrealizedPnL || 0,
+        todayRealizedPnL: user.mcxWallet?.todayRealizedPnL || 0,
+        todayUnrealizedPnL: user.mcxWallet?.todayUnrealizedPnL || 0,
+        availableBalance: (user.mcxWallet?.balance || 0) - (user.mcxWallet?.usedMargin || 0)
+      },
+      
+      // Separate Games Wallet - For fantasy/games trading
+      gamesWallet: {
+        balance: user.gamesWallet?.balance || 0,
+        usedMargin: user.gamesWallet?.usedMargin || 0,
+        realizedPnL: user.gamesWallet?.realizedPnL || 0,
+        unrealizedPnL: user.gamesWallet?.unrealizedPnL || 0,
+        todayRealizedPnL: user.gamesWallet?.todayRealizedPnL || 0,
+        todayUnrealizedPnL: user.gamesWallet?.todayUnrealizedPnL || 0,
+        availableBalance: (user.gamesWallet?.balance || 0) - (user.gamesWallet?.usedMargin || 0)
+      },
+      
+      // Legacy fields for backward compatibility
+      wallet: {
+        balance: mainWalletBalance,
+        cashBalance: mainWalletBalance,
+        tradingBalance: tradingBalance,
+        usedMargin: usedMargin,
+        blocked: usedMargin,
+        totalDeposited: user.wallet.totalDeposited || 0,
+        totalWithdrawn: user.wallet.totalWithdrawn || 0,
+        totalPnL: user.wallet.realizedPnL || 0,
+        transactions: user.wallet.transactions
+      },
+      marginAvailable: availableMargin,
+      
+      // Settings
+      marginSettings: user.marginSettings,
+      rmsStatus: user.rmsSettings?.tradingBlocked ? 'BLOCKED' : 'ACTIVE',
+      rmsBlockReason: user.rmsSettings?.blockReason
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Normalize ?gameId= (Express may give a string[] if the key is repeated).
+function parseLedgerGameIdQuery(raw) {
+  if (typeof raw === 'string' && raw.trim() !== '') return raw.trim();
+  if (Array.isArray(raw) && raw.length > 0) {
+    const first = raw[0];
+    if (typeof first === 'string' && first.trim() !== '') return first.trim();
+  }
+  return null;
+}
+
+// Games wallet transaction history (per-game debits / credits)
+// Query: ?limit=50&gameId=btcupdown&date=YYYY-MM-DD (IST calendar day, inclusive start)
+// Date filter: rows whose document createdAt falls in that IST day — all activity (bets, wins, refunds) for that day.
+router.get('/games-wallet/ledger', protectUser, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
+    const gameId = parseLedgerGameIdQuery(req.query.gameId);
+    const rawDate = typeof req.query.date === 'string' ? req.query.date.trim() : '';
+    const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : null;
+
+    const filter = { user: req.user._id };
+    if (gameId) filter.gameId = gameId;
+
+    if (dateKey) {
+      const dayStart = startOfISTDayFromKey(dateKey);
+      const dayEnd = endOfISTDayFromKey(dateKey);
+      if (dayStart && dayEnd) {
+        filter.createdAt = { $gte: dayStart, $lt: dayEnd };
+      }
+    }
+
+    const rows = await GamesWalletLedger.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    // Enrich with transaction slip information
+    const enrichedRows = await Promise.all(rows.map(async (row) => {
+      let transactionSlipInfo = null;
+      
+      // Check if this ledger entry has a transaction ID in meta
+      if (row.meta?.transactionId) {
+        try {
+          const slip = await findTransactionSlipByTransactionId(row.meta.transactionId);
+          if (slip) {
+            transactionSlipInfo = {
+              transactionId: slip.transactionId,
+              totalDebitAmount: slip.totalDebitAmount,
+              totalCreditAmount: slip.totalCreditAmount,
+              netPnL: slip.netPnL,
+              status: slip.status,
+              gameIds: slip.gameIds,
+              createdAt: slip.createdAt
+            };
+          }
+        } catch (error) {
+          console.warn('Failed to fetch transaction slip for ledger entry:', error);
+        }
+      }
+      
+      return {
+        ...row,
+        transactionSlip: transactionSlipInfo
+      };
+    }));
+
+    res.json(enrichedRows);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+const GAMES_LEDGER_GAME_IDS = ['updown', 'btcupdown', 'niftyNumber', 'niftyBracket', 'niftyJackpot'];
+
+/** Net games-wallet change per game for current IST calendar day (credits − debits), keyed by ledger gameId */
+router.get('/games-wallet/today-net', protectUser, async (req, res) => {
+  try {
+    const today = getTodayISTString();
+    const dayStart = startOfISTDayFromKey(today);
+    const dayEnd = endOfISTDayFromKey(today);
+    if (!dayStart || !dayEnd) {
+      return res.status(500).json({ message: 'Invalid IST calendar day' });
+    }
+
+    // Credits (e.g. win payouts) use meta.orderPlacedAt = bet time — bucket by realizedAt = createdAt so
+    // "today" matches when money hit the wallet. Debits still use placement time for the bet day.
+    const rows = await GamesWalletLedger.aggregate([
+      {
+        $match: {
+          user: req.user._id,
+          gameId: { $in: GAMES_LEDGER_GAME_IDS },
+        },
+      },
+      {
+        $addFields: {
+          eventAt: {
+            $cond: [
+              { $eq: ['$entryType', 'credit'] },
+              '$createdAt',
+              { $ifNull: ['$meta.orderPlacedAt', '$createdAt'] },
+            ],
+          },
+        },
+      },
+      {
+        $match: {
+          eventAt: { $gte: dayStart, $lt: dayEnd },
+        },
+      },
+      {
+        $group: {
+          _id: '$gameId',
+          credits: {
+            $sum: {
+              $cond: [{ $eq: ['$entryType', 'credit'] }, { $toDouble: { $ifNull: ['$amount', 0] } }, 0],
+            },
+          },
+          debits: {
+            $sum: {
+              $cond: [{ $eq: ['$entryType', 'debit'] }, { $toDouble: { $ifNull: ['$amount', 0] } }, 0],
+            },
+          },
+        },
+      },
+    ]);
+
+    const byGame = Object.fromEntries(GAMES_LEDGER_GAME_IDS.map((id) => [id, 0]));
+    for (const r of rows) {
+      if (r._id && Object.prototype.hasOwnProperty.call(byGame, r._id)) {
+        const net = (Number(r.credits) || 0) - (Number(r.debits) || 0);
+        byGame[r._id] = parseFloat(net.toFixed(2));
+      }
+    }
+
+    const winRows = await GamesWalletLedger.aggregate([
+      {
+        $match: {
+          user: req.user._id,
+          gameId: { $in: GAMES_LEDGER_GAME_IDS },
+          entryType: 'credit',
+          createdAt: { $gte: dayStart, $lt: dayEnd },
+          amount: { $gt: 0 },
+          'meta.brokerageRebate': { $ne: true },
+          $or: [
+            { 'meta.won': true },
+            {
+              description: {
+                $regex: 'win \\(gross|win \\(stake|prize payout|Up/Down.*win',
+                $options: 'i',
+              },
+            },
+          ],
+        },
+      },
+      {
+        $group: {
+          _id: '$gameId',
+          total: { $sum: { $toDouble: { $ifNull: ['$amount', 0] } } },
+        },
+      },
+    ]);
+
+    const byGameGrossWins = Object.fromEntries(GAMES_LEDGER_GAME_IDS.map((id) => [id, 0]));
+    for (const r of winRows) {
+      if (r._id && Object.prototype.hasOwnProperty.call(byGameGrossWins, r._id)) {
+        byGameGrossWins[r._id] = parseFloat((Number(r.total) || 0).toFixed(2));
+      }
+    }
+
+    res.json({ istDate: today, byGame, byGameGrossWins });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/** Aggregate UP/DOWN bet debits for one window (all users), IST calendar day slice. */
+async function aggregateUpDownBetPoolForWindow(gameId, windowNumber, dayStart, dayEnd) {
+  const wn = Number(windowNumber);
+  if (!Number.isFinite(wn) || wn < 1) {
+    return { upTickets: 0, downTickets: 0, totalTickets: 0, players: 0 };
+  }
+  const rows = await GamesWalletLedger.aggregate([
+    {
+      $match: {
+        gameId,
+        entryType: 'debit',
+        description: {
+          $regex: 'Up/Down.*bet.*\\(UP\\)|Up/Down.*bet.*\\(DOWN\\)',
+          $options: 'i',
+        },
+        $or: [{ 'meta.windowNumber': wn }, { 'meta.windowNumber': String(wn) }],
+        createdAt: { $gte: dayStart, $lt: dayEnd },
+      },
+    },
+    {
+      $addFields: {
+        predNorm: { $toUpper: { $ifNull: ['$meta.prediction', ''] } },
+      },
+    },
+    {
+      $group: {
+        _id: '$predNorm',
+        tickets: { $sum: { $toDouble: { $ifNull: ['$meta.tickets', 0] } } },
+        users: { $addToSet: '$user' },
+      },
+    },
+  ]);
+
+  let upTickets = 0;
+  let downTickets = 0;
+  const userSet = new Set();
+  for (const r of rows) {
+    const pred = String(r._id || '').trim();
+    const t = Number(r.tickets) || 0;
+    if (pred === 'UP') upTickets += t;
+    else if (pred === 'DOWN') downTickets += t;
+    for (const u of r.users || []) {
+      if (u) userSet.add(String(u));
+    }
+  }
+
+  return {
+    upTickets: parseFloat(upTickets.toFixed(2)),
+    downTickets: parseFloat(downTickets.toFixed(2)),
+    totalTickets: parseFloat((upTickets + downTickets).toFixed(2)),
+    players: userSet.size,
+  };
+}
+
+/** Sum ticket units + distinct players for stake debits today (IST). */
+async function aggregateDayStakeDebits(gameId, dayStart, dayEnd, descRegex) {
+  const rows = await GamesWalletLedger.aggregate([
+    {
+      $match: {
+        gameId,
+        entryType: 'debit',
+        createdAt: { $gte: dayStart, $lt: dayEnd },
+        description: { $regex: descRegex, $options: 'i' },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        tickets: { $sum: { $toDouble: { $ifNull: ['$meta.tickets', 0] } } },
+        users: { $addToSet: '$user' },
+      },
+    },
+  ]);
+  const r = rows[0];
+  const t = Number(r?.tickets) || 0;
+  const users = r?.users || [];
+  return {
+    totalTickets: parseFloat(t.toFixed(2)),
+    players: Array.isArray(users) ? users.filter(Boolean).length : 0,
+  };
+}
+
+/**
+ * Live pool / order-book style stats for all fantasy games (all users, same shapes the hub uses).
+ * Keys: btcpdown, updown, niftyNumber, niftyBracket, niftyJackpot (ledger gameIds).
+ */
+router.get('/games/live-activity', protectUser, async (req, res) => {
+  try {
+    const settings = await GameSettings.getSettings().catch(() => null);
+    const dayKey = getTodayISTString();
+    const dayStart = startOfISTDayFromKey(dayKey);
+    const dayEnd = endOfISTDayFromKey(dayKey);
+    if (!dayStart || !dayEnd) {
+      return res.status(500).json({ message: 'Invalid IST calendar day' });
+    }
+
+    const games = {};
+    const nowSec = currentTotalSecondsIST();
+
+    const btcCfg = settings?.games?.btcUpDown || {};
+    if (btcCfg.enabled === false) {
+      games.btcupdown = {
+        enabled: false,
+        status: 'off',
+        windowNumber: 0,
+        istDate: dayKey,
+        upTickets: 0,
+        downTickets: 0,
+        totalTickets: 0,
+        players: 0,
+      };
+    } else {
+      const st = getBtcUpDownWindowState(nowSec, btcCfg);
+      if (st.status !== 'open' || !Number.isFinite(Number(st.windowNumber)) || Number(st.windowNumber) < 1) {
+        games.btcupdown = {
+          enabled: true,
+          status: st.status || 'closed',
+          windowNumber: Number(st.windowNumber) || 0,
+          istDate: dayKey,
+          upTickets: 0,
+          downTickets: 0,
+          totalTickets: 0,
+          players: 0,
+        };
+      } else {
+        const wn = Number(st.windowNumber);
+        const pool = await aggregateUpDownBetPoolForWindow('btcupdown', wn, dayStart, dayEnd);
+        games.btcupdown = { enabled: true, status: 'open', windowNumber: wn, istDate: dayKey, ...pool };
+      }
+    }
+
+    const ndCfg = settings?.games?.niftyUpDown || {};
+    if (ndCfg.enabled === false) {
+      games.updown = {
+        enabled: false,
+        status: 'off',
+        windowNumber: 0,
+        istDate: dayKey,
+        upTickets: 0,
+        downTickets: 0,
+        totalTickets: 0,
+        players: 0,
+      };
+    } else {
+      const stN = getNiftyUpDownWindowState(nowSec, ndCfg);
+      if (stN.status !== 'open' || !Number.isFinite(Number(stN.windowNumber)) || Number(stN.windowNumber) < 1) {
+        games.updown = {
+          enabled: true,
+          status: stN.status || 'closed',
+          windowNumber: Number(stN.windowNumber) || 0,
+          istDate: dayKey,
+          upTickets: 0,
+          downTickets: 0,
+          totalTickets: 0,
+          players: 0,
+        };
+      } else {
+        const wn = Number(stN.windowNumber);
+        const pool = await aggregateUpDownBetPoolForWindow('updown', wn, dayStart, dayEnd);
+        games.updown = { enabled: true, status: 'open', windowNumber: wn, istDate: dayKey, ...pool };
+      }
+    }
+
+    const nnCfg = settings?.games?.niftyNumber || {};
+    if (nnCfg.enabled === false) {
+      games.niftyNumber = { enabled: false, status: 'off', istDate: dayKey, totalTickets: 0, players: 0 };
+    } else {
+      const pool = await aggregateDayStakeDebits(
+        'niftyNumber',
+        dayStart,
+        dayEnd,
+        'Nifty Number.*\\bbet\\b'
+      );
+      games.niftyNumber = { enabled: true, status: 'open', istDate: dayKey, ...pool };
+    }
+
+    const nbCfg = settings?.games?.niftyBracket || {};
+    if (nbCfg.enabled === false) {
+      games.niftyBracket = { enabled: false, status: 'off', istDate: dayKey, totalTickets: 0, players: 0 };
+    } else {
+      const pool = await aggregateDayStakeDebits(
+        'niftyBracket',
+        dayStart,
+        dayEnd,
+        'Nifty Bracket.*trade'
+      );
+      games.niftyBracket = { enabled: true, status: 'open', istDate: dayKey, ...pool };
+    }
+
+    const jpCfg = settings?.games?.niftyJackpot || {};
+    if (jpCfg.enabled === false) {
+      games.niftyJackpot = { enabled: false, status: 'off', istDate: dayKey, totalTickets: 0, players: 0 };
+    } else {
+      const pool = await aggregateDayStakeDebits(
+        'niftyJackpot',
+        dayStart,
+        dayEnd,
+        'Nifty Jackpot'
+      );
+      games.niftyJackpot = { enabled: true, status: 'open', istDate: dayKey, ...pool };
+    }
+
+    res.json({ istDate: dayKey, games });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+const GAMES_RECENT_WINNER_IDS = ['updown', 'btcupdown', 'niftyNumber', 'niftyBracket', 'niftyJackpot'];
+
+// Live feed of real win credits (all users) for the Fantasy Games hub
+router.get('/games/recent-winners', protectUser, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 15, 1), 40);
+    const rows = await GamesWalletLedger.find({
+      entryType: 'credit',
+      amount: { $gt: 0 },
+      gameId: { $in: GAMES_RECENT_WINNER_IDS },
+      'meta.brokerageRebate': { $ne: true },
+      $or: [
+        { 'meta.won': true },
+        {
+          description: {
+            $regex: 'result:\\s*win|prize payout|win \\(stake \\+ profit\\)',
+            $options: 'i',
+          },
+        },
+      ],
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select('user gameId amount description createdAt')
+      .lean();
+
+    const userIds = [...new Set(rows.map((r) => String(r.user)))];
+    const users = await User.find({ _id: { $in: userIds } })
+      .select('fullName username')
+      .lean();
+    const byId = new Map(users.map((u) => [String(u._id), u]));
+
+    const winners = rows.map((r) => {
+      const u = byId.get(String(r.user));
+      const raw = (u?.fullName && String(u.fullName).trim()) || (u?.username && String(u.username).trim()) || '';
+      const displayName = raw || 'Player';
+      return {
+        id: String(r._id),
+        displayName,
+        game: GAMES_WALLET_GAME_LABELS[r.gameId] || r.gameId,
+        amount: r.amount,
+        createdAt: r.createdAt,
+      };
+    });
+
+    res.json({ winners });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get user settings (margin, exposure, RMS)
+router.get('/settings', protectUser, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+      .select('marginSettings rmsSettings settings segmentPermissions')
+      .lean(); // Use lean() to get plain JS object instead of Mongoose document
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Default segment settings for all Market Watch segments
+    const defaultSegment = { 
+      enabled: false, 
+      maxExchangeLots: 100, 
+      commissionType: 'PER_LOT', 
+      commissionLot: 0, 
+      maxLots: 50, 
+      minLots: 1, 
+      orderLots: 10, 
+      exposureIntraday: 1, 
+      exposureCarryForward: 1,
+      cryptoSpreadInr: 0,
+      cryptoClosingTime: '',
+      cryptoReferenceSymbol: '',
+      cryptoPricePerLotInr: 0,
+      cryptoLotSizeLots: 1,
+      cryptoLotSizeQuantity: 0,
+      optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 },
+      optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }
+    };
+    
+    const allSegments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
+    
+    // Build segment permissions with defaults for missing segments
+    const userSegments = user.segmentPermissions || {};
+    const segmentPermissions = {};
+    const legacyForex = userSegments.FOREX || userSegments.forex;
+    
+    allSegments.forEach(segment => {
+      let perm = userSegments[segment];
+      if (!perm && legacyForex && (segment === 'FOREXFUT' || segment === 'FOREXOPT')) {
+        perm = legacyForex;
+      }
+      segmentPermissions[segment] = perm || { ...defaultSegment };
+    });
+    
+    res.json({
+      marginSettings: user.marginSettings || {},
+      rmsSettings: user.rmsSettings || {},
+      settings: user.settings || {},
+      segmentPermissions
+    });
+  } catch (error) {
+    console.error('Get settings error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update profile
+router.put('/profile', protectUser, async (req, res) => {
+  try {
+    const { fullName, phone } = req.body;
+    
+    const user = await User.findById(req.user._id);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Update allowed fields
+    if (fullName) user.fullName = fullName;
+    if (phone) user.phone = phone;
+    
+    await user.save();
+    
+    res.json({
+      message: 'Profile updated successfully',
+      user: {
+        _id: user._id,
+        userId: user.userId,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        phone: user.phone,
+        createdAt: user.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Change password
+router.post('/change-password', protectUser, async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ message: 'Please provide old and new password' });
+    }
+    
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters' });
+    }
+    
+    const user = await User.findById(req.user._id).select('+password');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Check if old password matches
+    const isMatch = await user.comparePassword(oldPassword);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Current password is incorrect' });
+    }
+    
+    // Update password
+    user.password = newPassword;
+    await user.save();
+    
+    res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== NOTIFICATIONS ====================
+
+// Get user notifications
+router.get('/notifications', protectUser, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const userAdminCode = req.user.adminCode;
+    
+    // Find notifications targeted to this user
+    const notifications = await Notification.find({
+      isActive: true,
+      $or: [
+        { targetType: 'ALL_USERS' },
+        { targetType: 'ALL_ADMINS_USERS' },
+        { targetType: 'SINGLE_USER', targetUserId: userId },
+        { targetType: 'SELECTED_USERS', targetUserIds: userId },
+        { targetType: 'ADMIN_USERS', targetAdminCode: userAdminCode }
+      ]
+    }).sort({ createdAt: -1 }).limit(50);
+    
+    // Format notifications with read status
+    const formattedNotifications = notifications.map(notif => {
+      const readEntry = notif.readBy.find(r => r.userId.toString() === userId.toString());
+      return {
+        _id: notif._id,
+        title: notif.title,
+        subject: notif.subject,
+        message: notif.description,
+        image: notif.image,
+        isRead: !!readEntry,
+        readAt: readEntry?.readAt,
+        createdAt: notif.createdAt
+      };
+    });
+    
+    const unreadCount = formattedNotifications.filter(n => !n.isRead).length;
+    
+    res.json({
+      notifications: formattedNotifications,
+      unreadCount,
+      total: formattedNotifications.length
+    });
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Mark notification as read
+router.put('/notifications/:id/read', protectUser, async (req, res) => {
+  try {
+    const notification = await Notification.findById(req.params.id);
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+    
+    // Check if already read
+    const alreadyRead = notification.readBy.some(r => r.userId.toString() === req.user._id.toString());
+    if (!alreadyRead) {
+      notification.readBy.push({ userId: req.user._id, readAt: new Date() });
+      await notification.save();
+    }
+    
+    res.json({ message: 'Marked as read' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Mark all notifications as read
+router.put('/notifications/read-all', protectUser, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const userAdminCode = req.user.adminCode;
+    
+    // Find all unread notifications for this user
+    const notifications = await Notification.find({
+      isActive: true,
+      'readBy.userId': { $ne: userId },
+      $or: [
+        { targetType: 'ALL_USERS' },
+        { targetType: 'ALL_ADMINS_USERS' },
+        { targetType: 'SINGLE_USER', targetUserId: userId },
+        { targetType: 'SELECTED_USERS', targetUserIds: userId },
+        { targetType: 'ADMIN_USERS', targetAdminCode: userAdminCode }
+      ]
+    });
+    
+    // Mark all as read
+    for (const notif of notifications) {
+      notif.readBy.push({ userId, readAt: new Date() });
+      await notif.save();
+    }
+    
+    res.json({ message: 'All notifications marked as read', count: notifications.length });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== BROKER CHANGE REQUEST ROUTES ====================
+
+// Get available brokers/admins for transfer request
+// Only returns brokers under the same parent ADMIN
+router.get('/available-brokers', protectUser, async (req, res) => {
+  try {
+    const currentAdminCode = req.user.adminCode;
+    
+    // Get current admin
+    const currentAdmin = await Admin.findOne({ adminCode: currentAdminCode });
+    if (!currentAdmin) {
+      return res.status(400).json({ message: 'Current admin not found' });
+    }
+    
+    // Find the parent ADMIN of current admin
+    let parentAdminId = null;
+    if (currentAdmin.role === 'ADMIN') {
+      parentAdminId = currentAdmin._id;
+    } else if (currentAdmin.role === 'SUPER_ADMIN') {
+      // If under SuperAdmin, show all admins
+      parentAdminId = null;
+    } else {
+      // Find ADMIN in hierarchy path
+      const parentAdmin = await Admin.findOne({
+        _id: { $in: currentAdmin.hierarchyPath || [] },
+        role: 'ADMIN'
+      });
+      parentAdminId = parentAdmin?._id;
+    }
+    
+    let query = {
+      status: 'ACTIVE',
+      role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] },
+      adminCode: { $ne: currentAdminCode }
+    };
+    
+    // If there's a parent ADMIN, only show brokers under that admin
+    if (parentAdminId) {
+      query.$or = [
+        { _id: parentAdminId }, // The parent admin itself
+        { hierarchyPath: parentAdminId } // All admins under the parent
+      ];
+    }
+    
+    const admins = await Admin.find(query)
+      .select('name username adminCode role')
+      .sort({ role: 1, name: 1 });
+    
+    res.json(admins);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get user's broker change requests
+router.get('/broker-change-requests', protectUser, async (req, res) => {
+  try {
+    const requests = await BrokerChangeRequest.find({ user: req.user._id })
+      .populate('currentAdmin', 'name username adminCode role')
+      .populate('requestedAdmin', 'name username adminCode role')
+      .populate('processedBy', 'name username')
+      .sort({ createdAt: -1 });
+    
+    res.json(requests);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Create broker change request
+router.post('/broker-change-request', protectUser, async (req, res) => {
+  try {
+    const { requestedAdminCode, reason } = req.body;
+    
+    if (!requestedAdminCode) {
+      return res.status(400).json({ message: 'Please select a broker/admin to transfer to' });
+    }
+    
+    // Check if user already has a pending request
+    const existingRequest = await BrokerChangeRequest.findOne({
+      user: req.user._id,
+      status: 'PENDING'
+    });
+    
+    if (existingRequest) {
+      return res.status(400).json({ message: 'You already have a pending broker change request' });
+    }
+    
+    // Get current admin
+    const currentAdmin = await Admin.findOne({ adminCode: req.user.adminCode });
+    if (!currentAdmin) {
+      return res.status(400).json({ message: 'Current admin not found' });
+    }
+    
+    // Get requested admin
+    const requestedAdmin = await Admin.findOne({ 
+      adminCode: requestedAdminCode.trim().toUpperCase(),
+      status: 'ACTIVE'
+    });
+    
+    if (!requestedAdmin) {
+      return res.status(400).json({ message: 'Invalid or inactive broker/admin code' });
+    }
+    
+    if (requestedAdmin.adminCode === req.user.adminCode) {
+      return res.status(400).json({ message: 'You are already under this broker/admin' });
+    }
+    
+    // Find the parent admin (ADMIN role) of current admin
+    // If current admin is ADMIN, they are the parent
+    // If current admin is BROKER or SUB_BROKER, find their parent ADMIN
+    let parentAdminId = null;
+    if (currentAdmin.role === 'ADMIN') {
+      parentAdminId = currentAdmin._id;
+    } else {
+      // Find ADMIN in hierarchy path
+      const parentAdmin = await Admin.findOne({
+        _id: { $in: currentAdmin.hierarchyPath || [] },
+        role: 'ADMIN'
+      });
+      parentAdminId = parentAdmin?._id;
+    }
+    
+    // Check if requested admin is under the same parent ADMIN
+    let requestedParentAdminId = null;
+    if (requestedAdmin.role === 'ADMIN') {
+      requestedParentAdminId = requestedAdmin._id;
+    } else {
+      const requestedParentAdmin = await Admin.findOne({
+        _id: { $in: requestedAdmin.hierarchyPath || [] },
+        role: 'ADMIN'
+      });
+      requestedParentAdminId = requestedParentAdmin?._id;
+    }
+    
+    // Validate: both must be under the same parent ADMIN (or both are ADMINs under SuperAdmin)
+    if (parentAdminId && requestedParentAdminId) {
+      if (parentAdminId.toString() !== requestedParentAdminId.toString()) {
+        return res.status(400).json({ 
+          message: 'You can only change to a broker under the same parent admin' 
+        });
+      }
+    }
+    
+    // Create the request - will be reviewed by parent ADMIN or SUPER_ADMIN
+    const request = await BrokerChangeRequest.create({
+      user: req.user._id,
+      userId: req.user.userId,
+      currentAdminCode: req.user.adminCode,
+      currentAdmin: currentAdmin._id,
+      requestedAdminCode: requestedAdmin.adminCode,
+      requestedAdmin: requestedAdmin._id,
+      reason: reason || '',
+      parentAdmin: parentAdminId // Track which admin should approve
+    });
+    
+    await request.populate([
+      { path: 'currentAdmin', select: 'name username adminCode role' },
+      { path: 'requestedAdmin', select: 'name username adminCode role' }
+    ]);
+    
+    res.status(201).json({
+      message: 'Broker change request submitted successfully. It will be reviewed by your admin.',
+      request
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Cancel broker change request
+router.delete('/broker-change-request/:id', protectUser, async (req, res) => {
+  try {
+    const request = await BrokerChangeRequest.findOne({
+      _id: req.params.id,
+      user: req.user._id,
+      status: 'PENDING'
+    });
+    
+    if (!request) {
+      return res.status(404).json({ message: 'Request not found or already processed' });
+    }
+    
+    await BrokerChangeRequest.deleteOne({ _id: request._id });
+    
+    res.json({ message: 'Request cancelled successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== DEMO ACCOUNT ROUTES ====================
+
+// Get available brokers for demo user to select when converting
+router.get('/demo/available-brokers', protectUser, async (req, res) => {
+  try {
+    if (!req.user.isDemo) {
+      return res.status(400).json({ message: 'This is not a demo account' });
+    }
+    
+    // Get all active admins/brokers/sub-brokers
+    const admins = await Admin.find({
+      status: 'ACTIVE',
+      role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] }
+    })
+    .select('name username adminCode role')
+    .sort({ role: 1, name: 1 });
+    
+    res.json(admins);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Convert demo account to real account
+router.post('/demo/convert-to-real', protectUser, async (req, res) => {
+  try {
+    const { selectedBrokerCode } = req.body;
+    const user = await User.findById(req.user._id);
+    
+    if (!user.isDemo) {
+      return res.status(400).json({ message: 'This is not a demo account' });
+    }
+    
+    // Find the admin to assign to
+    let admin;
+    if (selectedBrokerCode) {
+      admin = await Admin.findOne({ adminCode: selectedBrokerCode, status: 'ACTIVE' });
+      if (!admin) {
+        return res.status(400).json({ message: 'Invalid broker code' });
+      }
+    } else {
+      // Default to Super Admin if no broker selected
+      admin = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' });
+      if (!admin) {
+        return res.status(400).json({ message: 'System not configured. Please contact support.' });
+      }
+    }
+    
+    // Build hierarchy path
+    let hierarchyPath = [];
+    if (admin.hierarchyPath && admin.hierarchyPath.length > 0) {
+      hierarchyPath = [...admin.hierarchyPath, admin._id];
+    } else {
+      hierarchyPath = [admin._id];
+    }
+    
+    // Clear demo data and convert to real account
+    // Reset wallet to zero
+    user.wallet = {
+      balance: 0,
+      cashBalance: 0,
+      tradingBalance: 0,
+      usedMargin: 0,
+      collateralValue: 0,
+      realizedPnL: 0,
+      unrealizedPnL: 0,
+      todayRealizedPnL: 0,
+      todayUnrealizedPnL: 0,
+      transactions: []
+    };
+    
+    // Reset crypto wallet
+    user.cryptoWallet = {
+      balance: 0,
+      realizedPnL: 0,
+      unrealizedPnL: 0,
+      todayRealizedPnL: 0
+    };
+    
+    // Update user to real account
+    user.isDemo = false;
+    user.demoExpiresAt = null;
+    user.demoCreatedAt = null;
+    user.settings.isDemo = false;
+    user.admin = admin._id;
+    user.adminCode = admin.adminCode;
+    user.hierarchyPath = hierarchyPath;
+    user.creatorRole = admin.role;
+    
+    await user.save();
+    
+    // Update admin stats
+    admin.stats.totalUsers = (admin.stats.totalUsers || 0) + 1;
+    admin.stats.activeUsers = (admin.stats.activeUsers || 0) + 1;
+    await admin.save();
+    
+    // Delete all trading history for this user (positions, orders, trades)
+    const Position = (await import('../models/Position.js')).default;
+    const Order = (await import('../models/Order.js')).default;
+    const Trade = (await import('../models/Trade.js')).default;
+    
+    await Position.deleteMany({ user: user._id });
+    await Order.deleteMany({ user: user._id });
+    await Trade.deleteMany({ user: user._id });
+    
+    res.json({
+      message: 'Account converted to real account successfully!',
+      user: {
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        isDemo: false,
+        adminCode: user.adminCode,
+        wallet: user.wallet
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get demo account info
+router.get('/demo/info', protectUser, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    
+    if (!user.isDemo) {
+      return res.status(400).json({ message: 'This is not a demo account', isDemo: false });
+    }
+    
+    const now = new Date();
+    const expiresAt = new Date(user.demoExpiresAt);
+    const daysRemaining = Math.max(0, Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24)));
+    
+    res.json({
+      isDemo: true,
+      demoExpiresAt: user.demoExpiresAt,
+      demoCreatedAt: user.demoCreatedAt,
+      daysRemaining,
+      demoBalance: user.wallet.balance || user.wallet.cashBalance
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// PUBLIC: Get game settings for frontend (user-facing)
+router.get('/game-settings', protectUser, async (req, res) => {
+  try {
+    const settings = await GameSettings.getSettings();
+    const settingsObj = settings.toObject();
+    
+    // Return only what the frontend needs (no internal/admin fields)
+    const games = {};
+    if (settingsObj.games) {
+      for (const [key, game] of Object.entries(settingsObj.games)) {
+        games[key] = {
+          enabled: game.enabled,
+          name: game.name,
+          description: game.description,
+          winMultiplier: game.winMultiplier,
+          brokeragePercent: game.brokeragePercent,
+          minTickets: game.minTickets,
+          maxTickets: game.maxTickets,
+          maxTicketsUpPerWindow: Math.max(0, Number(game.maxTicketsUpPerWindow) || 0),
+          maxTicketsDownPerWindow: Math.max(0, Number(game.maxTicketsDownPerWindow) || 0),
+          maxTicketsBuyPerDay: Math.max(0, Number(game.maxTicketsBuyPerDay) || 0),
+          maxTicketsSellPerDay: Math.max(0, Number(game.maxTicketsSellPerDay) || 0),
+          roundDuration: game.roundDuration,
+          cooldownBetweenRounds: game.cooldownBetweenRounds,
+          startTime: game.startTime,
+          endTime: game.endTime,
+          // Per-game ticket price (normalize number; Mongoose may return string from JSON)
+          ...(Number.isFinite(Number(game.ticketPrice)) && { ticketPrice: Number(game.ticketPrice) }),
+          // Nifty Number specific
+          ...(game.fixedProfit !== undefined && { fixedProfit: game.fixedProfit }),
+          ...(game.resultTime !== undefined && { resultTime: game.resultTime }),
+          ...(game.betsPerDay !== undefined && { betsPerDay: game.betsPerDay }),
+          ...(game.biddingStartTime !== undefined && { biddingStartTime: game.biddingStartTime }),
+          ...(game.biddingEndTime !== undefined && { biddingEndTime: game.biddingEndTime }),
+          // Nifty Bracket specific
+          ...(game.bracketGap !== undefined && { bracketGap: game.bracketGap }),
+          ...(game.expiryMinutes !== undefined && { expiryMinutes: game.expiryMinutes }),
+          ...(key === 'niftyBracket' && {
+            resultTime:
+              game.resultTime != null && String(game.resultTime).trim() !== ''
+                ? game.resultTime
+                : '15:31',
+            settleAtResultTime: game.settleAtResultTime !== false,
+            ...(game.bracketAnchorToSpot !== undefined && { bracketAnchorToSpot: game.bracketAnchorToSpot }),
+            ...(game.bracketStrictLtpComparison !== undefined && {
+              bracketStrictLtpComparison: game.bracketStrictLtpComparison,
+            }),
+          }),
+          // Nifty Jackpot specific
+          ...(game.topWinners !== undefined && { topWinners: game.topWinners }),
+          ...(game.firstPrize !== undefined && { firstPrize: game.firstPrize }),
+          ...(game.prizeStep !== undefined && { prizeStep: game.prizeStep }),
+          ...(game.bidsPerDay !== undefined && { bidsPerDay: game.bidsPerDay }),
+          ...(game.biddingStartTime !== undefined && { biddingStartTime: game.biddingStartTime }),
+          ...(game.biddingEndTime !== undefined && { biddingEndTime: game.biddingEndTime }),
+          ...(game.prizePercentages != null && { prizePercentages: game.prizePercentages }),
+          ...(game.brokerageDistribution != null && { brokerageDistribution: game.brokerageDistribution }),
+          ...(key === 'niftyJackpot' && {
+            resultTime:
+              game.resultTime != null && String(game.resultTime).trim() !== ''
+                ? game.resultTime
+                : '15:45',
+            ...(game.maxTicketsPerRequest !== undefined && {
+              maxTicketsPerRequest: game.maxTicketsPerRequest,
+            }),
+            ...(game.grossPrizeSubBrokerPercent !== undefined && {
+              grossPrizeSubBrokerPercent: game.grossPrizeSubBrokerPercent,
+            }),
+            ...(game.grossPrizeBrokerPercent !== undefined && {
+              grossPrizeBrokerPercent: game.grossPrizeBrokerPercent,
+            }),
+            ...(game.grossPrizeAdminPercent !== undefined && {
+              grossPrizeAdminPercent: game.grossPrizeAdminPercent,
+            }),
+          }),
+          ...(key === 'niftyNumber' && {
+            resultTime:
+              game.resultTime != null && String(game.resultTime).trim() !== ''
+                ? game.resultTime
+                : '15:45',
+            ...(game.grossPrizeSubBrokerPercent !== undefined && {
+              grossPrizeSubBrokerPercent: game.grossPrizeSubBrokerPercent,
+            }),
+            ...(game.grossPrizeBrokerPercent !== undefined && {
+              grossPrizeBrokerPercent: game.grossPrizeBrokerPercent,
+            }),
+            ...(game.grossPrizeAdminPercent !== undefined && {
+              grossPrizeAdminPercent: game.grossPrizeAdminPercent,
+            }),
+          }),
+        };
+      }
+    }
+
+    res.json({
+      gamesEnabled: settingsObj.gamesEnabled,
+      maintenanceMode: settingsObj.maintenanceMode,
+      maintenanceMessage: settingsObj.maintenanceMessage,
+      tokenValue: settingsObj.tokenValue || 300,
+      gamePositionExpiryGraceSeconds:
+        Number.isFinite(Number(settingsObj.gamePositionExpiryGraceSeconds))
+          ? Number(settingsObj.gamePositionExpiryGraceSeconds)
+          : 3600,
+      games,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== UP/DOWN GAME (Nifty & BTC) ====================
+
+/** Normalize client booleans (JSON / form quirks). */
+function parseClientBool(v) {
+  if (v === true || v === 1) return true;
+  if (v === false || v === 0) return false;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (['true', '1', 'yes'].includes(s)) return true;
+    if (['false', '0', 'no'].includes(s)) return false;
+  }
+  return null;
+}
+
+// Place an Up/Down bet (debit gamesWallet)
+router.post('/game-bet/place', protectUser, async (req, res) => {
+  try {
+    const { gameId, prediction, amount, entryPrice, windowNumber, transactionId } = req.body;
+    const userId = req.user._id;
+    const user = req.user;
+
+    if (!['UP', 'DOWN'].includes(prediction)) {
+      return res.status(400).json({ message: 'Prediction must be UP or DOWN' });
+    }
+
+    // Map gameId to settings key
+    const settingsKey = gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.[settingsKey];
+    if (!gameConfig?.enabled) {
+      return res.status(400).json({ message: 'This game is currently disabled' });
+    }
+
+    const betAmount = parseFloat(amount);
+    if (isNaN(betAmount) || betAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid bet amount' });
+    }
+    const tValue = settings.tokenValue || 300;
+    const minAmt = (gameConfig.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig.maxTickets || 500) * tValue;
+    if (betAmount < minAmt) {
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt})` });
+    }
+    if (betAmount > maxAmt) {
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 500} ticket(s) (₹${maxAmt})` });
+    }
+
+    const settlementDayPlace = getTodayISTString();
+    const wnPlace = Number(windowNumber);
+    if (!Number.isFinite(wnPlace) || wnPlace < 1) {
+      return res.status(400).json({ message: 'Invalid window number' });
+    }
+
+    const capUp = Math.max(0, Number(gameConfig.maxTicketsUpPerWindow) || 0);
+    const capDown = Math.max(0, Number(gameConfig.maxTicketsDownPerWindow) || 0);
+    const sideCap = prediction === 'UP' ? capUp : capDown;
+    if (sideCap > 0) {
+      const usedSide = await sumUpDownSideTicketsInWindow(
+        userId,
+        gameId,
+        wnPlace,
+        prediction,
+        settlementDayPlace
+      );
+      const newTicketUnits = betAmount / tValue;
+      if (usedSide + newTicketUnits > sideCap + 1e-6) {
+        const left = Math.max(0, sideCap - usedSide);
+        return res.status(400).json({
+          message: `Max ${sideCap} ticket(s) on ${prediction} for this window (${usedSide.toFixed(2)} already used, ~${left.toFixed(2)} remaining).`,
+        });
+      }
+    }
+
+    if (gameId === 'btcupdown') {
+      const nowSec = currentTotalSecondsIST();
+      const v = validateBtcUpDownBetPlacement(gameConfig, nowSec, wnPlace);
+      if (!v.ok) {
+        return res.status(400).json({ message: v.message });
+      }
+    }
+
+    if (gameId === 'updown') {
+      const nowSecN = currentTotalSecondsIST();
+      const vN = validateNiftyUpDownBetPlacement(gameConfig, nowSecN, wnPlace);
+      if (!vN.ok) {
+        return res.status(400).json({ message: vN.message });
+      }
+    }
+
+    // Atomic debit — balance check + deduction in one MongoDB op (race-safe)
+    const gw = await atomicGamesWalletDebit(User, userId, betAmount, { usedMargin: betAmount });
+    if (!gw) {
+      return res.status(400).json({ message: 'Insufficient balance in games wallet' });
+    }
+
+    // Create or find transaction slip
+    let slip, currentTransactionId;
+    if (transactionId) {
+      // Use existing transaction ID (multiple bets in same session)
+      slip = await findTransactionSlipByTransactionId(transactionId);
+      currentTransactionId = transactionId;
+    }
+    
+    if (!slip) {
+      // Create new transaction slip
+      const slipResult = await createTransactionSlip(
+        userId, 
+        [gameId], 
+        betAmount, 
+        { totalBets: 1 }
+      );
+      slip = slipResult.slip;
+      currentTransactionId = slipResult.transactionId;
+    } else {
+      // Update existing slip with new bet
+      slip.gameIds = [...new Set([...slip.gameIds, gameId])];
+      slip.totalDebitAmount += betAmount;
+      slip.metadata.totalBets += 1;
+      await slip.save();
+    }
+
+    // Record in games wallet ledger
+    const ledgerEntry = await recordGamesWalletLedger(userId, {
+      gameId,
+      entryType: 'debit',
+      amount: betAmount,
+      balanceAfter: gw.balance,
+      description: `${gameId === 'btcupdown' ? 'BTC' : 'Nifty'} Up/Down — bet (${prediction})`,
+      meta: {
+        prediction,
+        windowNumber: wnPlace,
+        entryPrice,
+        tickets: parseFloat((betAmount / tValue).toFixed(2)),
+        tokenValue: tValue,
+        settlementDay: settlementDayPlace,
+        transactionId: currentTransactionId,
+      },
+    });
+
+    // Add debit entry to transaction slip
+    const userCode = user.userCode || user.username || userId.toString();
+    await addDebitEntry(
+      slip._id,
+      currentTransactionId,
+      gameId,
+      betAmount,
+      userId,
+      userCode,
+      {
+        prediction,
+        windowNumber: wnPlace,
+        entryPrice,
+        tickets: parseFloat((betAmount / tValue).toFixed(2)),
+        tokenValue: tValue,
+        settlementDay: settlementDayPlace,
+        relatedLedgerId: ledgerEntry?._id
+      }
+    );
+
+    // BTC Up/Down: stake enters Super Admin pool (no hierarchy split at bet time).
+    if (gameId === 'btcupdown') {
+      try {
+        await creditBtcUpDownSuperAdminPool(
+          betAmount,
+          `BTC Up/Down — stake to Super Admin pool (bet ${prediction})`
+        );
+      } catch (poolErr) {
+        console.error('[BTC Up/Down] Super Admin pool credit failed, refunding user:', poolErr);
+        const gwRef = await atomicGamesWalletUpdate(User, userId, {
+          balance: betAmount,
+          usedMargin: -betAmount,
+        });
+        await recordGamesWalletLedger(userId, {
+          gameId: 'btcupdown',
+          entryType: 'credit',
+          amount: betAmount,
+          balanceAfter: gwRef.balance,
+          description: 'BTC Up/Down — bet reversed (house pool unavailable)',
+          meta: { prediction, windowNumber: wnPlace },
+        });
+        return res.status(503).json({
+          message: 'House pool temporarily unavailable; your stake was refunded. Try again later.',
+        });
+      }
+    }
+
+    res.json({
+      message: 'Bet placed!',
+      betId: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      transactionId: currentTransactionId,
+      newBalance: gw.balance,
+      settlementDay: settlementDayPlace,
+    });
+  } catch (error) {
+    console.error('Game bet place error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get recent game results for Up/Down games
+router.get('/game-results/:gameId', protectUser, async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    const limit = parseInt(req.query.limit) || 20;
+    
+    if (!['updown', 'btcupdown'].includes(gameId)) {
+      return res.status(400).json({ message: 'Invalid game ID' });
+    }
+    
+    const results = await GameResult.getTodayResults(gameId);
+    res.json(results);
+  } catch (error) {
+    console.error('Error fetching game results:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/** BTC window baseline prices from published GameResult (window open = openPrice). Legacy route name kept for clients. */
+router.get('/btc-updown/window-ltps', protectUser, async (req, res) => {
+  try {
+    const rawDay = req.query.day;
+    const day =
+      typeof rawDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDay.trim())
+        ? rawDay.trim()
+        : getTodayISTString();
+    const dayStart = startOfISTDayFromKey(day);
+    const dayEnd = endOfISTDayFromKey(day);
+    if (!dayStart || !dayEnd) {
+      return res.status(400).json({ message: 'Invalid day' });
+    }
+    const rows = await GameResult.find({
+      gameId: 'btcupdown',
+      windowDate: { $gte: dayStart, $lt: dayEnd },
+    })
+      .select({ windowNumber: 1, openPrice: 1, closePrice: 1, resultTime: 1 })
+      .sort({ windowNumber: 1 })
+      .lean();
+    const snapshots = rows.map((r) => ({
+      windowNumber: r.windowNumber,
+      price: r.openPrice,
+      closePrice: r.closePrice,
+      sampledAt: r.resultTime,
+      source: 'game_result',
+    }));
+    res.json({ istDayKey: day, snapshots });
+  } catch (error) {
+    console.error('Error fetching BTC window reference snapshots:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * Window-open (baseline) price for UI window #W — Binance 1m at first second of the betting window,
+ * or published GameResult.openPrice when that window has settled.
+ */
+router.get('/btc-updown/canonical-open/:windowNumber', protectUser, async (req, res) => {
+  try {
+    const W = parseInt(req.params.windowNumber, 10);
+    if (!Number.isFinite(W) || W < 1) {
+      return res.status(400).json({ message: 'Invalid window number' });
+    }
+    const rawDay = req.query.day;
+    const day =
+      typeof rawDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDay.trim())
+        ? rawDay.trim()
+        : getTodayISTString();
+    const dayStart = startOfISTDayFromKey(day);
+    const dayEnd = endOfISTDayFromKey(day);
+    const refSec = btcOpenRefSecForUiWindow(W);
+
+    if (dayStart && dayEnd) {
+      const row = await GameResult.findOne({
+        gameId: 'btcupdown',
+        windowNumber: W,
+        windowDate: { $gte: dayStart, $lt: dayEnd },
+      })
+        .select({ openPrice: 1, resultTime: 1 })
+        .lean();
+      const fromGr = Number(row?.openPrice);
+      if (Number.isFinite(fromGr) && fromGr > 0) {
+        return res.json({
+          windowNumber: W,
+          refSecIst: refSec,
+          price: fromGr,
+          source: 'game_result',
+          sampledAt: row.resultTime || undefined,
+        });
+      }
+    }
+
+    let px = null;
+    let source = null;
+    let sampledAt = null;
+    try {
+      const b = Number(await fetchBtcUsdt1mCloseAtIstRef(day, refSec));
+      if (Number.isFinite(b) && b > 0) {
+        px = b;
+        source = 'binance';
+      }
+    } catch {
+      /* fall through */
+    }
+
+    if (px == null) {
+      const resolved = await resolveBtcUpDownPriceAtIstRef({
+        istDayKey: day,
+        refSecSinceMidnightIST: refSec,
+        cacheGet: () => undefined,
+        loadPersisted: async () => null,
+        loadLedgerMinEntry: async () => null,
+      });
+      const p = resolved?.price != null ? Number(resolved.price) : null;
+      if (Number.isFinite(p) && p > 0) {
+        px = p;
+        source = resolved.source;
+      }
+    }
+
+    if (!Number.isFinite(px) || px <= 0) {
+      return res.json({ windowNumber: W, refSecIst: refSec, price: null, source: null });
+    }
+    res.json({
+      windowNumber: W,
+      refSecIst: refSec,
+      price: px,
+      source,
+      sampledAt,
+    });
+  } catch (error) {
+    console.error('Error resolving BTC canonical open:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Save game result — admin only (Nifty). BTC is server-only; users must not publish results.
+router.post('/game-result', protectAdmin, async (req, res) => {
+  try {
+    const { gameId, windowNumber, openPrice, closePrice, windowStartTime, windowEndTime } = req.body;
+
+    if (!['updown', 'btcupdown'].includes(gameId)) {
+      return res.status(400).json({ message: 'Invalid game ID' });
+    }
+
+    if (gameId === 'btcupdown') {
+      return res.status(403).json({
+        message:
+          'BTC Up/Down results are published only by the server from live prices. Admins cannot override via this route.',
+      });
+    }
+
+    const priceChange = closePrice - openPrice;
+    const priceChangePercent = openPrice ? (priceChange / openPrice) * 100 : 0;
+    const result = priceChange > 0 ? 'UP' : priceChange < 0 ? 'DOWN' : 'TIE';
+
+    const istDay = getTodayISTString();
+    const dayStart = startOfISTDayFromKey(istDay);
+    const dayEnd = endOfISTDayFromKey(istDay);
+    if (!dayStart || !dayEnd) {
+      return res.status(400).json({ message: 'Invalid IST calendar day' });
+    }
+
+    const existingResult = await GameResult.findOne({
+      gameId,
+      windowNumber,
+      windowDate: { $gte: dayStart, $lt: dayEnd },
+    });
+
+    if (existingResult) {
+      return res.json({ message: 'Result already exists', result: existingResult });
+    }
+
+    const gameResult = await GameResult.create({
+      gameId,
+      windowNumber,
+      windowDate: dayStart,
+      openPrice,
+      closePrice,
+      result,
+      priceChange,
+      priceChangePercent,
+      windowStartTime,
+      windowEndTime,
+      resultTime: new Date(),
+    });
+
+    res.status(201).json(gameResult);
+  } catch (error) {
+    console.error('Error saving game result:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Recent Up/Down settled wins for in-game history (persisted credits from ledger)
+router.get('/game-bets/:gameId', protectUser, async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    if (!['updown', 'btcupdown'].includes(gameId)) {
+      return res.status(400).json({ message: 'Invalid game' });
+    }
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100);
+    const rows = await GamesWalletLedger.find({ user: req.user._id, gameId })
+      .sort({ createdAt: -1 })
+      .limit(400)
+      .lean();
+
+    const upDownDebitRe = /Up\/Down.*bet.*\(UP\)|Up\/Down.*bet.*\(DOWN\)/i;
+
+    const wins = [];
+    for (const row of rows) {
+      if (row.entryType !== 'credit' || !row.meta?.won) continue;
+      const m = row.meta || {};
+      wins.push({
+        id: String(row._id),
+        won: true,
+        sortAt: row.createdAt ? new Date(row.createdAt).getTime() : 0,
+        pnl: Number(m.pnl) || 0,
+        amount: Number(m.stake) || 0,
+        prediction: m.prediction || 'UP',
+        windowNumber: m.windowNumber != null ? m.windowNumber : 0,
+        entryPrice: Number(m.entryPrice) || 0,
+        exitPrice: Number(m.exitPrice) || 0,
+        time: row.createdAt
+          ? new Date(row.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+          : '',
+      });
+    }
+
+    const settlements = await UpDownWindowSettlement.find({
+      user: req.user._id,
+      gameId,
+    })
+      .sort({ updatedAt: -1 })
+      .limit(120)
+      .lean();
+
+    const settledKey = (wn, day) => `${Number(wn)}|${day}`;
+    const settlementKeys = new Set(
+      settlements.map((s) => settledKey(s.windowNumber, s.settlementDay))
+    );
+
+    const losses = [];
+    for (const row of rows) {
+      if (row.entryType !== 'debit' || !upDownDebitRe.test(String(row.description || ''))) continue;
+      const m = row.meta || {};
+      const wn = Number(m.windowNumber);
+      if (!Number.isFinite(wn)) continue;
+      const day = getTodayISTString(row.createdAt || new Date());
+      if (!settlementKeys.has(settledKey(wn, day))) continue;
+
+      const stake = Number(row.amount);
+      const matchedWin = rows.some(
+        (r) =>
+          r.entryType === 'credit' &&
+          r.meta?.won === true &&
+          Number(r.meta?.windowNumber) === wn &&
+          getTodayISTString(r.createdAt || new Date()) === day &&
+          Number(r.meta?.stake) === stake
+      );
+      if (matchedWin) continue;
+
+      losses.push({
+        id: `loss-${row._id}`,
+        won: false,
+        sortAt: row.createdAt ? new Date(row.createdAt).getTime() : 0,
+        pnl: -stake,
+        amount: stake,
+        prediction: m.prediction === 'DOWN' ? 'DOWN' : 'UP',
+        windowNumber: wn,
+        entryPrice: Number(m.entryPrice) || 0,
+        exitPrice: 0,
+        time: row.createdAt
+          ? new Date(row.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+          : '',
+      });
+    }
+
+    const combined = [...wins, ...losses]
+      .sort((a, b) => (b.sortAt || 0) - (a.sortAt || 0))
+      .slice(0, limit)
+      .map(({ sortAt, ...rest }) => rest);
+
+    res.json(combined);
+  } catch (error) {
+    console.error('game-bets list error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Resolve Up/Down bets (credit/debit gamesWallet based on results)
+router.post('/game-bet/resolve', protectUser, async (req, res) => {
+  let settlementLock = null;
+  try {
+    const { trades, gameId } = req.body;
+    if (!['updown', 'btcupdown'].includes(gameId)) {
+      return res.status(400).json({ message: 'Invalid gameId' });
+    }
+    if (!Array.isArray(trades) || trades.length === 0) {
+      return res.status(400).json({ message: 'No trades to resolve' });
+    }
+
+    const windowNumber = Number(trades[0]?.windowNumber);
+    if (!Number.isFinite(windowNumber)) {
+      return res.status(400).json({ message: 'Each trade must include a valid windowNumber' });
+    }
+    const mixedWindow = trades.some((t) => Number(t.windowNumber) !== windowNumber);
+    if (mixedWindow) {
+      return res.status(400).json({ message: 'All trades in one request must be for the same window' });
+    }
+
+    const rawDay = req.body.settlementDay;
+    const tradeDay =
+      typeof trades[0]?.settlementDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(trades[0].settlementDay.trim())
+        ? trades[0].settlementDay.trim()
+        : null;
+    let settlementDay =
+      typeof rawDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDay.trim())
+        ? rawDay.trim()
+        : tradeDay;
+    if (!settlementDay) {
+      const sampleDebit = await GamesWalletLedger.findOne({
+        user: req.user._id,
+        gameId,
+        entryType: 'debit',
+        $or: [{ 'meta.windowNumber': windowNumber }, { 'meta.windowNumber': String(windowNumber) }],
+        description: {
+          $regex: 'Up/Down.*bet.*\\(UP\\)|Up/Down.*bet.*\\(DOWN\\)',
+          $options: 'i',
+        },
+      })
+        .sort({ createdAt: -1 })
+        .select('meta createdAt')
+        .lean();
+      const metaD = sampleDebit?.meta?.settlementDay;
+      if (typeof metaD === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(metaD)) {
+        settlementDay = metaD;
+      } else if (sampleDebit?.createdAt) {
+        settlementDay = getTodayISTString(new Date(sampleDebit.createdAt));
+      } else {
+        settlementDay = getTodayISTString();
+      }
+    }
+
+    try {
+      await UpDownWindowSettlement.create({
+        user: req.user._id,
+        gameId,
+        windowNumber,
+        settlementDay,
+      });
+      settlementLock = { windowNumber, settlementDay };
+    } catch (e) {
+      if (e.code === 11000) {
+        const fresh = await User.findById(req.user._id).select('gamesWallet').lean();
+        return res.json({
+          message: 'This window was already settled for your account',
+          newBalance: fresh?.gamesWallet?.balance || 0,
+          duplicate: true,
+          settledCount: 0,
+          totalPnl: 0,
+        });
+      }
+      throw e;
+    }
+
+    const dayOfficialStart = startOfISTDayFromKey(settlementDay);
+    const dayOfficialEnd = endOfISTDayFromKey(settlementDay);
+    if (!dayOfficialStart || !dayOfficialEnd) {
+      await UpDownWindowSettlement.deleteOne({ user: req.user._id, gameId, windowNumber, settlementDay });
+      return res.status(400).json({ message: 'Invalid settlementDay (use YYYY-MM-DD IST)' });
+    }
+
+    const officialRow = await GameResult.findOne({
+      gameId,
+      windowNumber,
+      windowDate: { $gte: dayOfficialStart, $lt: dayOfficialEnd },
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (
+      !officialRow ||
+      !Number.isFinite(Number(officialRow.openPrice)) ||
+      !Number.isFinite(Number(officialRow.closePrice)) ||
+      Number(officialRow.openPrice) <= 0 ||
+      Number(officialRow.closePrice) <= 0
+    ) {
+      await UpDownWindowSettlement.deleteOne({ user: req.user._id, gameId, windowNumber, settlementDay });
+      return res.status(400).json({
+        message:
+          'Official result is not available for this window yet. Wait for automatic settlement or try again shortly.',
+      });
+    }
+
+    const officialOpen = Number(officialRow.openPrice);
+    const officialClose = Number(officialRow.closePrice);
+
+    let settingsResolve = null;
+    try {
+      settingsResolve = await GameSettings.getSettings();
+    } catch (e) {
+      console.warn('[RESOLVE] GameSettings load failed, using defaults', e?.message);
+    }
+
+    if (gameId === 'btcupdown' && settlementDay === getTodayISTString()) {
+      if (currentTotalSecondsIST() < btcResultRefSecForUiWindow(windowNumber)) {
+        await UpDownWindowSettlement.deleteOne({
+          user: req.user._id,
+          gameId,
+          windowNumber,
+          settlementDay,
+        });
+        return res.status(400).json({
+          message:
+            'BTC Up/Down: settlement opens only after the scheduled result time (IST) for this window.',
+        });
+      }
+    }
+
+    if (gameId === 'updown' && settlementDay === getTodayISTString()) {
+      const ndCfg = settingsResolve?.games?.niftyUpDown || {};
+      const niftyResultSec = niftyResultSecForWindow(windowNumber, ndCfg);
+      if (Number.isFinite(niftyResultSec) && currentTotalSecondsIST() < niftyResultSec) {
+        await UpDownWindowSettlement.deleteOne({
+          user: req.user._id,
+          gameId,
+          windowNumber,
+          settlementDay,
+        });
+        return res.status(400).json({
+          message:
+            'Nifty Up/Down: settlement opens only after the scheduled result time (IST) for this window.',
+        });
+      }
+    }
+    const tValueResolve = settingsResolve?.tokenValue || 300;
+    const gameKeyCfg = gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
+    const gcfg = settingsResolve?.games?.[gameKeyCfg] || {};
+    const winMult = Number(gcfg.winMultiplier) > 0 ? Number(gcfg.winMultiplier) : 1.95;
+    const brokPctCfg =
+      gcfg.brokeragePercent != null && Number.isFinite(Number(gcfg.brokeragePercent))
+        ? Number(gcfg.brokeragePercent)
+        : 5;
+    const grossHierarchyPctSumResolve =
+      (Number(gcfg?.grossPrizeSubBrokerPercent) || 0) +
+      (Number(gcfg?.grossPrizeBrokerPercent) || 0) +
+      (Number(gcfg?.grossPrizeAdminPercent) || 0);
+    const useGrossPrizeHierarchyResolve = grossHierarchyPctSumResolve > 0;
+
+    const gameKey = gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
+
+    const dayStartResolve = dayOfficialStart;
+    const dayEndResolve = dayOfficialEnd;
+    const debitStakePool =
+      dayStartResolve && dayEndResolve
+        ? (
+            await GamesWalletLedger.find({
+              user: req.user._id,
+              gameId,
+              entryType: 'debit',
+              $or: [{ 'meta.windowNumber': windowNumber }, { 'meta.windowNumber': String(windowNumber) }],
+              description: {
+                $regex: 'Up/Down.*bet.*\\(UP\\)|Up/Down.*bet.*\\(DOWN\\)',
+                $options: 'i',
+              },
+              createdAt: { $gte: dayStartResolve, $lt: dayEndResolve },
+            })
+              .sort({ createdAt: 1 })
+              .select('amount createdAt meta _id')
+              .lean()
+          ).map((d) => ({
+            amount: Number(d.amount),
+            placedAt: d.createdAt,
+            transactionId: d.meta?.transactionId,
+            prediction: d.meta?.prediction === 'DOWN' ? 'DOWN' : 'UP',
+            ledgerId: d._id,
+          }))
+        : [];
+
+    const takePlacedAtForStake = (trade) => {
+      const stakeAmt = Number(trade?.amount);
+      if (!Number.isFinite(stakeAmt)) return undefined;
+      const pred = trade?.prediction === 'DOWN' ? 'DOWN' : 'UP';
+      const tid = trade?.transactionId ?? trade?.txnId;
+      let idx = -1;
+      if (tid) {
+        idx = debitStakePool.findIndex(
+          (d) =>
+            d.transactionId === tid &&
+            Number(d.amount) === stakeAmt &&
+            d.prediction === pred
+        );
+      }
+      if (idx < 0) {
+        idx = debitStakePool.findIndex((d) => Number(d.amount) === stakeAmt && d.prediction === pred);
+      }
+      if (idx < 0) return undefined;
+      const [hit] = debitStakePool.splice(idx, 1);
+      return hit.placedAt;
+    };
+
+    // Accumulate totals across all trades, then issue one atomic $inc
+    let totalBalanceInc = 0;
+    let totalMarginDec = 0;
+    let totalPnl = 0;
+    let totalLoss = 0;
+    let totalBrokerage = 0;
+    let settledCount = 0;
+    const ledgerEntries = [];
+    const hierarchyJobsResolve = [];
+
+    const userForDistResolve = await User.findById(req.user._id).populate('admin');
+
+    for (const trade of trades) {
+      const amount = Number(trade.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        console.warn('[RESOLVE] skip trade: invalid amount', trade);
+        continue;
+      }
+
+      const prediction = trade.prediction === 'DOWN' ? 'DOWN' : 'UP';
+      const authoritative = settleUpDownFromPrices(prediction, officialOpen, officialClose);
+      const won = authoritative === true;
+
+      let brokerage = 0;
+      let pnl;
+      let creditTotal = 0;
+      if (won) {
+        const grossWin = amount * winMult;
+        if (useGrossPrizeHierarchyResolve && userForDistResolve) {
+          const grossBreakdown = await computeNiftyJackpotGrossHierarchyBreakdown(
+            userForDistResolve,
+            grossWin,
+            gcfg
+          );
+          brokerage = grossBreakdown.totalHierarchy;
+          if (brokerage > grossWin) brokerage = grossWin;
+          pnl = parseFloat((grossWin - amount).toFixed(2));
+          creditTotal = parseFloat(Number(grossWin).toFixed(2));
+          if (brokerage > 0 && grossBreakdown) {
+            hierarchyJobsResolve.push({ breakdown: grossBreakdown });
+          }
+        } else {
+          const parts = computeUpDownWinPayout(amount, winMult, brokPctCfg);
+          brokerage = parts.brokerage;
+          pnl = parts.pnl;
+          creditTotal = parts.creditTotal;
+          totalBrokerage += brokerage;
+        }
+      } else {
+        pnl = -amount;
+      }
+
+      if (!Number.isFinite(pnl)) {
+        console.warn('[RESOLVE] skip trade: could not compute pnl', trade);
+        continue;
+      }
+
+      if (won) {
+        if (!Number.isFinite(creditTotal)) {
+          console.warn('[RESOLVE] skip trade: invalid credit total', trade);
+          continue;
+        }
+      }
+
+      console.log(
+        `[RESOLVE] Trade: Amount=₹${amount}, Won=${won}, PnL=₹${pnl}, Brokerage=₹${brokerage} officialOpen=${officialOpen} officialClose=${officialClose}`
+      );
+
+      totalMarginDec += amount;
+
+      if (won) {
+        totalBalanceInc += creditTotal;
+        console.log(`[RESOLVE] WIN: Gross credit ₹${creditTotal} (hierarchy/brokerage ₹${brokerage} from pool)`);
+        const placedAt = takePlacedAtForStake(trade);
+        ledgerEntries.push({
+          gameId,
+          entryType: 'credit',
+          amount: creditTotal,
+          description: `${gameId === 'btcupdown' ? 'BTC' : 'Nifty'} Up/Down — win (gross payout; hierarchy from pool)`,
+          meta: {
+            won: true,
+            stake: amount,
+            pnl,
+            brokerage,
+            grossPrizeHierarchy: useGrossPrizeHierarchyResolve,
+            hierarchyPaidFromPoolExtra: brokerage > 0,
+            tickets: parseFloat((amount / tValueResolve).toFixed(2)),
+            tokenValue: tValueResolve,
+            prediction,
+            windowNumber: trade.windowNumber != null ? Number(trade.windowNumber) : undefined,
+            entryPrice: officialOpen,
+            exitPrice: officialClose,
+            ...(placedAt ? { orderPlacedAt: placedAt } : {}),
+          },
+        });
+      } else {
+        totalLoss += amount;
+        console.log(`[RESOLVE] LOSS: Amount ₹${amount} already deducted at bet placement`);
+      }
+      totalPnl += pnl;
+      settledCount += 1;
+    }
+
+    if (settledCount === 0) {
+      await UpDownWindowSettlement.deleteOne({ user: req.user._id, gameId, windowNumber, settlementDay });
+      return res.status(400).json({ message: 'No valid trades could be settled (check amounts/prices).' });
+    }
+
+    const isBtcUpDown = gameId === 'btcupdown';
+    // BTC: pay wins from Super Admin pool (stakes were credited to SA on bet; losses stay in pool).
+    if (isBtcUpDown && totalBalanceInc > 0) {
+      const poolDebit = await debitBtcUpDownSuperAdminPool(
+        totalBalanceInc,
+        `BTC Up/Down — win payout from Super Admin pool (−₹${totalBalanceInc.toFixed(2)})`
+      );
+      if (!poolDebit.ok) {
+        await UpDownWindowSettlement.deleteOne({ user: req.user._id, gameId, windowNumber, settlementDay });
+        return res.status(503).json({
+          message:
+            'BTC Up/Down payout failed: no active Super Admin wallet found. Configure an active Super Admin and retry settlement.',
+        });
+      }
+    }
+
+    // Single atomic update for the entire window settlement
+    const gw = await atomicGamesWalletUpdate(User, req.user._id, {
+      balance: totalBalanceInc,
+      usedMargin: -totalMarginDec,
+      realizedPnL: totalPnl,
+      todayRealizedPnL: totalPnl,
+    });
+    console.log(`[RESOLVE] Atomic update done. New balance: ₹${gw.balance}`);
+
+    // Record ledger entries with final balance and transaction slip entries
+    for (const entry of ledgerEntries) {
+      const ledgerRecord = await recordGamesWalletLedger(req.user._id, {
+        ...entry,
+        balanceAfter: gw.balance,
+      });
+      
+      // Find transaction slip by looking for the original debit transaction
+      if (entry.entryType === 'credit' && entry.meta?.won) {
+        try {
+          // Find the original debit ledger entry for this bet
+          const originalDebit = await GamesWalletLedger.findOne({
+            user: req.user._id,
+            gameId: entry.gameId,
+            entryType: 'debit',
+            amount: entry.meta.stake,
+            'meta.windowNumber': entry.meta.windowNumber,
+            'meta.prediction': entry.meta.prediction
+          }).sort({ createdAt: -1 });
+          
+          if (originalDebit?.meta?.transactionId) {
+            const slip = await findTransactionSlipByTransactionId(originalDebit.meta.transactionId);
+            if (slip) {
+              const userCode = req.user.userCode || req.user.username || req.user._id.toString();
+              await addCreditEntry(
+                slip._id,
+                originalDebit.meta.transactionId,
+                entry.gameId,
+                entry.amount,
+                req.user._id,
+                userCode,
+                {
+                  won: entry.meta.won,
+                  pnl: entry.meta.pnl,
+                  brokerage: entry.meta.brokerage,
+                  grossWin: entry.amount,
+                  openPrice: entry.meta.entryPrice,
+                  closePrice: entry.meta.exitPrice,
+                  windowNumber: entry.meta.windowNumber,
+                  prediction: entry.meta.prediction,
+                  relatedLedgerId: ledgerRecord?._id
+                }
+              );
+            }
+          }
+        } catch (slipError) {
+          console.warn('[RESOLVE] Transaction slip credit entry failed:', slipError);
+        }
+      }
+    }
+
+    if (isBtcUpDown) {
+      if (useGrossPrizeHierarchyResolve && userForDistResolve) {
+        for (const job of hierarchyJobsResolve) {
+          await creditNiftyJackpotGrossHierarchyFromPool(req.user._id, userForDistResolve, job.breakdown, {
+            gameLabel: 'BTC Up/Down',
+            gameKey: 'btcUpDown',
+            logTag: 'UpDownGrossHierarchy',
+          });
+        }
+      } else if (totalBrokerage > 0 && userForDistResolve) {
+        // Find transaction ID for brokerage distribution linking
+        let transactionId = null;
+        try {
+          const sampleDebit = await GamesWalletLedger.findOne({
+            user: req.user._id,
+            gameId,
+            entryType: 'debit',
+            'meta.windowNumber': windowNumber,
+            'meta.transactionId': { $exists: true }
+          }).sort({ createdAt: -1 });
+          transactionId = sampleDebit?.meta?.transactionId;
+        } catch (error) {
+          console.warn('[RESOLVE] Failed to find transaction ID for brokerage:', error);
+        }
+
+        const brokerageResult = await distributeWinBrokerage(
+          req.user._id,
+          userForDistResolve,
+          totalBrokerage,
+          'BTC UpDown',
+          gameKey,
+          { fundFromBtcPool: true, ledgerGameId: 'btcupdown', skipUserRebate: true, transactionId }
+        );
+        
+        // Add brokerage distribution entries to transaction slips
+        if (brokerageResult.distributions && Object.keys(brokerageResult.distributions).length > 0) {
+          try {
+            // Find any transaction slip from this settlement
+            const sampleDebit = await GamesWalletLedger.findOne({
+              user: req.user._id,
+              gameId,
+              entryType: 'debit',
+              'meta.windowNumber': windowNumber,
+              'meta.transactionId': { $exists: true }
+            }).sort({ createdAt: -1 });
+            
+            if (sampleDebit?.meta?.transactionId) {
+              const slip = await findTransactionSlipByTransactionId(sampleDebit.meta.transactionId);
+              if (slip) {
+                await addBrokerageDistributionEntries(
+                  slip._id,
+                  sampleDebit.meta.transactionId,
+                  gameId,
+                  brokerageResult.distributions,
+                  totalBrokerage,
+                  'WIN_BROKERAGE'
+                );
+              }
+            }
+          } catch (brokerageSlipError) {
+            console.warn('[RESOLVE] Brokerage distribution slip entries failed:', brokerageSlipError);
+          }
+        }
+      }
+    } else {
+      if (totalLoss > 0 && userForDistResolve) {
+        await distributeGameProfit(userForDistResolve, totalLoss, 'Nifty UpDown', null, gameKey);
+      }
+      if (useGrossPrizeHierarchyResolve && userForDistResolve) {
+        for (const job of hierarchyJobsResolve) {
+          await creditNiftyJackpotGrossHierarchyFromPool(req.user._id, userForDistResolve, job.breakdown, {
+            gameLabel: 'Nifty Up/Down',
+            gameKey: 'niftyUpDown',
+            logTag: 'UpDownGrossHierarchy',
+          });
+        }
+      } else if (totalBrokerage > 0 && userForDistResolve) {
+        // Find transaction ID for brokerage distribution linking
+        let transactionId = null;
+        try {
+          const sampleDebit = await GamesWalletLedger.findOne({
+            user: req.user._id,
+            gameId,
+            entryType: 'debit',
+            'meta.windowNumber': windowNumber,
+            'meta.transactionId': { $exists: true }
+          }).sort({ createdAt: -1 });
+          transactionId = sampleDebit?.meta?.transactionId;
+        } catch (error) {
+          console.warn('[RESOLVE] Failed to find transaction ID for brokerage:', error);
+        }
+
+        const brokerageResult = await distributeWinBrokerage(
+          req.user._id,
+          userForDistResolve,
+          totalBrokerage,
+          'Nifty UpDown',
+          gameKey,
+          { fundFromBtcPool: false, ledgerGameId: 'updown', skipUserRebate: true, transactionId }
+        );
+        
+        // Add brokerage distribution entries to transaction slips
+        if (brokerageResult.distributions && Object.keys(brokerageResult.distributions).length > 0) {
+          try {
+            // Find any transaction slip from this settlement
+            const sampleDebit = await GamesWalletLedger.findOne({
+              user: req.user._id,
+              gameId,
+              entryType: 'debit',
+              'meta.windowNumber': windowNumber,
+              'meta.transactionId': { $exists: true }
+            }).sort({ createdAt: -1 });
+            
+            if (sampleDebit?.meta?.transactionId) {
+              const slip = await findTransactionSlipByTransactionId(sampleDebit.meta.transactionId);
+              if (slip) {
+                await addBrokerageDistributionEntries(
+                  slip._id,
+                  sampleDebit.meta.transactionId,
+                  gameId,
+                  brokerageResult.distributions,
+                  totalBrokerage,
+                  'WIN_BROKERAGE'
+                );
+              }
+            }
+          } catch (brokerageSlipError) {
+            console.warn('[RESOLVE] Brokerage distribution slip entries failed:', brokerageSlipError);
+          }
+        }
+      }
+    }
+
+    res.json({
+      message: `${settledCount} trade(s) resolved`,
+      totalPnl,
+      newBalance: gw.balance,
+    });
+  } catch (error) {
+    if (settlementLock != null && req.user?._id && req.body?.gameId) {
+      await UpDownWindowSettlement.deleteOne({
+        user: req.user._id,
+        gameId: req.body.gameId,
+        windowNumber: settlementLock.windowNumber,
+        settlementDay: settlementLock.settlementDay,
+      }).catch(() => {});
+    }
+    console.error('Game bet resolve error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== NIFTY NUMBER GAME ====================
+
+// Helper: Get today's calendar date in IST (YYYY-MM-DD). Must match `getTodayISTString` (Intl) — do not use UTC shift + toISOString.
+function getTodayIST() {
+  return getTodayISTString(new Date());
+}
+
+// Nifty Number: bets cannot be deleted after placement (use PUT to adjust pending stake only).
+router.delete('/nifty-number/bet/:id', protectUser, async (req, res) => {
+  return res.status(400).json({
+    message: 'Nifty Number bets cannot be deleted once placed. You can edit a pending bet if allowed.',
+  });
+});
+
+// Place a Nifty Number bet (multiple numbers allowed per day)
+router.post('/nifty-number/bet', protectUser, async (req, res) => {
+  try {
+    const { selectedNumbers, amount } = req.body;
+    const userId = req.user._id;
+    const today = getTodayIST();
+
+    // Support both single number (legacy) and array of numbers
+    const numbers = Array.isArray(selectedNumbers)
+      ? selectedNumbers.map(n => parseInt(n))
+      : [parseInt(selectedNumbers ?? req.body.selectedNumber)];
+
+    // Validate numbers
+    if (numbers.length === 0) {
+      return res.status(400).json({ message: 'Please select at least one number' });
+    }
+    for (const num of numbers) {
+      if (isNaN(num) || num < 0 || num > 99) {
+        return res.status(400).json({ message: 'All numbers must be between .00 and .99' });
+      }
+    }
+    // Check for duplicates in the request
+    if (new Set(numbers).size !== numbers.length) {
+      return res.status(400).json({ message: 'Duplicate numbers are not allowed' });
+    }
+
+    // Get game settings
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyNumber;
+    if (!gameConfig?.enabled) {
+      return res.status(400).json({ message: 'Nifty Number game is currently disabled' });
+    }
+
+    // Check betting time window (9:15:00 to 15:24:59 IST)
+    // TEMPORARILY DISABLED FOR TESTING - uncomment below to enable
+    /*
+    const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const currentHour = nowIST.getHours();
+    const currentMinute = nowIST.getMinutes();
+    const currentTimeMinutes = currentHour * 60 + currentMinute;
+    
+    const biddingStartTime = gameConfig.biddingStartTime || '09:15';
+    const biddingEndTime = gameConfig.biddingEndTime || '15:24';
+    const [startH, startM] = biddingStartTime.split(':').map(Number);
+    const [endH, endM] = biddingEndTime.split(':').map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    
+    if (currentTimeMinutes < startMinutes || currentTimeMinutes > endMinutes) {
+      return res.status(400).json({ 
+        message: `Betting is only allowed from ${biddingStartTime} to ${biddingEndTime} IST. Current time: ${currentHour.toString().padStart(2, '0')}:${currentMinute.toString().padStart(2, '0')} IST` 
+      });
+    }
+    */
+
+    // Validate amount (per number)
+    const betAmount = parseFloat(amount);
+    if (isNaN(betAmount) || betAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid bet amount' });
+    }
+    const tValue = gameConfig.ticketPrice || settings.tokenValue || 300;
+    const minAmt = (gameConfig.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig.maxTickets || 100) * tValue;
+    if (betAmount < minAmt) {
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt}) per number` });
+    }
+    if (betAmount > maxAmt) {
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 100} ticket(s) (₹${maxAmt}) per number` });
+    }
+
+    // Support quantity (number of bets per number)
+    const qty = parseInt(req.body.quantity) || 1;
+    if (qty < 1) return res.status(400).json({ message: 'Invalid quantity' });
+
+    const perNumberTotal = betAmount * qty; // total for one number = per-ticket-amount * quantity
+    const totalCost = perNumberTotal * numbers.length;
+
+    // Check how many bets user already placed today (count quantity of each bet)
+    const todayBets = await NiftyNumberBet.find({ user: userId, betDate: today });
+    const todayBetsCount = todayBets.reduce((sum, b) => sum + (b.quantity || 1), 0);
+    const maxBetsPerDay = gameConfig.betsPerDay || 1;
+    const newBetsCount = qty * numbers.length;
+    if (todayBetsCount + newBetsCount > maxBetsPerDay) {
+      const remaining = Math.max(0, maxBetsPerDay - todayBetsCount);
+      return res.status(400).json({ message: `You can only place ${maxBetsPerDay} bets per day. You have ${remaining} remaining.` });
+    }
+
+    // Check if user already bet on any of these numbers today
+    const existingBets = await NiftyNumberBet.find({ user: userId, betDate: today, selectedNumber: { $in: numbers } });
+    if (existingBets.length > 0) {
+      const dupes = existingBets.map(b => `.${b.selectedNumber.toString().padStart(2, '0')}`).join(', ');
+      return res.status(400).json({ message: `You already bet on ${dupes} today` });
+    }
+
+    // Atomic debit — balance check + deduction in one MongoDB op (race-safe)
+    const gw = await atomicGamesWalletDebit(User, userId, totalCost, { usedMargin: totalCost });
+    if (!gw) {
+      return res.status(400).json({ message: `Insufficient balance. Need ₹${totalCost.toLocaleString()} for ${numbers.length} number(s)` });
+    }
+
+    let saCredited = false;
+    try {
+      await creditBtcUpDownSuperAdminPool(
+        totalCost,
+        'Nifty Number — stake to Super Admin pool (bet)'
+      );
+      saCredited = true;
+    } catch (poolErr) {
+      console.error('Nifty Number: Super Admin pool credit failed:', poolErr);
+      await atomicGamesWalletUpdate(User, userId, { balance: totalCost, usedMargin: -totalCost });
+      return res.status(503).json({
+        message: 'Could not route stake to house pool. Your games wallet was not charged.',
+      });
+    }
+
+    // Get user admin info for bet records after successful debit
+    const user = await User.findById(userId).select('admin');
+
+    // Create bets for each number (single record per number with quantity)
+    const betDocs = numbers.map(num => ({
+      user: userId,
+      selectedNumber: num,
+      amount: perNumberTotal,
+      quantity: qty,
+      betDate: today,
+      admin: user?.admin || null,
+      status: 'pending'
+    }));
+    let bets;
+    try {
+      bets = await NiftyNumberBet.insertMany(betDocs);
+    } catch (innerErr) {
+      if (saCredited) {
+        await debitBtcUpDownSuperAdminPool(
+          totalCost,
+          'Nifty Number — rollback Super Admin pool (bet persist failed)'
+        );
+      }
+      await atomicGamesWalletUpdate(User, userId, { balance: totalCost, usedMargin: -totalCost });
+      console.error('Nifty Number insertMany error:', innerErr);
+      throw innerErr;
+    }
+
+    const placedAt = bets[0]?.createdAt || new Date();
+    await recordGamesWalletLedger(userId, {
+      gameId: 'niftyNumber',
+      entryType: 'debit',
+      amount: totalCost,
+      balanceAfter: gw.balance,
+      description: `Nifty Number — bet (${numbers.length} number${numbers.length > 1 ? 's' : ''})`,
+      orderPlacedAt: placedAt,
+      meta: {
+        numbers,
+        perNumberAmount: betAmount,
+        tickets: parseFloat((totalCost / tValue).toFixed(2)),
+        tokenValue: tValue,
+      },
+    });
+
+    res.json({
+      message: `${numbers.length} bet(s) placed successfully!`,
+      bets: bets.map(b => ({
+        _id: b._id,
+        selectedNumber: b.selectedNumber,
+        amount: b.amount,
+        betDate: b.betDate,
+        status: b.status,
+      })),
+      newBalance: gw.balance
+    });
+  } catch (error) {
+    console.error('Nifty Number bet error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Modify a pending Nifty Number bet amount
+router.put('/nifty-number/bet/:id', protectUser, async (req, res) => {
+  try {
+    const { newAmount } = req.body;
+    const betId = req.params.id;
+    const userId = req.user._id;
+
+    const bet = await NiftyNumberBet.findOne({ _id: betId, user: userId });
+    if (!bet) return res.status(404).json({ message: 'Bet not found' });
+    if (bet.status !== 'pending') return res.status(400).json({ message: 'Can only modify pending bets' });
+
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyNumber;
+
+    const amount = parseFloat(newAmount);
+    if (isNaN(amount) || amount <= 0) return res.status(400).json({ message: 'Invalid amount' });
+    const tValue = gameConfig?.ticketPrice || settings.tokenValue || 300;
+    const minAmt = (gameConfig?.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig?.maxTickets || 100) * tValue;
+    if (amount < minAmt) return res.status(400).json({ message: `Minimum bet is ${gameConfig?.minTickets || 1} ticket(s) (₹${minAmt})` });
+    if (amount > maxAmt) return res.status(400).json({ message: `Maximum bet is ${gameConfig?.maxTickets || 100} ticket(s) (₹${maxAmt})` });
+
+    const oldAmount = bet.amount;
+    const diff = amount - oldAmount;
+
+    let gw;
+    if (diff > 0) {
+      gw = await atomicGamesWalletUpdate(User, userId, { balance: -diff, usedMargin: diff });
+      if (!gw) {
+        return res.status(400).json({ message: `Insufficient balance. Need ₹${diff} more` });
+      }
+      try {
+        await creditBtcUpDownSuperAdminPool(
+          diff,
+          'Nifty Number — additional stake to Super Admin pool (bet modified)'
+        );
+      } catch (poolErr) {
+        await atomicGamesWalletUpdate(User, userId, { balance: diff, usedMargin: -diff });
+        console.error('Nifty Number modify: SA credit failed:', poolErr);
+        return res.status(503).json({ message: 'Could not route additional stake to house pool.' });
+      }
+    } else if (diff < 0) {
+      const refund = -diff;
+      const poolOut = await debitBtcUpDownSuperAdminPool(
+        refund,
+        'Nifty Number — reduce stake from Super Admin pool (bet modified)'
+      );
+      if (!poolOut.ok) {
+        return res.status(503).json({ message: 'Could not adjust house pool for reduced stake.' });
+      }
+      gw = await atomicGamesWalletUpdate(User, userId, { balance: refund, usedMargin: -refund });
+      if (!gw) {
+        await creditBtcUpDownSuperAdminPool(
+          refund,
+          'Nifty Number — rollback SA (wallet credit failed after modify)'
+        );
+        return res.status(500).json({ message: 'Could not credit games wallet' });
+      }
+    } else {
+      const u = await User.findById(userId).select('gamesWallet.balance').lean();
+      gw = { balance: u?.gamesWallet?.balance ?? 0 };
+    }
+
+    if (diff !== 0) {
+      await recordGamesWalletLedger(userId, {
+        gameId: 'niftyNumber',
+        entryType: diff > 0 ? 'debit' : 'credit',
+        amount: Math.abs(diff),
+        balanceAfter: gw.balance,
+        description: `Nifty Number — bet size ${diff > 0 ? 'increased' : 'reduced'}`,
+        orderPlacedAt: bet.createdAt,
+        meta: {
+          betId: bet._id,
+          oldAmount,
+          newAmount: amount,
+          tickets: parseFloat((Math.abs(diff) / tValue).toFixed(2)),
+          tokenValue: tValue,
+        },
+      });
+    }
+
+    bet.amount = amount;
+    await bet.save();
+
+    res.json({
+      message: `Bet updated to ₹${amount}`,
+      bet: { _id: bet._id, selectedNumber: bet.selectedNumber, amount: bet.amount, status: bet.status },
+      newBalance: gw.balance
+    });
+  } catch (error) {
+    console.error('Nifty Number modify bet error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get today's bets for current user
+router.get('/nifty-number/today', protectUser, async (req, res) => {
+  try {
+    const today = getTodayIST();
+    const bets = await NiftyNumberBet.find({ user: req.user._id, betDate: today }).sort({ createdAt: -1 });
+
+    const settings = await GameSettings.getSettings();
+    const maxBetsPerDay = settings.games?.niftyNumber?.betsPerDay || 1;
+    const nnCfg = settings.games?.niftyNumber || {};
+
+    const totalBetsCount = bets.reduce((sum, b) => sum + (b.quantity || 1), 0);
+    res.json({
+      hasBet: bets.length > 0,
+      betsCount: totalBetsCount,
+      maxBetsPerDay,
+      remaining: Math.max(0, maxBetsPerDay - totalBetsCount),
+      bets: bets.map(b => ({
+        _id: b._id,
+        selectedNumber: b.selectedNumber,
+        amount: b.amount,
+        quantity: b.quantity || 1,
+        betDate: b.betDate,
+        createdAt: b.createdAt,
+        status: b.status,
+        resultNumber: b.resultNumber,
+        closingPrice: b.closingPrice,
+        profit: b.profit,
+        resultDeclaredAt: b.resultDeclaredAt,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get bet history for current user
+router.get('/nifty-number/history', protectUser, async (req, res) => {
+  try {
+    const bets = await NiftyNumberBet.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(30);
+
+    const settings = await GameSettings.getSettings();
+    const nnCfg = settings.games?.niftyNumber || {};
+
+    res.json(
+      bets.map((b) => ({
+        _id: b._id,
+        selectedNumber: b.selectedNumber,
+        amount: b.amount,
+        quantity: b.quantity || 1,
+        betDate: b.betDate,
+        createdAt: b.createdAt,
+        status: b.status,
+        resultNumber: b.resultNumber,
+        closingPrice: b.closingPrice,
+        profit: b.profit,
+        resultDeclaredAt: b.resultDeclaredAt,
+      }))
+    );
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Declared Nifty Number result for a calendar day (any bet row with resultNumber set after admin clearing)
+router.get('/nifty-number/daily-result', protectUser, async (req, res) => {
+  try {
+    const date = typeof req.query.date === 'string' && req.query.date.trim() ? req.query.date.trim() : getTodayIST();
+    const row = await NiftyNumberBet.findOne({
+      betDate: date,
+      resultNumber: { $ne: null },
+    })
+      .sort({ resultDeclaredAt: -1, updatedAt: -1 })
+      .select('resultNumber closingPrice resultDeclaredAt betDate')
+      .lean();
+
+    if (!row || row.resultNumber == null) {
+      return res.json({ declared: false, betDate: date });
+    }
+
+    res.json({
+      declared: true,
+      betDate: date,
+      resultNumber: row.resultNumber,
+      closingPrice: row.closingPrice ?? null,
+      resultDeclaredAt: row.resultDeclaredAt ?? null,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== NIFTY BRACKET GAME ====================
+
+// Place a bracket trade
+router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
+  try {
+    const { prediction, amount, entryPrice } = req.body;
+    const userId = req.user._id;
+
+    // Validate prediction
+    if (!['BUY', 'SELL'].includes(prediction)) {
+      return res.status(400).json({ message: 'Prediction must be BUY or SELL' });
+    }
+
+    // Get game settings
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyBracket;
+    if (!gameConfig?.enabled) {
+      return res.status(400).json({ message: 'Nifty Bracket game is currently disabled' });
+    }
+
+    if (!isNiftyBracketBiddingHoursBypassedForTesting()) {
+      const bidStart = gameConfig.biddingStartTime != null && String(gameConfig.biddingStartTime).trim() !== ''
+        ? gameConfig.biddingStartTime
+        : '09:15:29';
+      const bidEnd = gameConfig.biddingEndTime != null && String(gameConfig.biddingEndTime).trim() !== ''
+        ? gameConfig.biddingEndTime
+        : '15:29';
+      if (!isCurrentTimeWithinBracketBiddingIST(bidStart, bidEnd)) {
+        return res.status(400).json({
+          message: 'Nifty Bracket bidding is only open during market hours (see game settings).',
+        });
+      }
+    }
+
+    // Validate amount
+    const betAmount = parseFloat(amount);
+    if (isNaN(betAmount) || betAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid bet amount' });
+    }
+    const tValue =
+      gameConfig.ticketPrice != null && Number.isFinite(Number(gameConfig.ticketPrice)) && Number(gameConfig.ticketPrice) > 0
+        ? Number(gameConfig.ticketPrice)
+        : settings.tokenValue || 300;
+    const minAmt = (gameConfig.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig.maxTickets || 250) * tValue;
+    if (betAmount < minAmt) {
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt})` });
+    }
+    if (betAmount > maxAmt) {
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 250} ticket(s) (₹${maxAmt})` });
+    }
+
+    const bracketDayKey = getTodayISTString();
+    const capBuyDay = Math.max(0, Number(gameConfig.maxTicketsBuyPerDay) || 0);
+    const capSellDay = Math.max(0, Number(gameConfig.maxTicketsSellPerDay) || 0);
+    const bracketSideCap = prediction === 'SELL' ? capSellDay : capBuyDay;
+    if (bracketSideCap > 0) {
+      const usedBracket = await sumBracketSideTicketsInDay(userId, prediction, bracketDayKey, tValue);
+      const newBracketTickets = betAmount / tValue;
+      if (usedBracket + newBracketTickets > bracketSideCap + 1e-6) {
+        const leftB = Math.max(0, bracketSideCap - usedBracket);
+        return res.status(400).json({
+          message: `Max ${bracketSideCap} ${prediction} ticket(s) per day (${usedBracket.toFixed(2)} already used, ~${leftB.toFixed(2)} remaining).`,
+        });
+      }
+    }
+
+    const anchorToSpot = gameConfig.bracketAnchorToSpot !== false;
+    let price;
+    if (anchorToSpot) {
+      const spot = await resolveNiftyJackpotSpotPrice();
+      if (spot == null || !Number.isFinite(Number(spot)) || Number(spot) <= 0) {
+        return res.status(503).json({ message: 'Nifty spot unavailable; try again shortly.' });
+      }
+      price = parseFloat(Number(spot).toFixed(2));
+    } else {
+      const ep = parseFloat(entryPrice);
+      if (isNaN(ep) || ep <= 0) {
+        return res.status(400).json({ message: 'Invalid entry price' });
+      }
+      price = ep;
+    }
+
+    const bracketGap = gameConfig.bracketGap || 20;
+    const expiryMinutes = gameConfig.expiryMinutes || 5;
+    const winMultiplier =
+      Number(gameConfig.winMultiplier) > 0 ? Number(gameConfig.winMultiplier) : 1.9;
+    const brokeragePercent = gameConfig.brokeragePercent || 5;
+    const settleAtResultTime = gameConfig.settleAtResultTime !== false;
+
+    const upperTarget = parseFloat((price + bracketGap).toFixed(2));
+    const lowerTarget = parseFloat((price - bracketGap).toFixed(2));
+
+    // Atomic debit — balance check + deduction in one MongoDB op (race-safe)
+    const gw = await atomicGamesWalletDebit(User, userId, betAmount, { usedMargin: betAmount });
+    if (!gw) {
+      return res.status(400).json({ message: 'Insufficient balance in games wallet' });
+    }
+
+    // Create the trade — default: settle once at result time IST (e.g. 3:31 PM), not on short intraday expiry
+    const resultTimeStr = gameConfig.resultTime != null && String(gameConfig.resultTime).trim() !== ''
+      ? gameConfig.resultTime
+      : '15:31';
+    const expiresAt = settleAtResultTime
+      ? getNextBracketSettlementDateIST(resultTimeStr)
+      : new Date(Date.now() + expiryMinutes * 60 * 1000);
+    const tradeData = {
+      user: userId,
+      entryPrice: price,
+      upperTarget,
+      lowerTarget,
+      bracketGap,
+      prediction,
+      amount: betAmount,
+      winMultiplier,
+      brokeragePercent,
+      expiresAt,
+      status: 'active',
+      settlesAtSessionClose: settleAtResultTime,
+    };
+    const uForAdmin = await User.findById(userId).select('admin').lean();
+    if (uForAdmin?.admin) tradeData.admin = uForAdmin.admin;
+    const trade = await NiftyBracketTrade.create(tradeData);
+
+    await recordGamesWalletLedger(userId, {
+      gameId: 'niftyBracket',
+      entryType: 'debit',
+      amount: betAmount,
+      balanceAfter: gw.balance,
+      description: `Nifty Bracket — ${prediction} trade`,
+      orderPlacedAt: trade.createdAt,
+      meta: {
+        prediction,
+        entryPrice: price,
+        tickets: parseFloat((betAmount / tValue).toFixed(2)),
+        tokenValue: tValue,
+        tradeId: trade._id,
+      },
+    });
+
+    res.json({
+      message: 'Trade placed!',
+      trade: {
+        _id: trade._id,
+        entryPrice: trade.entryPrice,
+        upperTarget: trade.upperTarget,
+        lowerTarget: trade.lowerTarget,
+        prediction: trade.prediction,
+        amount: trade.amount,
+        status: trade.status,
+        expiresAt: trade.expiresAt,
+        winMultiplier,
+        brokeragePercent
+      },
+      newBalance: gw.balance
+    });
+  } catch (error) {
+    console.error('Nifty Bracket trade error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get active Up/Down bets for current user
+router.get('/updown/active', protectUser, async (req, res) => {
+  try {
+    const { gameId = 'updown' } = req.query;
+    if (!['updown', 'btcupdown'].includes(gameId)) {
+      return res.status(400).json({ message: 'Invalid game ID' });
+    }
+
+    const allDebitBets = await GamesWalletLedger.find({
+      user: req.user._id,
+      gameId,
+      entryType: 'debit',
+      description: { $regex: 'Up/Down.*bet.*\\(UP\\)|Up/Down.*bet.*\\(DOWN\\)', $options: 'i' },
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const settlements = await UpDownWindowSettlement.find({
+      user: req.user._id,
+      gameId,
+    })
+      .select({ windowNumber: 1, settlementDay: 1 })
+      .lean();
+
+    const settledKey = (wn, day) => `${Number(wn)}|${day}`;
+    const settledSet = new Set(
+      settlements.map((s) => settledKey(s.windowNumber, s.settlementDay))
+    );
+
+    const winCredits = await GamesWalletLedger.find({
+      user: req.user._id,
+      gameId,
+      entryType: 'credit',
+      'meta.won': true,
+    })
+      .select({ meta: 1 })
+      .sort({ createdAt: -1 })
+      .limit(400)
+      .lean();
+    const paidWinKey = new Set();
+    for (const c of winCredits) {
+      const m = c.meta || {};
+      const w = Number(m.windowNumber);
+      const stake = Number(m.stake);
+      if (!Number.isFinite(w) || !Number.isFinite(stake) || stake <= 0) continue;
+      paidWinKey.add(`${w}|${stake.toFixed(2)}`);
+    }
+
+    const activeTrades = [];
+    for (const bet of allDebitBets) {
+      const wn = Number(bet.meta?.windowNumber);
+      if (!Number.isFinite(wn)) continue;
+      const day =
+        typeof bet.meta?.settlementDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(bet.meta.settlementDay)
+          ? bet.meta.settlementDay
+          : getTodayISTString(bet.createdAt || new Date());
+      const dayFromCreated = getTodayISTString(bet.createdAt || new Date());
+      if (settledSet.has(settledKey(wn, day)) || settledSet.has(settledKey(wn, dayFromCreated))) continue;
+
+      const stakeAmt = Number(bet.amount);
+      if (Number.isFinite(stakeAmt) && stakeAmt > 0 && paidWinKey.has(`${wn}|${stakeAmt.toFixed(2)}`)) continue;
+
+      activeTrades.push({
+        _id: bet._id,
+        prediction: bet.meta?.prediction || 'UP',
+        amount: bet.amount,
+        entryPrice: bet.meta?.entryPrice || 0,
+        windowNumber: bet.meta?.windowNumber ?? wn,
+        settlementDay: day,
+        createdAt: bet.createdAt,
+      });
+    }
+
+    res.json(activeTrades);
+  } catch (error) {
+    console.error('Error fetching active Up/Down bets:', error);
+    res.status(500).json({ message: 'Failed to fetch active bets' });
+  }
+});
+
+// Get Up/Down trade results for current user
+router.get('/updown/results', protectUser, async (req, res) => {
+  try {
+    const { gameId = 'updown' } = req.query;
+    if (!['updown', 'btcupdown'].includes(gameId)) {
+      return res.status(400).json({ message: 'Invalid game ID' });
+    }
+
+    // Get recent credit entries (settled bets) from GamesWalletLedger
+    const settledBets = await GamesWalletLedger.find({
+      user: req.user._id,
+      gameId,
+      entryType: 'credit',
+      'meta.won': { $exists: true }
+    })
+    .sort({ createdAt: -1 })
+    .limit(10);
+
+    const debitBetRe = /Up\/Down.*bet.*\(UP\)|Up\/Down.*bet.*\(DOWN\)/i;
+    const toBetPlacedIso = (v) => {
+      if (v == null || v === '') return null;
+      const d = v instanceof Date ? v : new Date(v);
+      const t = d.getTime();
+      return Number.isFinite(t) ? d.toISOString() : null;
+    };
+
+    const results = await Promise.all(
+      settledBets.map(async (bet) => {
+        const m = bet.meta || {};
+        let betPlacedAt = toBetPlacedIso(m.orderPlacedAt);
+        if (!betPlacedAt) {
+          const wn = Number(m.windowNumber);
+          const stake = Number(m.stake);
+          if (Number.isFinite(wn)) {
+            const debitQ = {
+              user: req.user._id,
+              gameId,
+              entryType: 'debit',
+              description: { $regex: debitBetRe, $options: 'i' },
+              $or: [{ 'meta.windowNumber': wn }, { 'meta.windowNumber': String(wn) }],
+              createdAt: { $lte: bet.createdAt || new Date() },
+            };
+            if (Number.isFinite(stake) && stake > 0) debitQ.amount = stake;
+            const debit = await GamesWalletLedger.findOne(debitQ)
+              .sort({ createdAt: 1 })
+              .select('createdAt')
+              .lean();
+            if (debit?.createdAt) betPlacedAt = new Date(debit.createdAt).toISOString();
+          }
+        }
+        return {
+          windowNumber: m.windowNumber || 0,
+          prediction: m.prediction || 'UP',
+          resultPrice: m.exitPrice || 0,
+          won: m.won || false,
+          pnl: bet.amount,
+          createdAt: bet.createdAt,
+          betPlacedAt,
+        };
+      })
+    );
+
+    res.json({ results });
+  } catch (error) {
+    console.error('Error fetching Up/Down results:', error);
+    res.status(500).json({ message: 'Failed to fetch results' });
+  }
+});
+
+// Manual settlement for Up/Down trades (ledger-based fallback; mirrors /game-bet/resolve economics)
+router.post('/updown/manual-settle', protectUser, async (req, res) => {
+  let settlementLock = null;
+  try {
+    const {
+      gameId: rawGameId = 'updown',
+      windowNumber,
+      openPrice,
+      closePrice,
+      resultPrice,
+      settlementDay: rawSettlementDay,
+    } = req.body;
+    const gameId = rawGameId === 'btcupdown' ? 'btcupdown' : 'updown';
+    const wn = Number(windowNumber);
+
+    if (!['updown', 'btcupdown'].includes(gameId)) {
+      return res.status(400).json({ message: 'Invalid gameId' });
+    }
+    if (!Number.isFinite(wn)) {
+      return res.status(400).json({ message: 'Window number is required' });
+    }
+
+    const settlementDay =
+      typeof rawSettlementDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(String(rawSettlementDay).trim())
+        ? String(rawSettlementDay).trim()
+        : getTodayISTString();
+    const dayStart = startOfISTDayFromKey(settlementDay);
+    const dayEnd = endOfISTDayFromKey(settlementDay);
+    if (!dayStart || !dayEnd) {
+      return res.status(400).json({ message: 'Invalid settlementDay (use YYYY-MM-DD IST)' });
+    }
+
+    const officialManual = await GameResult.findOne({
+      gameId,
+      windowNumber: wn,
+      windowDate: { $gte: dayStart, $lt: dayEnd },
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+    const hasOfficial =
+      officialManual &&
+      Number.isFinite(Number(officialManual.openPrice)) &&
+      Number.isFinite(Number(officialManual.closePrice)) &&
+      Number(officialManual.openPrice) > 0 &&
+      Number(officialManual.closePrice) > 0;
+
+    let closePx = hasOfficial
+      ? Number(officialManual.closePrice)
+      : Number(closePrice ?? resultPrice);
+    if (!Number.isFinite(closePx) || closePx <= 0) {
+      return res.status(400).json({
+        message:
+          'closePrice or resultPrice (positive number) is required when no official GameResult exists for this window',
+      });
+    }
+
+    if (gameId === 'btcupdown' && settlementDay === getTodayISTString()) {
+      if (currentTotalSecondsIST() < btcResultRefSecForUiWindow(wn)) {
+        return res.status(400).json({
+          message:
+            'BTC Up/Down: manual settlement is only allowed after the scheduled result time (IST) for this window.',
+        });
+      }
+    }
+
+    try {
+      await UpDownWindowSettlement.create({
+        user: req.user._id,
+        gameId,
+        windowNumber: wn,
+        settlementDay,
+      });
+      settlementLock = { windowNumber: wn, settlementDay };
+    } catch (e) {
+      if (e.code === 11000) {
+        return res.status(409).json({ message: 'This window was already settled for your account' });
+      }
+      throw e;
+    }
+
+    const debitBets = await GamesWalletLedger.find({
+      user: req.user._id,
+      gameId,
+      entryType: 'debit',
+      $or: [{ 'meta.windowNumber': wn }, { 'meta.windowNumber': String(wn) }],
+      description: { $regex: 'Up/Down.*bet.*\\(UP\\)|Up/Down.*bet.*\\(DOWN\\)', $options: 'i' },
+      createdAt: { $gte: dayStart, $lt: dayEnd },
+    });
+
+    if (debitBets.length === 0) {
+      await UpDownWindowSettlement.deleteOne({ user: req.user._id, gameId, windowNumber: wn, settlementDay });
+      return res.status(404).json({ message: 'No trades found for this window' });
+    }
+
+    let openPx = hasOfficial ? Number(officialManual.openPrice) : Number(openPrice);
+    if (!hasOfficial && (!Number.isFinite(openPx) || openPx <= 0)) {
+      const entries = debitBets
+        .map((b) => Number(b.meta?.entryPrice))
+        .filter((x) => Number.isFinite(x) && x > 0);
+      openPx = entries.length ? Math.min(...entries) : NaN;
+    }
+    if (!Number.isFinite(openPx) || openPx <= 0) {
+      await UpDownWindowSettlement.deleteOne({ user: req.user._id, gameId, windowNumber: wn, settlementDay });
+      return res.status(400).json({
+        message: 'openPrice is required (window open LTP), or bets must have entryPrice on ledger meta',
+      });
+    }
+
+    let settingsResolve = null;
+    try {
+      settingsResolve = await GameSettings.getSettings();
+    } catch (e) {
+      console.warn('[MANUAL SETTLE] GameSettings load failed', e?.message);
+    }
+    const gameKeyCfg = gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
+    const gcfg = settingsResolve?.games?.[gameKeyCfg] || {};
+    const winMult = Number(gcfg.winMultiplier) > 0 ? Number(gcfg.winMultiplier) : 1.95;
+    const brokPctManual =
+      gcfg.brokeragePercent != null && Number.isFinite(Number(gcfg.brokeragePercent))
+        ? Number(gcfg.brokeragePercent)
+        : 0;
+    const perTicket =
+      gcfg?.ticketPrice != null && Number.isFinite(Number(gcfg.ticketPrice))
+        ? Number(gcfg.ticketPrice)
+        : (settingsResolve?.tokenValue || 300);
+    const grossHierarchyPctSumManual =
+      (Number(gcfg?.grossPrizeSubBrokerPercent) || 0) +
+      (Number(gcfg?.grossPrizeBrokerPercent) || 0) +
+      (Number(gcfg?.grossPrizeAdminPercent) || 0);
+    const useGrossPrizeHierarchyManual = grossHierarchyPctSumManual > 0;
+
+    let totalBalanceInc = 0;
+    let totalMarginDec = 0;
+    let totalPnl = 0;
+    let totalLoss = 0;
+    let totalBrokerage = 0;
+    let settledCount = 0;
+    const ledgerEntries = [];
+    const hierarchyJobsManual = [];
+
+    const userDocManual = await User.findById(req.user._id).populate('admin');
+
+    for (const bet of debitBets) {
+      const amount = Number(bet.amount);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+
+      const prediction = bet.meta?.prediction === 'DOWN' ? 'DOWN' : 'UP';
+      const authoritative = settleUpDownFromPrices(prediction, openPx, closePx);
+      const won = authoritative === true;
+
+      let brokerage = 0;
+      let pnl;
+      let creditTotal = 0;
+      if (won) {
+        const grossWin = amount * winMult;
+        if (useGrossPrizeHierarchyManual && userDocManual) {
+          const grossBreakdown = await computeNiftyJackpotGrossHierarchyBreakdown(
+            userDocManual,
+            grossWin,
+            gcfg
+          );
+          brokerage = grossBreakdown.totalHierarchy;
+          if (brokerage > grossWin) brokerage = grossWin;
+          pnl = parseFloat((grossWin - amount).toFixed(2));
+          creditTotal = parseFloat(Number(grossWin).toFixed(2));
+          if (brokerage > 0 && grossBreakdown) {
+            hierarchyJobsManual.push({ breakdown: grossBreakdown });
+          }
+        } else {
+          const parts = computeUpDownWinPayout(amount, winMult, brokPctManual);
+          brokerage = parts.brokerage;
+          pnl = parts.pnl;
+          creditTotal = parts.creditTotal;
+          totalBrokerage += brokerage;
+        }
+      } else {
+        pnl = -amount;
+      }
+      if (!Number.isFinite(pnl)) continue;
+
+      totalMarginDec += amount;
+      if (won) {
+        totalBalanceInc += creditTotal;
+        ledgerEntries.push({
+          gameId,
+          entryType: 'credit',
+          amount: creditTotal,
+          description: `${gameId === 'btcupdown' ? 'BTC' : 'Nifty'} Up/Down — win (gross payout; hierarchy from pool) [manual]`,
+          meta: {
+            won: true,
+            stake: amount,
+            pnl,
+            brokerage,
+            grossPrizeHierarchy: useGrossPrizeHierarchyManual,
+            hierarchyPaidFromPoolExtra: brokerage > 0,
+            tickets: parseFloat((amount / perTicket).toFixed(2)),
+            tokenValue: perTicket,
+            prediction,
+            windowNumber: wn,
+            entryPrice: openPx,
+            exitPrice: closePx,
+            manualSettle: true,
+            orderPlacedAt: bet.createdAt,
+          },
+        });
+      } else {
+        totalLoss += amount;
+      }
+      totalPnl += pnl;
+      settledCount += 1;
+    }
+
+    if (settledCount === 0) {
+      await UpDownWindowSettlement.deleteOne({ user: req.user._id, gameId, windowNumber: wn, settlementDay });
+      return res.status(400).json({ message: 'No valid trades could be settled' });
+    }
+
+    const isBtcManual = gameId === 'btcupdown';
+    if (isBtcManual && totalBalanceInc > 0) {
+      const poolDebit = await debitBtcUpDownSuperAdminPool(
+        totalBalanceInc,
+        `BTC Up/Down — win payout from pool [manual] (−₹${totalBalanceInc.toFixed(2)})`
+      );
+      if (!poolDebit.ok) {
+        await UpDownWindowSettlement.deleteOne({ user: req.user._id, gameId, windowNumber: wn, settlementDay });
+        return res.status(503).json({
+          message:
+            'BTC Up/Down payout failed: no active Super Admin wallet found. Configure an active Super Admin and retry settlement.',
+        });
+      }
+    }
+
+    const gw = await atomicGamesWalletUpdate(User, req.user._id, {
+      balance: totalBalanceInc,
+      usedMargin: -totalMarginDec,
+      realizedPnL: totalPnl,
+      todayRealizedPnL: totalPnl,
+    });
+
+    for (const entry of ledgerEntries) {
+      await recordGamesWalletLedger(req.user._id, {
+        ...entry,
+        balanceAfter: gw.balance,
+      });
+    }
+
+    if (isBtcManual) {
+      if (useGrossPrizeHierarchyManual && userDocManual) {
+        for (const job of hierarchyJobsManual) {
+          await creditNiftyJackpotGrossHierarchyFromPool(req.user._id, userDocManual, job.breakdown, {
+            gameLabel: 'BTC Up/Down',
+            gameKey: gameKeyCfg,
+            logTag: 'UpDownGrossHierarchy',
+          });
+        }
+      } else if (totalBrokerage > 0 && userDocManual) {
+        await distributeWinBrokerage(req.user._id, userDocManual, totalBrokerage, 'BTC UpDown', gameKeyCfg, {
+          fundFromBtcPool: true,
+          ledgerGameId: 'btcupdown',
+          skipUserRebate: true,
+        });
+      }
+    } else {
+      if (totalLoss > 0 && userDocManual) {
+        await distributeGameProfit(userDocManual, totalLoss, 'Nifty UpDown', null, gameKeyCfg);
+      }
+      if (useGrossPrizeHierarchyManual && userDocManual) {
+        for (const job of hierarchyJobsManual) {
+          await creditNiftyJackpotGrossHierarchyFromPool(req.user._id, userDocManual, job.breakdown, {
+            gameLabel: 'Nifty Up/Down',
+            gameKey: gameKeyCfg,
+            logTag: 'UpDownGrossHierarchy',
+          });
+        }
+      } else if (totalBrokerage > 0 && userDocManual) {
+        await distributeWinBrokerage(req.user._id, userDocManual, totalBrokerage, 'Nifty UpDown', gameKeyCfg, {
+          fundFromBtcPool: false,
+          ledgerGameId: 'updown',
+          skipUserRebate: true,
+        });
+      }
+    }
+
+    res.json({
+      message: `Manual settle: ${settledCount} trade(s) for window ${wn}`,
+      settledCount: ledgerEntries.length,
+      totalCredited: totalBalanceInc,
+      newBalance: gw.balance,
+      openPrice: openPx,
+      closePrice: closePx,
+    });
+  } catch (error) {
+    if (settlementLock != null && req.user?._id) {
+      const gid = req.body?.gameId === 'btcupdown' ? 'btcupdown' : 'updown';
+      await UpDownWindowSettlement.deleteOne({
+        user: req.user._id,
+        gameId: gid,
+        windowNumber: settlementLock.windowNumber,
+        settlementDay: settlementLock.settlementDay,
+      }).catch(() => {});
+    }
+    console.error('Error in manual settlement:', error);
+    res.status(500).json({ message: error.message || 'Failed to settle trades' });
+  }
+});
+
+// Get active bracket trades for current user
+router.get('/nifty-bracket/active', protectUser, async (req, res) => {
+  try {
+    const trades = await NiftyBracketTrade.find({
+      user: req.user._id,
+      status: 'active'
+    }).sort({ createdAt: -1 });
+
+    res.json(trades.map(t => ({
+        _id: t._id,
+        entryPrice: t.entryPrice,
+        upperTarget: t.upperTarget,
+        lowerTarget: t.lowerTarget,
+        prediction: t.prediction,
+        amount: t.amount,
+        status: t.status,
+        expiresAt: t.expiresAt,
+        winMultiplier: t.winMultiplier,
+        brokeragePercent: t.brokeragePercent,
+        createdAt: t.createdAt,
+        settlesAtSessionClose: t.settlesAtSessionClose === true,
+      })));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get bracket trade history for current user
+router.get('/nifty-bracket/history', protectUser, async (req, res) => {
+  try {
+    const trades = await NiftyBracketTrade.find({
+      user: req.user._id,
+      status: { $ne: 'active' }
+    }).sort({ createdAt: -1 }).limit(50);
+
+    res.json(trades.map(t => ({
+      _id: t._id,
+      entryPrice: t.entryPrice,
+      upperTarget: t.upperTarget,
+      lowerTarget: t.lowerTarget,
+      prediction: t.prediction,
+      amount: t.amount,
+      status: t.status,
+      exitPrice: t.exitPrice,
+      profit: t.profit,
+      brokerageAmount: t.brokerageAmount,
+      resolvedAt: t.resolvedAt,
+      createdAt: t.createdAt
+    })));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Resolve a bracket trade (called by socket/cron when price hits target or expires)
+router.post('/nifty-bracket/resolve', protectUser, async (req, res) => {
+  try {
+    const { tradeId, currentPrice, forceMidRangeAsExpired: forceBody } = req.body;
+    const trade = await NiftyBracketTrade.findOne({ _id: tradeId, user: req.user._id, status: 'active' });
+    if (!trade) {
+      return res.status(404).json({ message: 'Active trade not found' });
+    }
+
+    const manualSettleAllowed =
+      process.env.NODE_ENV !== 'production' || process.env.ALLOW_USER_BRACKET_MANUAL_SETTLE === 'true';
+    const forceMidRangeAsExpired = !!forceBody && manualSettleAllowed;
+
+    try {
+      const out = await resolveNiftyBracketTrade(trade, currentPrice, { forceMidRangeAsExpired });
+      res.json({
+        message: out.message,
+        trade: out.trade,
+        newBalance: out.newBalance,
+      });
+    } catch (e) {
+      if (e.message === 'Trade is still active, no target hit yet') {
+        return res.status(400).json({ message: e.message });
+      }
+      throw e;
+    }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== NIFTY JACKPOT GAME ====================
+
+/**
+ * User-entered NIFTY level stored as niftyPriceAtBid (ranking vs live spot / locked close).
+ * @returns {{ ok: true, value: number } | { ok: false, error: string }}
+ */
+function parseJackpotPredictedNiftyPrice(raw) {
+  if (raw === undefined || raw === null || (typeof raw === 'string' && String(raw).trim() === '')) {
+    return { ok: false, error: 'Predicted NIFTY price is required' };
+  }
+  const n =
+    typeof raw === 'number' && Number.isFinite(raw)
+      ? raw
+      : parseFloat(String(raw).replace(/,/g, '').trim());
+  if (!Number.isFinite(n) || n <= 0) {
+    return { ok: false, error: 'Enter a valid positive NIFTY price' };
+  }
+  if (n < 1000 || n > 200000) {
+    return { ok: false, error: 'Predicted price must be between 1,000 and 200,000' };
+  }
+  return { ok: true, value: Math.round(n * 100) / 100 };
+}
+
+// Place a jackpot bid — stake must be an integer number of tickets (amount = k × ticketPrice)
+router.post('/nifty-jackpot/bid', protectUser, async (req, res) => {
+  try {
+    const { amount, predictedPrice } = req.body;
+    const userId = req.user._id;
+    const today = getTodayIST();
+
+    // Get game settings
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyJackpot;
+    if (!gameConfig?.enabled) {
+      return res.status(400).json({ message: 'Nifty Jackpot game is currently disabled' });
+    }
+
+    // Check bidding time window (default: 09:15 to 14:59 IST)
+    const biddingStartTime = gameConfig?.biddingStartTime || '09:15';
+    const biddingEndTime = gameConfig?.biddingEndTime || '14:59';
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+    const istNow = new Date(now.getTime() + istOffset);
+    const currentHours = istNow.getUTCHours();
+    const currentMinutes = istNow.getUTCMinutes();
+    const currentTimeMinutes = currentHours * 60 + currentMinutes;
+    
+    const [startH, startM] = biddingStartTime.split(':').map(Number);
+    const [endH, endM] = biddingEndTime.split(':').map(Number);
+    const startTimeMinutes = startH * 60 + startM;
+    const endTimeMinutes = endH * 60 + endM + 1; // +1 to include 14:59:59
+
+    if (!isNiftyJackpotBiddingHoursBypassedForTesting()) {
+      if (currentTimeMinutes < startTimeMinutes || currentTimeMinutes > endTimeMinutes) {
+        return res.status(400).json({
+          message: `Bidding is only allowed from ${biddingStartTime} to ${biddingEndTime} IST. Current time: ${String(currentHours).padStart(2, '0')}:${String(currentMinutes).padStart(2, '0')} IST`,
+        });
+      }
+    }
+
+    // Validate amount
+    const bidAmount = parseFloat(amount);
+    if (isNaN(bidAmount) || bidAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid bid amount' });
+    }
+    const tValue = gameConfig?.ticketPrice || settings.tokenValue || 300;
+    const oneTicketRs = Number(tValue);
+    if (!Number.isFinite(oneTicketRs) || oneTicketRs <= 0) {
+      return res.status(500).json({ message: 'Invalid ticket price configuration' });
+    }
+    const ticketUnits = Math.round(bidAmount / oneTicketRs);
+    if (
+      ticketUnits < 1 ||
+      !Number.isFinite(ticketUnits) ||
+      Math.abs(bidAmount - ticketUnits * oneTicketRs) > 0.01
+    ) {
+      return res.status(400).json({
+        message: `Stake must be a whole number of tickets (multiple of ₹${oneTicketRs.toLocaleString('en-IN')} per ticket).`,
+      });
+    }
+    const minTickets = Math.max(1, Math.min(5000, Number(gameConfig.minTickets) || 1));
+    const maxPerRequest = Math.max(
+      minTickets,
+      Math.min(
+        5000,
+        Number(gameConfig.maxTicketsPerRequest) || Number(gameConfig.maxTickets) || 100
+      )
+    );
+    if (ticketUnits < minTickets || ticketUnits > maxPerRequest) {
+      return res.status(400).json({
+        message: `Each request must be between ${minTickets} and ${maxPerRequest} ticket(s) (₹${oneTicketRs.toLocaleString('en-IN')} each).`,
+      });
+    }
+
+    // One ticket per request: cap by number of separate bids today (not sum of tickets), so users can
+    // place many sequential single-ticket bids. Multi-ticket requests: keep legacy total-tickets cap.
+    const singleTicketFlow = maxPerRequest <= 1;
+    if (singleTicketFlow) {
+      let maxDailyBids = Math.min(
+        5000,
+        Number(gameConfig.bidsPerDay) || Number(gameConfig.maxTickets) || 100
+      );
+      // bidsPerDay was sometimes set to 1 together with maxTicketsPerRequest=1 meaning "one ticket per
+      // click", which incorrectly limited the whole day to one ticket; treat as default daily bid budget.
+      if (maxDailyBids === 1) maxDailyBids = 100;
+      const bidsToday = await NiftyJackpotBid.countDocuments({
+        $and: [{ user: userId }, buildNiftyJackpotIstDayQuery(today)],
+      });
+      if (bidsToday >= maxDailyBids) {
+        return res.status(400).json({
+          message: `Maximum ${maxDailyBids} bid(s) per day for Nifty Jackpot (${bidsToday} already placed). Try again tomorrow.`,
+        });
+      }
+    } else {
+      const maxTicketsDay = Math.max(
+        1,
+        Math.min(5000, Number(gameConfig.bidsPerDay) || Number(gameConfig.maxTickets) || 100)
+      );
+      const agg = await NiftyJackpotBid.aggregate([
+        { $match: { $and: [{ user: userId }, buildNiftyJackpotIstDayQuery(today)] } },
+        { $group: { _id: null, totalAmount: { $sum: '$amount' } } },
+      ]);
+      const amountUsedToday = Number(agg[0]?.totalAmount) || 0;
+      const ticketsUsedToday = Math.round(amountUsedToday / oneTicketRs);
+      if (ticketsUsedToday + ticketUnits > maxTicketsDay) {
+        return res.status(400).json({
+          message: `Maximum ${maxTicketsDay} ticket(s) per day for Nifty Jackpot (${ticketsUsedToday} already used). Try again tomorrow.`,
+        });
+      }
+    }
+
+    // Atomic debit — balance check + deduction in one MongoDB op (race-safe)
+    const gw = await atomicGamesWalletDebit(User, userId, bidAmount, { usedMargin: bidAmount });
+    if (!gw) {
+      return res.status(400).json({ message: 'Insufficient balance in games wallet' });
+    }
+
+    let saCredited = false;
+    try {
+      await creditBtcUpDownSuperAdminPool(
+        bidAmount,
+        'Nifty Jackpot — stake to Super Admin pool (bet)'
+      );
+      saCredited = true;
+    } catch (poolErr) {
+      console.error('Nifty Jackpot: Super Admin pool credit failed:', poolErr);
+      await atomicGamesWalletUpdate(User, userId, { balance: bidAmount, usedMargin: -bidAmount });
+      return res.status(503).json({
+        message: 'Could not route stake to house pool. Your games wallet was not charged.',
+      });
+    }
+
+    // Get user admin info for bid record after successful debit
+    const user = await User.findById(userId).select('admin');
+
+    const priceParse = parseJackpotPredictedNiftyPrice(predictedPrice);
+    if (!priceParse.ok) {
+      if (saCredited) {
+        await debitBtcUpDownSuperAdminPool(
+          bidAmount,
+          'Nifty Jackpot — rollback Super Admin pool (invalid predicted price)'
+        );
+      }
+      await atomicGamesWalletUpdate(User, userId, { balance: bidAmount, usedMargin: -bidAmount });
+      return res.status(400).json({ message: priceParse.error });
+    }
+    const niftyPriceAtBid = priceParse.value;
+
+    try {
+      const bidData = {
+        user: userId,
+        amount: bidAmount,
+        ticketCount: ticketUnits,
+        betDate: today,
+        status: 'pending',
+        niftyPriceAtBid,
+      };
+      if (user?.admin) bidData.admin = user.admin;
+      const bid = await NiftyJackpotBid.create(bidData);
+
+      await recordGamesWalletLedger(userId, {
+        gameId: 'niftyJackpot',
+        entryType: 'debit',
+        amount: bidAmount,
+        balanceAfter: gw.balance,
+        description:
+          ticketUnits === 1 ? 'Nifty Jackpot — 1 ticket' : `Nifty Jackpot — ${ticketUnits} tickets`,
+        orderPlacedAt: bid.createdAt,
+        meta: {
+          betDate: today,
+          tickets: ticketUnits,
+          tokenValue: tValue,
+          niftyPriceAtBid,
+          bidId: bid._id,
+        },
+      });
+
+      res.json({
+        message: 'Bid placed successfully!',
+        bid: {
+          _id: bid._id,
+          amount: bid.amount,
+          betDate: bid.betDate,
+          status: bid.status,
+          niftyPriceAtBid: bid.niftyPriceAtBid,
+        },
+        newBalance: gw.balance,
+      });
+    } catch (innerErr) {
+      if (saCredited) {
+        await debitBtcUpDownSuperAdminPool(
+          bidAmount,
+          'Nifty Jackpot — rollback Super Admin pool (bid persist failed)'
+        );
+      }
+      await atomicGamesWalletUpdate(User, userId, { balance: bidAmount, usedMargin: -bidAmount });
+      console.error('Nifty Jackpot bid error:', innerErr);
+      throw innerErr;
+    }
+  } catch (error) {
+    console.error('Nifty Jackpot bid error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update pending bid: set predicted NIFTY (body.predictedPrice), or refresh from live spot if omitted (no cancel, no stake change)
+router.put('/nifty-jackpot/bid/:id', protectUser, async (req, res) => {
+  try {
+    const bidId = req.params.id;
+    if (!bidId || !/^[a-fA-F0-9]{24}$/.test(bidId)) {
+      return res.status(400).json({ message: 'Invalid bid id' });
+    }
+    const userId = req.user._id;
+    const today = getTodayIST();
+
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyJackpot;
+    if (!gameConfig?.enabled) {
+      return res.status(400).json({ message: 'Nifty Jackpot game is currently disabled' });
+    }
+
+    const biddingStartTime = gameConfig?.biddingStartTime || '09:15';
+    const biddingEndTime = gameConfig?.biddingEndTime || '14:59';
+    const now = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const istNow = new Date(now.getTime() + istOffset);
+    const currentHours = istNow.getUTCHours();
+    const currentMinutes = istNow.getUTCMinutes();
+    const currentTimeMinutes = currentHours * 60 + currentMinutes;
+    const [startH, startM] = biddingStartTime.split(':').map(Number);
+    const [endH, endM] = biddingEndTime.split(':').map(Number);
+    const startTimeMinutes = startH * 60 + startM;
+    const endTimeMinutes = endH * 60 + endM + 1;
+
+    if (!isNiftyJackpotBiddingHoursBypassedForTesting()) {
+      if (currentTimeMinutes < startTimeMinutes || currentTimeMinutes > endTimeMinutes) {
+        return res.status(400).json({
+          message: `Bidding window closed (${biddingStartTime}–${biddingEndTime} IST). Orders cannot be modified.`,
+        });
+      }
+    }
+
+    const bid = await NiftyJackpotBid.findOne({
+      $and: [{ _id: bidId }, { user: userId }, buildNiftyJackpotIstDayQuery(today)],
+    });
+    if (!bid) {
+      return res.status(404).json({ message: 'Bid not found' });
+    }
+    if (bid.status !== 'pending') {
+      return res.status(400).json({ message: 'Only pending bids can be modified' });
+    }
+
+    const { predictedPrice } = req.body;
+    let niftyPriceAtBid;
+
+    if (predictedPrice !== undefined && predictedPrice !== null && String(predictedPrice).trim() !== '') {
+      const priceParse = parseJackpotPredictedNiftyPrice(predictedPrice);
+      if (!priceParse.ok) {
+        return res.status(400).json({ message: priceParse.error });
+      }
+      niftyPriceAtBid = priceParse.value;
+    } else {
+      niftyPriceAtBid = null;
+      const md = getMarketData();
+      const niftyWs = md['256265'] || md['99926000'];
+      if (niftyWs?.ltp != null && Number.isFinite(Number(niftyWs.ltp))) {
+        niftyPriceAtBid = Number(niftyWs.ltp);
+      }
+      if (niftyPriceAtBid == null) {
+        niftyPriceAtBid = await fetchNifty50LastPriceFromKite();
+      }
+      if (niftyPriceAtBid == null) {
+        niftyPriceAtBid = getDummyNiftyWhenMarketClosedForTesting();
+      }
+    }
+
+    bid.niftyPriceAtBid = niftyPriceAtBid;
+    await bid.save();
+
+    res.json({
+      message:
+        predictedPrice !== undefined && predictedPrice !== null && String(predictedPrice).trim() !== ''
+          ? 'Order updated (predicted NIFTY saved)'
+          : 'Order updated (NIFTY at bid refreshed from live)',
+      bid: {
+        _id: bid._id,
+        amount: bid.amount,
+        betDate: bid.betDate,
+        status: bid.status,
+        niftyPriceAtBid: bid.niftyPriceAtBid,
+      },
+    });
+  } catch (error) {
+    console.error('Nifty Jackpot modify error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get today's bids for current user (multiple entries; ticket count may be >1 per bid)
+router.get('/nifty-jackpot/today', protectUser, async (req, res) => {
+  try {
+    const today = getTodayIST();
+    const settings = await GameSettings.getSettings();
+    const jpCfg = settings.games?.niftyJackpot || {};
+    const oneTicketRs = Number(settings.games?.niftyJackpot?.ticketPrice || settings.tokenValue || 300);
+    const bids = await NiftyJackpotBid.find({
+      $and: [{ user: req.user._id }, buildNiftyJackpotIstDayQuery(today)],
+    }).sort({ createdAt: -1 });
+    const ticketsToday = bids.reduce(
+      (s, b) => s + niftyJackpotTicketUnitsForBid(b, oneTicketRs),
+      0
+    );
+    const totalStakedToday = bids.reduce((s, b) => s + (Number(b.amount) || 0), 0);
+    const latestBid = bids[0] || null;
+
+    res.json({
+      hasBid: ticketsToday > 0,
+      ticketsToday,
+      totalStakedToday,
+      bid: latestBid
+        ? {
+            _id: latestBid._id,
+            amount: latestBid.amount,
+            betDate: latestBid.betDate,
+            status: latestBid.status,
+            rank: latestBid.rank,
+            prize: latestBid.prize,
+            resultDeclaredAt: latestBid.resultDeclaredAt,
+            niftyPriceAtBid: latestBid.niftyPriceAtBid,
+          }
+        : null,
+      bids: bids.map((b) => ({
+          _id: b._id,
+          amount: b.amount,
+          ticketCount: niftyJackpotTicketUnitsForBid(b, oneTicketRs),
+          status: b.status,
+          rank: b.rank,
+          prize: b.prize,
+          niftyPriceAtBid: b.niftyPriceAtBid,
+          createdAt: b.createdAt,
+        })),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get live leaderboard — each row is one ticket; nearest to reference, then earlier bid time.
+// Before result: reference = live NIFTY spot. After declare: reference = locked close (same as settlement).
+router.get('/nifty-jackpot/leaderboard', protectUser, async (req, res) => {
+  try {
+    const date = req.query.date || getTodayIST();
+
+    const rawBids = await NiftyJackpotBid.find(buildNiftyJackpotIstDayQuery(date))
+      .populate('user', 'name username')
+      .limit(800);
+
+    const jackpotResultDoc = await NiftyJackpotResult.findOne({ resultDate: date })
+      .select('resultDeclared lockedPrice')
+      .lean();
+    const lockedPriceNum =
+      jackpotResultDoc?.lockedPrice != null && Number.isFinite(Number(jackpotResultDoc.lockedPrice))
+        ? Number(jackpotResultDoc.lockedPrice)
+        : null;
+    const resultDeclared = !!jackpotResultDoc?.resultDeclared;
+
+    const referenceSpot =
+      req.query.spot != null && req.query.spot !== '' && Number.isFinite(Number(req.query.spot))
+        ? Number(req.query.spot)
+        : await resolveNiftyJackpotSpotPrice();
+
+    const useLockedForRanking =
+      resultDeclared && lockedPriceNum != null && lockedPriceNum > 0;
+    const rankingRef = useLockedForRanking ? lockedPriceNum : Number(referenceSpot);
+
+    const bids = sortJackpotBidsByDistanceToReference(rawBids, rankingRef);
+    const uniquePlayerIds = new Set(
+      bids.map((b) => (b.user && b.user._id ? String(b.user._id) : b.user ? String(b.user) : '')).filter(Boolean)
+    );
+
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.niftyJackpot;
+    const topWinners = gameConfig?.topWinners || 20;
+
+    // Optional ?limit=N — return top N projected rows only (pool / myRank still use full sorted list)
+    let leaderboardLimit = null;
+    if (req.query.limit != null && String(req.query.limit).trim() !== '') {
+      const ln = parseInt(String(req.query.limit), 10);
+      if (Number.isFinite(ln) && ln > 0) {
+        leaderboardLimit = Math.min(500, ln);
+      }
+    }
+    const bidsForLeaderboard =
+      leaderboardLimit != null ? bids.slice(0, leaderboardLimit) : bids;
+
+    // Calculate total pool and prize percentages
+    const totalPool = bids.reduce((sum, b) => sum + b.amount, 0);
+    const brokeragePercent = gameConfig?.brokeragePercent ?? 0;
+    const netPool = totalPool;
+
+    const leaderboard = bidsForLeaderboard.map((bid, idx) => {
+      const rank = idx + 1;
+      const prizePercent = resolveJackpotPrizePercentForRank(rank, gameConfig);
+      const prize = rank <= topWinners ? Math.round(netPool * prizePercent / 100) : 0;
+      const bidTime = bid.createdAt || bid._id?.getTimestamp?.() || new Date();
+      const refR = Number(rankingRef);
+      const distRef =
+        Number.isFinite(refR) && refR > 0 && bid.niftyPriceAtBid != null && Number.isFinite(Number(bid.niftyPriceAtBid))
+          ? Math.abs(Number(bid.niftyPriceAtBid) - refR)
+          : null;
+      const refLive = Number(referenceSpot);
+      const distLive =
+        useLockedForRanking &&
+        Number.isFinite(refLive) &&
+        refLive > 0 &&
+        bid.niftyPriceAtBid != null &&
+        Number.isFinite(Number(bid.niftyPriceAtBid))
+          ? Math.abs(Number(bid.niftyPriceAtBid) - refLive)
+          : null;
+      return {
+        bidId: bid._id,
+        rank,
+        userId: bid.user?._id,
+        name: bid.user?.name || bid.user?.username || 'Anonymous',
+        amount: bid.amount,
+        bidTime: bidTime,
+        prizePercent,
+        prize,
+        isWinner: rank <= topWinners,
+        status: bid.status,
+        niftyPriceAtBid: bid.niftyPriceAtBid ?? null,
+        distanceToReference: distRef,
+        distanceToSpot: distRef,
+        distanceToLiveSpot: distLive,
+      };
+    });
+
+    const myId = String(req.user._id);
+    let myRank = null;
+    bids.forEach((b, i) => {
+      const uid = b.user && b.user._id ? String(b.user._id) : b.user ? String(b.user) : '';
+      if (uid === myId) {
+        const r = i + 1;
+        if (myRank === null || r < myRank) myRank = r;
+      }
+    });
+
+    const myBids = await NiftyJackpotBid.find({
+      $and: [{ user: req.user._id }, buildNiftyJackpotIstDayQuery(date)],
+    }).sort({ createdAt: -1 });
+    const myLatest = myBids[0];
+    const oneTicketRs = Number(gameConfig?.ticketPrice || settings.tokenValue || 300);
+    const myTicketsToday = myBids.reduce(
+      (s, b) => s + niftyJackpotTicketUnitsForBid(b, oneTicketRs),
+      0
+    );
+
+    const podiumIsOfficial = resultDeclared;
+    const lockedForPodium = lockedPriceNum;
+
+    let anonymousPodium = [];
+    if (podiumIsOfficial) {
+      const won = rawBids.filter((b) => b.status === 'won');
+      let ordered;
+      if (lockedForPodium != null && lockedForPodium > 0) {
+        ordered = sortJackpotBidsByDistanceToReference(won, lockedForPodium);
+      } else {
+        ordered = [...won].sort((a, b) => {
+          const ra = Number(a.rank);
+          const rb = Number(b.rank);
+          if (Number.isFinite(ra) && Number.isFinite(rb) && ra !== rb) return ra - rb;
+          return getBidTimeMs(a) - getBidTimeMs(b);
+        });
+      }
+      anonymousPodium = ordered.slice(0, 3).map((b) => ({
+        niftyPriceAtBid: b.niftyPriceAtBid ?? null,
+        bidTime: b.createdAt || b._id?.getTimestamp?.() || new Date(),
+      }));
+    } else {
+      anonymousPodium = bids.slice(0, 3).map((b) => ({
+        niftyPriceAtBid: b.niftyPriceAtBid ?? null,
+        bidTime: b.createdAt || b._id?.getTimestamp?.() || new Date(),
+      }));
+    }
+
+    res.json({
+      date,
+      referenceSpot: Number.isFinite(Number(referenceSpot)) ? Number(referenceSpot) : null,
+      rankingReference:
+        Number.isFinite(Number(rankingRef)) && Number(rankingRef) > 0 ? Number(rankingRef) : null,
+      rankingMode: useLockedForRanking ? 'nearest_locked_close' : 'nearest_spot',
+      podiumIsOfficial,
+      anonymousPodium,
+      totalBids: bids.length,
+      ...(leaderboardLimit != null && { leaderboardLimit }),
+      uniquePlayerCount: uniquePlayerIds.size,
+      totalPool,
+      netPool,
+      brokeragePercent,
+      topWinners,
+      prizePercentages: gameConfig?.prizePercentages || null,
+      leaderboard,
+      myRank,
+      myBid: myLatest
+        ? {
+            amount: myLatest.amount,
+            bidTime: myLatest.createdAt,
+            status: myLatest.status,
+            rank: myLatest.rank,
+            prize: myLatest.prize,
+            niftyPriceAtBid: myLatest.niftyPriceAtBid ?? null,
+          }
+        : null,
+      ticketsToday: myTicketsToday,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get bid history for current user
+router.get('/nifty-jackpot/history', protectUser, async (req, res) => {
+  try {
+    const bids = await NiftyJackpotBid.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(30);
+
+    res.json(bids.map(b => ({
+      _id: b._id,
+      amount: b.amount,
+      betDate: b.betDate,
+      status: b.status,
+      rank: b.rank,
+      prize: b.prize,
+      resultDeclaredAt: b.resultDeclaredAt,
+      niftyPriceAtBid: b.niftyPriceAtBid ?? null,
+    })));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get locked Nifty price for today (user-facing)
+router.get('/nifty-jackpot/locked-price', protectUser, async (req, res) => {
+  try {
+    const date = req.query.date || getTodayIST();
+    const result = await NiftyJackpotResult.findOne({ resultDate: date });
+    res.json({
+      date,
+      locked: !!result,
+      lockedPrice: result?.lockedPrice || null,
+      lockedAt: result?.lockedAt || null,
+      resultDeclared: result?.resultDeclared || false
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+export default router;

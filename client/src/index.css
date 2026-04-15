@@ -1,0 +1,333 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Light Theme (default) */
+  :root, .light {
+    /* STOCKEX Color Theme for Landing Page */
+    --background: 0 0% 100%;
+    --foreground: 210 50% 24%;
+    --card: 0 0% 100%;
+    --card-foreground: 210 50% 24%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 50% 24%;
+    --primary: 212 85% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 210 50% 24%;
+    --muted: 210 20% 96%;
+    --muted-foreground: 210 15% 45%;
+    --accent: 45 100% 51%;
+    --accent-foreground: 210 50% 24%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 210 20% 90%;
+    --input: 210 20% 90%;
+    --ring: 212 85% 50%;
+    --radius: 0.5rem;
+    
+    /* Custom colors */
+    --deep-blue: 210 80% 24%;
+    --royal-blue: 212 85% 50%;
+    --yellow-accent: 45 100% 51%;
+    --profit-green: 145 100% 39%;
+    --loss-red: 0 84% 60%;
+    
+    /* Landing page specific */
+    --landing-bg: 0 0% 100%;
+    --landing-text: 210 50% 24%;
+    --landing-card: 0 0% 98%;
+    --landing-nav: 0 0% 100%;
+  }
+
+  /* Dark Theme */
+  .dark {
+    --background: 222 47% 6%;
+    --foreground: 210 20% 98%;
+    --card: 222 47% 8%;
+    --card-foreground: 210 20% 98%;
+    --popover: 222 47% 8%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 212 85% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 30% 14%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 222 30% 14%;
+    --muted-foreground: 210 15% 65%;
+    --accent: 45 100% 51%;
+    --accent-foreground: 210 50% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 30% 18%;
+    --input: 222 30% 18%;
+    --ring: 212 85% 55%;
+    
+    /* Custom colors for dark */
+    --deep-blue: 210 80% 70%;
+    --royal-blue: 212 85% 60%;
+    --yellow-accent: 45 100% 51%;
+    --profit-green: 145 100% 45%;
+    --loss-red: 0 84% 60%;
+    
+    /* Landing page specific */
+    --landing-bg: 222 47% 6%;
+    --landing-text: 210 20% 98%;
+    --landing-card: 222 47% 10%;
+    --landing-nav: 222 47% 12%;
+  }
+  
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  /* Apply theme to body */
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  /* Landing page theme overrides */
+  .dark .landing-section {
+    background-color: hsl(var(--landing-bg));
+    color: hsl(var(--landing-text));
+  }
+
+  .dark .landing-card {
+    background-color: hsl(var(--landing-card));
+  }
+
+  .dark .landing-nav {
+    background-color: hsl(var(--landing-nav)) !important;
+  }
+
+  /* Dark mode navbar */
+  .dark nav.bg-white {
+    background-color: hsl(222 47% 12%) !important;
+  }
+
+  .dark .text-gray-700 {
+    color: hsl(210 20% 85%);
+  }
+
+  .dark .hover\:bg-gray-100:hover {
+    background-color: hsl(222 30% 18%);
+  }
+
+  .dark .bg-gray-100 {
+    background-color: hsl(222 30% 18%);
+  }
+
+  .dark .border-gray-100 {
+    border-color: hsl(222 30% 18%);
+  }
+
+  /* Dark mode for landing page sections */
+  .dark .bg-white {
+    background-color: hsl(222 47% 10%);
+  }
+
+  .dark .bg-gray-50 {
+    background-color: hsl(222 47% 8%);
+  }
+
+  .dark .text-gray-600 {
+    color: hsl(210 15% 70%);
+  }
+
+  .dark .text-gray-500 {
+    color: hsl(210 15% 60%);
+  }
+
+  .dark .text-gray-400 {
+    color: hsl(210 15% 55%);
+  }
+
+  .dark .border-gray-200 {
+    border-color: hsl(222 30% 20%);
+  }
+
+  .dark .shadow-lg {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+  }
+}
+
+
+@layer utilities {
+  .text-deep-blue {
+    color: hsl(var(--deep-blue));
+  }
+  .bg-deep-blue {
+    background-color: hsl(var(--deep-blue));
+  }
+  .text-royal-blue {
+    color: hsl(var(--royal-blue));
+  }
+  .bg-royal-blue {
+    background-color: hsl(var(--royal-blue));
+  }
+  .text-yellow-accent {
+    color: hsl(var(--yellow-accent));
+  }
+  .bg-yellow-accent {
+    background-color: hsl(var(--yellow-accent));
+  }
+  .text-profit-green {
+    color: hsl(var(--profit-green));
+  }
+  .bg-profit-green {
+    background-color: hsl(var(--profit-green));
+  }
+  .text-loss-red {
+    color: hsl(var(--loss-red));
+  }
+  .bg-loss-red {
+    background-color: hsl(var(--loss-red));
+  }
+  .gradient-blue {
+    background: linear-gradient(135deg, #0B3C6D 0%, #1A73E8 100%);
+  }
+}
+
+@keyframes ticker {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-ticker {
+  animation: ticker 30s linear infinite;
+}
+
+@keyframes countUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-count-up {
+  animation: countUp 0.6s ease-out forwards;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  background-color: #0a0a0a;
+  color: #ffffff;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+/* iOS-style Animations */
+@keyframes ios-slide-down {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -20px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes ios-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ios-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ios-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-ios-slide-down {
+  animation: ios-slide-down 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.animate-ios-slide-up {
+  animation: ios-slide-up 0.4s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.animate-ios-fade-in {
+  animation: ios-fade-in 0.2s ease-out;
+}
+
+.animate-ios-scale-in {
+  animation: ios-scale-in 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* iOS-style scrollbar for mobile feel */
+.ios-scroll::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.ios-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ios-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+/* iOS-style safe area padding */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .ios-safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .ios-safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+}

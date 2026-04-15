@@ -1,0 +1,135 @@
+import express from 'express';
+import axios from 'axios';
+import { fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
+
+const router = express.Router();
+
+/** Kite `instruments/historical` interval strings (must match api.kite.trade). */
+const NIFTY_HISTORY_INTERVALS = new Set([
+  'minute',
+  '3minute',
+  '5minute',
+  '10minute',
+  '15minute',
+  '30minute',
+  '60minute',
+  'day',
+]);
+
+function parseNiftyHistoryInterval(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (NIFTY_HISTORY_INTERVALS.has(s)) return s;
+  return '15minute';
+}
+
+function mockPeriodMsForInterval(interval) {
+  switch (interval) {
+    case 'minute':
+      return 60 * 1000;
+    case '3minute':
+      return 3 * 60 * 1000;
+    case '10minute':
+      return 10 * 60 * 1000;
+    case '15minute':
+      return 15 * 60 * 1000;
+    case '30minute':
+      return 30 * 60 * 1000;
+    case '60minute':
+      return 60 * 60 * 1000;
+    case 'day':
+      return 24 * 60 * 60 * 1000;
+    case '5minute':
+    default:
+      return 5 * 60 * 1000;
+  }
+}
+
+// Get BTC historical data (1-hour candles for last 24 hours)
+router.get('/btc-history', async (req, res) => {
+  try {
+    // Fetch from Binance API
+    const response = await axios.get('https://api.binance.com/api/v3/klines', {
+      params: {
+        symbol: 'BTCUSDT',
+        interval: '5m', // 5-minute candles
+        limit: 100 // Last 100 candles
+      }
+    });
+
+    // Format Binance data to our format
+    const data = response.data.map(candle => ({
+      time: Math.floor(candle[0] / 1000), // Convert milliseconds to seconds for lightweight-charts
+      timestamp: new Date(candle[0]).toISOString(),
+      open: parseFloat(candle[1]),
+      high: parseFloat(candle[2]),
+      low: parseFloat(candle[3]),
+      close: parseFloat(candle[4]),
+      volume: parseFloat(candle[5])
+    }));
+
+    console.log(`BTC History: Returning ${data.length} candles`);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error fetching BTC history:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch BTC historical data',
+      data: [] 
+    });
+  }
+});
+
+// NIFTY 50 chart history — Zerodha Kite when session valid; else mock (dev only)
+// ?interval=15minute — align chart candles with Kite (5m / 15m / 30m / 1h etc.)
+router.get('/nifty-history', async (req, res) => {
+  try {
+    const interval = parseNiftyHistoryInterval(req.query.interval);
+    const fromKite = await fetchNifty50HistoricalFromKite({
+      interval,
+      daysBack: 15,
+      maxCandles: 120,
+    });
+    if (fromKite && fromKite.length > 0) {
+      return res.json({ success: true, source: 'zerodha', interval, data: fromKite });
+    }
+
+    const now = Date.now();
+    const periodMs = mockPeriodMsForInterval(interval);
+    const basePrice = 24000;
+    const data = [];
+    for (let i = 100; i >= 0; i--) {
+      const time = now - i * periodMs;
+      const randomChange = (Math.random() - 0.5) * 100;
+      const open = basePrice + randomChange;
+      const close = open + (Math.random() - 0.5) * 50;
+      const high = Math.max(open, close) + Math.random() * 30;
+      const low = Math.min(open, close) - Math.random() * 30;
+      data.push({
+        time: Math.floor(time / 1000),
+        timestamp: new Date(time).toISOString(),
+        open: parseFloat(open.toFixed(2)),
+        high: parseFloat(high.toFixed(2)),
+        low: parseFloat(low.toFixed(2)),
+        close: parseFloat(close.toFixed(2)),
+        volume: Math.floor(Math.random() * 1000000),
+      });
+    }
+
+    res.json({
+      success: true,
+      source: 'mock',
+      interval,
+      message: 'Zerodha not connected or history unavailable — using placeholder candles',
+      data,
+    });
+  } catch (error) {
+    console.error('Error fetching NIFTY history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch NIFTY historical data',
+      data: [],
+    });
+  }
+});
+
+export default router;

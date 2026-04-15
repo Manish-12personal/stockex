@@ -1,0 +1,5 @@
+server/.zerodha-session.json
+.zerodha-session.json
+.env
+node_modules
+dist

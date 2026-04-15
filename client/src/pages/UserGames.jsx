@@ -1,0 +1,5948 @@
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import axios from '../config/axios';
+import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
+import { io as socketIO } from 'socket.io-client';
+import LiveChart from '../components/games/LiveChart';
+import GamesWalletGameLedgerPanel from '../components/games/GamesWalletGameLedgerPanel.jsx';
+import {
+  getBtcUpDownWindowState,
+  getEffectiveBtcSessionBounds,
+  getBtcTradingWindowCount,
+  BTC_STANDARD_WINDOWS_PER_IST_DAY,
+  currentTotalSecondsIST as currentTotalSecondsISTLib,
+  btcResultRefSecForUiWindow,
+} from '../../../lib/btcUpDownWindows.js';
+import { 
+  ArrowLeft, TrendingUp, TrendingDown, Hash, Trophy, Target, 
+  Clock, Users, Coins, Gamepad2, Zap, Star, Gift, ChevronRight,
+  ArrowUpCircle, ArrowDownCircle, RefreshCw, X, Check, AlertCircle, Bitcoin,
+  Info, Lock, Timer, BookOpen, Award, Crown, HelpCircle, ChevronDown, BarChart3, History
+} from 'lucide-react';
+
+// Map frontend game IDs to backend GameSettings keys
+const GAME_SETTINGS_KEY = {
+  'updown': 'niftyUpDown',
+  'btcupdown': 'btcUpDown',
+  'niftynumber': 'niftyNumber',
+  'niftybracket': 'niftyBracket',
+  'niftyjackpot': 'niftyJackpot',
+};
+
+/** False when global games off, maintenance, or this game is disabled in GameSettings */
+function isFantasyGamePlayable(gameSettings, uiGameId) {
+  if (!gameSettings) return true;
+  if (gameSettings.gamesEnabled === false) return false;
+  if (gameSettings.maintenanceMode === true) return false;
+  const key = GAME_SETTINGS_KEY[uiGameId];
+  if (!key) return true;
+  const cfg = gameSettings.games?.[key];
+  if (cfg && cfg.enabled === false) return false;
+  return true;
+}
+
+/** Maps games list `game.id` → `GamesWalletLedger.gameId` on the server */
+function ledgerGameIdFromUi(uiId) {
+  const m = {
+    updown: 'updown',
+    btcupdown: 'btcupdown',
+    niftynumber: 'niftyNumber',
+    niftybracket: 'niftyBracket',
+    niftyjackpot: 'niftyJackpot',
+  };
+  return m[uiId] || uiId;
+}
+
+function formatCompactCount(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x < 0) return '0';
+  if (x >= 1000) return `${(x / 1000).toFixed(1)}K`;
+  if (x >= 100) return String(Math.round(x));
+  return (Math.round(x * 10) / 10).toLocaleString('en-IN', { maximumFractionDigits: 1 });
+}
+
+function formatGamesRelativeTime(iso) {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '';
+  const sec = Math.floor((Date.now() - t) / 1000);
+  if (sec < 15) return 'Just now';
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.floor(sec / 60)} min ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} hr ago`;
+  return new Date(iso).toLocaleString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Bet placement instant for Up/Down result cards (Asia/Kolkata). */
+function formatBetPlacedAtIST(isoOrDate) {
+  if (isoOrDate == null) return '';
+  const t = new Date(isoOrDate).getTime();
+  if (!Number.isFinite(t)) return '';
+  return `${new Date(isoOrDate).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  })} IST`;
+}
+
+
+/** Per-game ticketPrice from API, else global tokenValue, else 300 */
+function resolveGameTicketPrice(gameSettings, backendGameKey) {
+  const tp = gameSettings?.games?.[backendGameKey]?.ticketPrice;
+  if (tp != null && tp !== '' && Number.isFinite(Number(tp))) return Number(tp);
+  const tv = gameSettings?.tokenValue;
+  if (tv != null && tv !== '' && Number.isFinite(Number(tv))) return Number(tv);
+  return 300;
+}
+
+/** Max rows kept for "Recent Results" (wins only) — only the latest is shown; area scrolls if content overflows. */
+const RECENT_UP_DOWN_WINS = 1;
+
+/** Earlier of two placement timestamps (ISO strings or dates). */
+function earlierBetPlacedAt(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  const ta = new Date(a).getTime();
+  const tb = new Date(b).getTime();
+  if (!Number.isFinite(ta)) return b;
+  if (!Number.isFinite(tb)) return a;
+  return ta <= tb ? a : b;
+}
+
+/** Up/Down results API returns one ledger row per ticket; merge to one row per window for UI and deduping. */
+function aggregateUpdownResultsByWindow(rows) {
+  const map = new Map();
+  for (const r of rows || []) {
+    const wn = r.windowNumber;
+    const pnl = Number(r.pnl) || 0;
+    if (!map.has(wn)) {
+      map.set(wn, { ...r, pnl });
+      continue;
+    }
+    const agg = map.get(wn);
+    agg.pnl = (Number(agg.pnl) || 0) + pnl;
+    agg.won = agg.won || r.won;
+    agg.betPlacedAt = earlierBetPlacedAt(agg.betPlacedAt, r.betPlacedAt);
+    const tNew = r.createdAt ? new Date(r.createdAt).getTime() : 0;
+    const tOld = agg.createdAt ? new Date(agg.createdAt).getTime() : 0;
+    if (tNew > tOld) {
+      agg.createdAt = r.createdAt;
+      agg.prediction = r.prediction;
+      agg.resultPrice = r.resultPrice;
+    }
+  }
+  return Array.from(map.values());
+}
+
+const UserGames = () => {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [gamesBalance, setGamesBalance] = useState(0);
+  const [activeGame, setActiveGame] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [gameSettings, setGameSettings] = useState(null);
+  const [howToPlayGame, setHowToPlayGame] = useState(null);
+  const [ledgerHubGameId, setLedgerHubGameId] = useState(null);
+  const [todayNetByGame, setTodayNetByGame] = useState({});
+  const [todayGrossWinsByGame, setTodayGrossWinsByGame] = useState({});
+  /** { istDate, games: { [ledgerGameId]: { totalTickets, players, ... } } } */
+  const [liveActivity, setLiveActivity] = useState(null);
+
+  useEffect(() => {
+    const userData = localStorage.getItem('user');
+    if (userData) {
+      setUser(JSON.parse(userData));
+    } else {
+      navigate('/user/login');
+    }
+  }, [navigate]);
+
+  const fetchGamesBalance = useCallback(async () => {
+    if (!user?.token) return;
+    try {
+      const { data } = await axios.get('/api/user/wallet', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setGamesBalance(data?.gamesWallet?.balance || 0);
+    } catch (error) {
+      console.error('Error fetching games balance:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  const fetchGameSettings = useCallback(async () => {
+    if (!user?.token) return;
+    try {
+      const { data } = await axios.get('/api/user/game-settings', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setGameSettings(data);
+    } catch (error) {
+      console.error('Error fetching game settings:', error);
+    }
+  }, [user]);
+
+  /** Per-game net on games wallet for current IST day (credits − debits); new IST day ⇒ new totals from API */
+  const fetchTodayNetByGame = useCallback(async () => {
+    if (!user?.token) return;
+    try {
+      const { data } = await axios.get('/api/user/games-wallet/today-net', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setTodayNetByGame(data?.byGame && typeof data.byGame === 'object' ? data.byGame : {});
+      setTodayGrossWinsByGame(
+        data?.byGameGrossWins && typeof data.byGameGrossWins === 'object' ? data.byGameGrossWins : {}
+      );
+    } catch (e) {
+      console.error('Today net by game fetch failed:', e);
+      setTodayNetByGame({});
+      setTodayGrossWinsByGame({});
+    }
+  }, [user?.token]);
+
+  const fetchLiveActivity = useCallback(async () => {
+    if (!user?.token) return;
+    try {
+      const { data } = await axios.get('/api/user/games/live-activity', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      if (data?.games && typeof data.games === 'object') {
+        setLiveActivity(data);
+      } else {
+        setLiveActivity(null);
+      }
+    } catch (e) {
+      console.warn('Games live activity fetch failed:', e?.message || e);
+      setLiveActivity(null);
+    }
+  }, [user?.token]);
+
+  useEffect(() => {
+    if (user) {
+      fetchGamesBalance();
+      fetchGameSettings();
+      fetchTodayNetByGame();
+      fetchLiveActivity();
+    }
+  }, [user, fetchGamesBalance, fetchGameSettings, fetchTodayNetByGame, fetchLiveActivity]);
+
+  useEffect(() => {
+    if (!user) return;
+    const onSoftRefresh = () => {
+      fetchGamesBalance();
+      fetchGameSettings();
+      fetchTodayNetByGame();
+      fetchLiveActivity();
+    };
+    window.addEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
+    return () => window.removeEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
+  }, [user, fetchGamesBalance, fetchGameSettings, fetchTodayNetByGame, fetchLiveActivity]);
+
+  useEffect(() => {
+    if (!user?.token) return undefined;
+    const t = setInterval(() => {
+      fetchTodayNetByGame();
+    }, 60000);
+    return () => clearInterval(t);
+  }, [user?.token, fetchTodayNetByGame]);
+
+  useEffect(() => {
+    if (!user?.token) return undefined;
+    fetchLiveActivity();
+    const t = setInterval(fetchLiveActivity, 10000);
+    return () => clearInterval(t);
+  }, [user?.token, fetchLiveActivity]);
+
+  const [liveWinners, setLiveWinners] = useState([]);
+  const [liveWinnersLoading, setLiveWinnersLoading] = useState(false);
+
+  const fetchLiveWinners = useCallback(async () => {
+    if (!user?.token) return;
+    try {
+      const { data } = await axios.get('/api/user/games/recent-winners?limit=15', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setLiveWinners(Array.isArray(data?.winners) ? data.winners : []);
+    } catch (e) {
+      console.error('Live winners fetch failed:', e);
+    }
+  }, [user?.token]);
+
+  useEffect(() => {
+    if (!user?.token) return undefined;
+    setLiveWinnersLoading(true);
+    fetchLiveWinners().finally(() => setLiveWinnersLoading(false));
+    const interval = setInterval(fetchLiveWinners, 20000);
+    const onSoft = () => {
+      fetchLiveWinners();
+    };
+    window.addEventListener(AUTO_REFRESH_EVENT, onSoft);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener(AUTO_REFRESH_EVENT, onSoft);
+    };
+  }, [user?.token, fetchLiveWinners]);
+
+  useEffect(() => {
+    if (!activeGame || !gameSettings) return;
+    if (!isFantasyGamePlayable(gameSettings, activeGame)) {
+      setActiveGame(null);
+    }
+  }, [activeGame, gameSettings]);
+
+  useEffect(() => {
+    if (activeGame != null || !user?.token) return;
+    fetchTodayNetByGame();
+  }, [activeGame, user?.token, fetchTodayNetByGame]);
+
+  const games = [
+    {
+      id: 'updown',
+      name: 'Nifty Up/Down',
+      description: 'Predict if Nifty will go UP or DOWN over each 15-minute IST window.',
+      icon: TrendingUp,
+      color: 'from-green-600 to-emerald-600',
+      bgColor: 'bg-green-900/20',
+      borderColor: 'border-green-500/30',
+      prize: '2x Returns',
+      players: '1.2K',
+      timeframe: '15 Min'
+    },
+    {
+      id: 'btcupdown',
+      name: 'BTC Up/Down',
+      description: 'Predict if Bitcoin goes UP or DOWN; official result is fixed 15 minutes after each IST trading window.',
+      icon: Bitcoin,
+      color: 'from-orange-500 to-amber-500',
+      bgColor: 'bg-orange-900/20',
+      borderColor: 'border-orange-500/30',
+      prize: '2x Returns',
+      players: '3.1K',
+      timeframe: '15 Min'
+    },
+    {
+      id: 'niftynumber',
+      name: 'Nifty Number',
+      description: 'Pick the decimal (.00-.99) of Nifty closing price & win tickets',
+      icon: Hash,
+      color: 'from-purple-600 to-indigo-600',
+      bgColor: 'bg-purple-900/20',
+      borderColor: 'border-purple-500/30',
+      prize: 'Ticket Profit',
+      players: '850',
+      timeframe: '1 Day'
+    },
+    {
+      id: 'niftybracket',
+      name: 'Nifty Bracket',
+      description: 'Buy or Sell on bracket levels around Nifty price',
+      icon: Target,
+      color: 'from-cyan-500 to-teal-500',
+      bgColor: 'bg-cyan-900/20',
+      borderColor: 'border-cyan-500/30',
+      prize: '2x Returns',
+      players: '1.2K',
+      timeframe: '5 Min'
+    },
+    {
+      id: 'niftyjackpot',
+      name: 'Nifty Jackpot',
+      description: 'Bid high & rank in top 20 to win big prizes!',
+      icon: Trophy,
+      color: 'from-yellow-500 to-orange-500',
+      bgColor: 'bg-yellow-900/20',
+      borderColor: 'border-yellow-500/30',
+      prize: 'Top Prizes',
+      players: '2.5K',
+      timeframe: '1 Day'
+    }
+  ];
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-dark-900 flex items-center justify-center">
+        <RefreshCw className="animate-spin text-purple-500" size={32} />
+      </div>
+    );
+  }
+
+  // Show game screen if a game is selected
+  if (activeGame) {
+    if (activeGame === 'niftynumber') {
+      return (
+        <NiftyNumberScreen
+          game={games.find(g => g.id === activeGame)}
+          balance={gamesBalance}
+          onBack={() => setActiveGame(null)}
+          user={user}
+          refreshBalance={fetchGamesBalance}
+          settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
+          tokenValue={resolveGameTicketPrice(gameSettings, GAME_SETTINGS_KEY[activeGame])}
+        />
+      );
+    }
+    if (activeGame === 'niftybracket') {
+      return (
+        <NiftyBracketScreen
+          game={games.find(g => g.id === activeGame)}
+          balance={gamesBalance}
+          onBack={() => setActiveGame(null)}
+          user={user}
+          refreshBalance={fetchGamesBalance}
+          settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
+          tokenValue={resolveGameTicketPrice(gameSettings, GAME_SETTINGS_KEY[activeGame])}
+        />
+      );
+    }
+    if (activeGame === 'niftyjackpot') {
+      return (
+        <NiftyJackpotScreen
+          game={games.find(g => g.id === activeGame)}
+          balance={gamesBalance}
+          onBack={() => setActiveGame(null)}
+          user={user}
+          refreshBalance={fetchGamesBalance}
+          settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
+          tokenValue={resolveGameTicketPrice(gameSettings, GAME_SETTINGS_KEY[activeGame])}
+        />
+      );
+    }
+    return (
+      <GameScreen 
+        game={games.find(g => g.id === activeGame)} 
+        balance={gamesBalance}
+        onBack={() => setActiveGame(null)}
+        user={user}
+        refreshBalance={fetchGamesBalance}
+        settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
+        tokenValue={resolveGameTicketPrice(gameSettings, GAME_SETTINGS_KEY[activeGame])}
+      />
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-dark-900 text-white">
+      {/* Header */}
+      <div className="bg-dark-800 border-b border-dark-600 sticky top-0 z-10">
+        <div className="max-w-4xl mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => navigate('/user/accounts')}
+                className="p-2 hover:bg-dark-700 rounded-lg transition"
+              >
+                <ArrowLeft size={20} />
+              </button>
+              <div className="flex items-center gap-2">
+                <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-pink-600 rounded-xl flex items-center justify-center">
+                  <Gamepad2 size={20} />
+                </div>
+                <div>
+                  <h1 className="font-bold text-lg">Fantasy Games</h1>
+                  <p className="text-xs text-gray-400">Predict & Win</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-dark-700 rounded-lg px-4 py-2">
+              <div className="text-xs text-gray-400">Balance</div>
+              <div className="font-bold text-purple-400">{(gamesBalance / (activeGame ? resolveGameTicketPrice(gameSettings, GAME_SETTINGS_KEY[activeGame]) : (gameSettings?.tokenValue || 300))).toFixed(2)} Tickets</div>
+              <div className="text-[10px] text-gray-500">₹{gamesBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Live Nifty Banner */}
+      <div className="bg-gradient-to-r from-purple-900/50 to-pink-900/50 border-b border-purple-500/20">
+        <div className="max-w-4xl mx-auto px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-sm text-gray-300">NIFTY 50</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="text-xl font-bold">24,850.75</span>
+              <span className="text-green-400 text-sm flex items-center gap-1">
+                <TrendingUp size={14} />
+                +125.50 (0.51%)
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Games Grid */}
+      <div className="max-w-4xl mx-auto px-4 py-6">
+        <div className="mb-6">
+          <h2 className="text-xl font-bold mb-2">Choose Your Game</h2>
+          <p className="text-gray-400 text-sm">Play prediction games and win exciting prizes</p>
+          {gameSettings?.maintenanceMode === true && (
+            <p className="mt-2 text-sm text-amber-400/95">
+              {gameSettings.maintenanceMessage || 'Games are temporarily unavailable.'}
+            </p>
+          )}
+          {gameSettings?.gamesEnabled === false && gameSettings?.maintenanceMode !== true && (
+            <p className="mt-2 text-sm text-amber-400/95">Fantasy games are currently turned off.</p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {games.map(game => {
+            const playable = isFantasyGamePlayable(gameSettings, game.id);
+            return (
+            <div
+              key={game.id}
+              className={`${game.bgColor} ${game.borderColor} border rounded-2xl overflow-hidden transition-all duration-200 group relative ${
+                playable ? '' : 'opacity-50 grayscale-[0.85]'
+              }`}
+            >
+              <div
+                role="button"
+                tabIndex={playable ? 0 : -1}
+                onClick={() => playable && setActiveGame(game.id)}
+                onKeyDown={(e) => {
+                  if (!playable) return;
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setActiveGame(game.id);
+                  }
+                }}
+                className={`p-5 ${playable ? 'cursor-pointer hover:scale-[1.01] active:scale-[0.99]' : 'cursor-not-allowed'}`}
+              >
+                <div className="flex items-start justify-between mb-4">
+                  <div className={`w-14 h-14 rounded-xl bg-gradient-to-br ${game.color} flex items-center justify-center shadow-lg ${playable ? '' : 'opacity-70'}`}>
+                    <game.icon size={28} className="text-white" />
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <div className="flex items-center gap-1 bg-dark-800/50 px-2 py-1 rounded-full">
+                      <Zap size={12} className="text-yellow-400" />
+                      <span className="text-xs font-medium">{game.prize}</span>
+                    </div>
+                    {!playable && (
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 bg-dark-900/80 px-2 py-0.5 rounded">
+                        Closed
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <h3 className={`text-lg font-bold mb-1 ${playable ? '' : 'text-gray-500'}`}>{game.name}</h3>
+                <p className={`text-sm mb-3 ${playable ? 'text-gray-400' : 'text-gray-600'}`}>{game.description}</p>
+
+                {(() => {
+                  const lid = ledgerGameIdFromUi(game.id);
+                  const rawNet = todayNetByGame[lid];
+                  const rawGross = todayGrossWinsByGame[lid];
+                  const net = Number.isFinite(Number(rawNet)) ? Number(rawNet) : 0;
+                  const gross = Number.isFinite(Number(rawGross)) ? Number(rawGross) : 0;
+                  const absNet = Math.abs(net);
+                  const netFormatted = absNet.toLocaleString('en-IN', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  });
+                  const grossFormatted = Math.abs(gross).toLocaleString('en-IN', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  });
+                  const netTone =
+                    net > 0 ? 'text-emerald-400' : net < 0 ? 'text-rose-400/95' : 'text-gray-500';
+                  const grossTone = gross > 0 ? 'text-emerald-400' : 'text-gray-500';
+                  return (
+                    <div
+                      className={`mb-3 rounded-lg px-2.5 py-2 bg-dark-900/50 border border-white/5 ${playable ? '' : 'opacity-80'}`}
+                      title="Gross wins = sum of win credits posted today (IST). Net = all credits minus debits for this game today (IST), including stakes."
+                    >
+                      <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">
+                        Total won today (IST)
+                      </div>
+                      <div className={`text-sm font-bold tabular-nums ${grossTone}`}>
+                        {gross > 0 ? '+' : ''}₹{grossFormatted}
+                      </div>
+                      <div className={`text-[10px] font-medium tabular-nums mt-1 ${netTone}`}>
+                        Net today: {net > 0 ? '+' : net < 0 ? '−' : ''}₹{netFormatted}
+                      </div>
+                      <div className="text-[9px] text-gray-600 mt-0.5 leading-tight">
+                        Resets daily at midnight India time
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="flex items-center justify-between">
+                  <div className={`flex items-center gap-4 text-xs ${playable ? 'text-gray-500' : 'text-gray-600'}`}>
+                    <span
+                      className="flex items-center gap-1"
+                      title={(() => {
+                        const lid = ledgerGameIdFromUi(game.id);
+                        const la = liveActivity?.games?.[lid];
+                        if (!la) return undefined;
+                        if ((lid === 'btcupdown' || lid === 'updown') && la.windowNumber > 0) {
+                          return `Window #${la.windowNumber} · UP ${formatCompactCount(la.upTickets || 0)} / DOWN ${formatCompactCount(la.downTickets || 0)} tickets (live)`;
+                        }
+                        return liveActivity?.istDate
+                          ? `Tickets in pool · IST day ${liveActivity.istDate} (all players)`
+                          : undefined;
+                      })()}
+                    >
+                      <Users size={12} />
+                      {(() => {
+                        const lid = ledgerGameIdFromUi(game.id);
+                        const la = liveActivity?.games?.[lid];
+                        if (!la) return <>{game.players} playing</>;
+                        if (la.enabled === false) return <>—</>;
+                        if (lid === 'btcupdown' || lid === 'updown') {
+                          if (la.status === 'open' && la.windowNumber > 0) {
+                            return (
+                              <>
+                                {formatCompactCount(la.totalTickets)} tickets · {la.players} players
+                              </>
+                            );
+                          }
+                          return <>{formatCompactCount(la.totalTickets || 0)} tickets</>;
+                        }
+                        return (
+                          <>
+                            {formatCompactCount(la.totalTickets || 0)} tickets · {la.players} players
+                          </>
+                        );
+                      })()}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Clock size={12} />
+                      {game.timeframe}
+                    </span>
+                  </div>
+                  <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${game.color} flex items-center justify-center transition ${playable ? 'group-hover:scale-110' : 'opacity-40'}`}>
+                    <ChevronRight size={16} />
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLedgerHubGameId(game.id);
+                }}
+                className="mt-0 w-full flex items-center justify-center gap-1.5 py-2 rounded-b-xl text-xs font-medium text-cyan-400 bg-dark-900/40 border-t border-cyan-500/20 hover:bg-cyan-500/10 transition"
+              >
+                <History size={14} />
+                Order history
+              </button>
+            </div>
+            );
+          })}
+        </div>
+
+        {/* Per-game wallet ledger (from hub) */}
+        {ledgerHubGameId && (() => {
+          const g = games.find((x) => x.id === ledgerHubGameId);
+          const tv = resolveGameTicketPrice(gameSettings, GAME_SETTINGS_KEY[ledgerHubGameId]);
+          return (
+            <div
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+              onClick={() => setLedgerHubGameId(null)}
+            >
+              <div
+                className="bg-dark-800 border border-purple-500/30 rounded-2xl w-full max-w-lg max-h-[88vh] overflow-hidden flex flex-col shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between px-4 py-3 border-b border-dark-600 shrink-0">
+                  <h2 className="font-bold text-sm flex items-center gap-2 text-purple-300">
+                    <History size={16} className="text-purple-400" />
+                    Order history — {g?.name || 'Game'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setLedgerHubGameId(null)}
+                    className="p-1.5 hover:bg-dark-700 rounded-lg transition"
+                    aria-label="Close"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="overflow-y-auto flex-1 min-h-0 p-3">
+                  <p className="text-[10px] text-gray-500 mb-2">
+                    Full history for this game: pick an IST date to list every wallet line posted that day (bets, wins, refunds).
+                  </p>
+                  <GamesWalletGameLedgerPanel
+                    key={ledgerHubGameId}
+                    gameId={ledgerGameIdFromUi(ledgerHubGameId)}
+                    userToken={user?.token}
+                    tokenValue={tv}
+                    title="Orders & ledger"
+                    limit={500}
+                    defaultOpen
+                    enableDateFilter
+                    bodyClassName="max-h-[min(24rem,52vh)]"
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* How to Play - 5 Game Cards */}
+        <div className="mt-8 bg-dark-800 rounded-2xl p-5">
+          <h3 className="font-bold mb-2 flex items-center gap-2">
+            <HelpCircle className="text-cyan-400" size={20} />
+            How to Play
+          </h3>
+          <p className="text-gray-400 text-sm mb-4">Click any game to learn the rules, logic & tips</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+            {games.map(game => {
+              const playable = isFantasyGamePlayable(gameSettings, game.id);
+              return (
+              <button
+                key={game.id}
+                type="button"
+                onClick={() => setHowToPlayGame(game.id)}
+                className={`${game.bgColor} ${game.borderColor} border rounded-xl p-3 text-center transition-all duration-200 group ${
+                  playable ? 'hover:scale-105' : 'opacity-45 grayscale'
+                }`}
+              >
+                <div className={`w-10 h-10 mx-auto rounded-lg bg-gradient-to-br ${game.color} flex items-center justify-center shadow-lg mb-2 ${playable ? '' : 'opacity-70'}`}>
+                  <game.icon size={20} className="text-white" />
+                </div>
+                <div className={`text-xs font-bold mb-0.5 ${playable ? '' : 'text-gray-500'}`}>{game.name}</div>
+                <div className={`text-[10px] font-medium flex items-center justify-center gap-0.5 ${playable ? 'text-cyan-400' : 'text-gray-600'}`}>
+                  <HelpCircle size={10} /> Rules
+                </div>
+              </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* How to Play Modal */}
+        {howToPlayGame && (() => {
+          const tv = gameSettings?.tokenValue || 300;
+          const gs = gameSettings?.games?.[GAME_SETTINGS_KEY[howToPlayGame]] || {};
+          const selectedGame = games.find(g => g.id === howToPlayGame);
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => setHowToPlayGame(null)}>
+              <div className="bg-dark-800 border border-cyan-500/30 rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+                {/* Modal Header */}
+                <div className="sticky top-0 bg-dark-800 border-b border-dark-600 rounded-t-2xl px-4 py-3 flex items-center justify-between z-10">
+                  <h2 className="font-bold text-sm flex items-center gap-2 text-cyan-400">
+                    <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${selectedGame.color} flex items-center justify-center`}>
+                      <selectedGame.icon size={14} className="text-white" />
+                    </div>
+                    How to Play {selectedGame.name}
+                  </h2>
+                  <button onClick={() => setHowToPlayGame(null)} className="p-1 hover:bg-dark-700 rounded-lg transition">
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="px-4 py-3 space-y-4 text-xs">
+
+                  {/* ===== NIFTY UP/DOWN ===== */}
+                  {howToPlayGame === 'updown' && (<>
+                    <div>
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Star size={12} /> Game Overview</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Predict whether <span className="text-green-400 font-bold">NIFTY 50</span> will go <span className="text-green-400 font-bold">UP</span> or <span className="text-red-400 font-bold">DOWN</span> after the trading window closes.</li>
+                        <li>2. Each trading window lasts <span className="text-cyan-400 font-bold">15 minutes</span>.</li>
+                        <li>3. <span className="text-purple-400 font-bold">Result</span> uses Nifty <span className="text-cyan-400 font-bold">LTP (spot)</span> read <span className="text-cyan-400 font-bold">15 minutes after</span> your window&apos;s first LTP — the <span className="text-cyan-400 font-bold">same price and time as the next window&apos;s LTP</span> tick.</li>
+                        <li>4. If your prediction is correct, you win <span className="text-yellow-400 font-bold">{gs.winMultiplier || 1.95}x</span> your bet amount.</li>
+                        <li>5. Once placed, bets <span className="text-red-400 font-bold">cannot be changed, modified or cancelled</span>.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Clock size={12} /> Trading Window</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Market hours: <span className="text-cyan-400 font-bold">{gs.startTime || '09:15'} - {gs.endTime || '15:30'} IST</span> (Mon-Fri).</li>
+                        <li>2. Window 1: <span className="text-cyan-400 font-bold">12:00:00 – 12:14:59</span> → LTP <span className="text-cyan-400 font-bold">12:15:00</span> → Result <span className="text-purple-400 font-bold">12:30:00</span> (same spot as Window 2 LTP)</li>
+                        <li>3. Window 2: <span className="text-cyan-400 font-bold">12:15:00 – 12:29:59</span> → LTP <span className="text-cyan-400 font-bold">12:30:00</span> → Result <span className="text-purple-400 font-bold">12:45:00</span></li>
+                        <li>4. No gap between windows — next window starts immediately.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-purple-400 mb-1.5 flex items-center gap-1.5"><Coins size={12} /> Bet Limits</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span></li>
+                        <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets || 500} Tickets</span></li>
+                        <li>3. 1 Ticket = ₹{tv}</li>
+                      </ul>
+                    </div>
+                    <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> How You Win</h3>
+                      <ul className="text-gray-300 space-y-1.5 pl-1">
+                        <li>1. When your betting window ends, <span className="text-cyan-400 font-bold">LTP</span> (last traded price) is fixed.</li>
+                        <li>2. After 15 minutes, <span className="text-purple-400 font-bold">Result</span> is the Nifty <span className="text-purple-400 font-bold">LTP (spot)</span> at that moment — the <span className="text-purple-400 font-bold">same reading as the next window&apos;s LTP</span> tick — compared to your window&apos;s LTP.</li>
+                        <li>3. If Result LTP {'>'} window LTP → <span className="text-green-400 font-bold">GREEN</span> → UP wins!</li>
+                        <li>4. If Result LTP {'<'} window LTP → <span className="text-red-400 font-bold">RED</span> → DOWN wins!</li>
+                        <li>5. If Result LTP = window LTP → <span className="text-yellow-400 font-bold">Tie (bet refunded)</span>.</li>
+                      </ul>
+                      <div className="mt-2 bg-dark-700/60 rounded-lg p-2">
+                        <div className="text-[10px] text-yellow-400 font-bold mb-1">Example</div>
+                        <div className="text-gray-400">Window 12:00–12:14:59. LTP 12:15:00 = <span className="text-cyan-400 font-bold">22,800</span>. Result 12:30:00 (same Nifty spot as next window&apos;s LTP) = <span className="text-green-400 font-bold">22,803</span>.</div>
+                        <div className="text-green-400 font-bold mt-1">22,803 {'>'} 22,800 → UP wins! You get 10 × {gs.winMultiplier || 1.95} = {(10 * (gs.winMultiplier || 1.95)).toFixed(1)} Tkt (full payout, no fee on profit)</div>
+                      </div>
+                    </div>
+                    <div className="bg-cyan-900/20 border border-cyan-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Info size={12} /> Pro Tips</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Watch the live chart to spot momentum before placing bets.</li>
+                        <li>2. Start with small bets to understand the timing.</li>
+                        <li>3. Avoid betting during low-volatility sideways markets.</li>
+                      </ul>
+                    </div>
+                  </>)}
+
+                  {/* ===== BTC UP/DOWN ===== */}
+                  {howToPlayGame === 'btcupdown' && (<>
+                    <div>
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Star size={12} /> Game Overview</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Predict whether <span className="text-orange-400 font-bold">Bitcoin (BTC)</span> will go <span className="text-green-400 font-bold">UP</span> or <span className="text-red-400 font-bold">DOWN</span>.</li>
+                        <li>2. Trading runs in an <span className="text-cyan-400 font-bold">IST daily window</span> set by admin (default full day: 00:00–24:00).</li>
+                        <li>3. Continuous <span className="text-cyan-400 font-bold">15-minute trading windows</span> with no gaps.</li>
+                        <li>4. Win <span className="text-yellow-400 font-bold">{gs.winMultiplier || 1.95}x</span> your bet on a correct prediction.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Clock size={12} /> Trading Windows</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Each window is <span className="text-cyan-400 font-bold">15 minutes</span> long (e.g. 00:00–00:14:59, 00:15–00:29:59, ...).</li>
+                        <li>2. The official <span className="text-purple-400 font-bold">result</span> is published <span className="text-purple-400 font-bold">15 minutes after</span> the trading window ends.</li>
+                        <li>3. The game shows <span className="text-green-400 font-bold">UP</span> or <span className="text-red-400 font-bold">DOWN</span> from that result — pick the right side to win.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-purple-400 mb-1.5 flex items-center gap-1.5"><Coins size={12} /> Bet Limits</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span></li>
+                        <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets || 500} Tickets</span></li>
+                        <li>3. 1 Ticket = ₹{tv}</li>
+                      </ul>
+                    </div>
+                    <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> How You Win</h3>
+                      <ul className="text-gray-300 space-y-1.5 pl-1">
+                        <li>1. Place your bet (UP or DOWN) during the <span className="text-green-400 font-bold">15-minute window</span>.</li>
+                        <li>2. After the window closes, wait for the <span className="text-purple-400 font-bold">scheduled result time</span> — the official outcome is shown then.</li>
+                        <li>3. <span className="text-green-400 font-bold">UP</span> or <span className="text-red-400 font-bold">DOWN</span> on the card matches the result; bet on the correct side to win.</li>
+                      </ul>
+                      <div className="mt-2 bg-dark-700/60 rounded-lg p-2">
+                        <div className="text-[10px] text-yellow-400 font-bold mb-1">Example</div>
+                        <div className="text-gray-400">Window: 14:00–14:15. You bet <span className="text-purple-400 font-bold">5 Tkt</span> DOWN. Result at 14:30 shows <span className="text-red-400 font-bold">DOWN</span>.</div>
+                        <div className="text-green-400 font-bold mt-1">You picked DOWN and the result is DOWN → you win! 5 × {gs.winMultiplier || 1.95} = {(5 * (gs.winMultiplier || 1.95)).toFixed(2)} Tkt (full payout, no fee on profit)</div>
+                      </div>
+                    </div>
+                    <div className="bg-cyan-900/20 border border-cyan-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Info size={12} /> Pro Tips</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. BTC is highly volatile — great for profits but be cautious.</li>
+                        <li>2. Once bet is placed, it <span className="text-red-400 font-bold">cannot be cancelled or modified</span>.</li>
+                        <li>3. Major news events can cause sudden big moves — trade wisely.</li>
+                      </ul>
+                    </div>
+                  </>)}
+
+                  {/* ===== NIFTY NUMBER ===== */}
+                  {howToPlayGame === 'niftynumber' && (<>
+                    <div>
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Star size={12} /> Game Overview</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Pick the <span className="text-purple-400 font-bold">last 2 decimal digits</span> (.00 to .99) of the Nifty 50 closing price.</li>
+                        <li>2. If the Nifty closes at 24,850<span className="text-yellow-400 font-bold">.75</span>, the winning number is <span className="text-yellow-400 font-bold">75</span>.</li>
+                        <li>3. Correct guess wins a <span className="text-green-400 font-bold">fixed profit of ₹{gs.fixedProfit || 4000}</span>.</li>
+                        <li>4. You can place up to <span className="text-cyan-400 font-bold">{gs.betsPerDay || 10} bets per day</span> on different numbers.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Clock size={12} /> Timing</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Betting opens: <span className="text-cyan-400 font-bold">{gs.startTime || '09:15'} IST</span>.</li>
+                        <li>2. Last bet time: <span className="text-cyan-400 font-bold">{gs.maxBidTime || '15:40'} IST</span>.</li>
+                        <li>3. Result declared at: <span className="text-green-400 font-bold">{gs.resultTime || '15:30'} IST</span> (based on Nifty closing price).</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-purple-400 mb-1.5 flex items-center gap-1.5"><Coins size={12} /> Bet Limits</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Min per bet: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span></li>
+                        <li>2. Max per bet: <span className="text-purple-400 font-bold">{gs.maxTickets || 100} Tickets</span></li>
+                        <li>3. Max bets per day: <span className="text-purple-400 font-bold">{gs.betsPerDay || 10}</span></li>
+                        <li>4. 1 Ticket = ₹{tv}</li>
+                      </ul>
+                    </div>
+                    <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> How You Win</h3>
+                      <ul className="text-gray-300 space-y-1.5 pl-1">
+                        <li>1. Pick any number from <span className="text-yellow-400 font-bold">00 to 99</span> from the grid.</li>
+                        <li>2. At market close, the last 2 decimals of Nifty closing price are checked.</li>
+                        <li>3. If your number matches → <span className="text-green-400 font-bold">You WIN ₹{gs.fixedProfit || 4000} fixed profit!</span></li>
+                        <li>4. If not → <span className="text-red-400 font-bold">You lose your bet amount.</span></li>
+                      </ul>
+                      <div className="mt-2 bg-dark-700/60 rounded-lg p-2">
+                        <div className="text-[10px] text-yellow-400 font-bold mb-1">Example</div>
+                        <div className="text-gray-400">You bet <span className="text-purple-400 font-bold">2 Tkt</span> on number <span className="text-yellow-400 font-bold">75</span>. Nifty closes at 24,850.75.</div>
+                        <div className="text-green-400 font-bold mt-1">Result: WIN! You get ₹{gs.fixedProfit || 4000} profit</div>
+                      </div>
+                    </div>
+                    <div className="bg-cyan-900/20 border border-cyan-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Info size={12} /> Pro Tips</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. There are 100 possible numbers (00-99), so each has a ~1% chance.</li>
+                        <li>2. Spread bets across multiple numbers to improve your odds.</li>
+                        <li>3. Use smaller bet amounts per number to manage risk.</li>
+                      </ul>
+                    </div>
+                  </>)}
+
+                  {/* ===== NIFTY BRACKET ===== */}
+                  {howToPlayGame === 'niftybracket' && (<>
+                    <div>
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Star size={12} /> Game Overview</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Two bracket levels are set around the current Nifty price: <span className="text-green-400 font-bold">+{gs.bracketGap || 20} points (Upper)</span> and <span className="text-red-400 font-bold">-{gs.bracketGap || 20} points (Lower)</span>.</li>
+                        <li>2. Choose <span className="text-green-400 font-bold">BUY</span> (price will hit upper bracket) or <span className="text-red-400 font-bold">SELL</span> (price will hit lower bracket).</li>
+                        <li>3. If your target is hit → <span className="text-green-400 font-bold">WIN {gs.winMultiplier || 2}x</span>!</li>
+                        <li>4. If neither target is hit → <span className="text-red-400 font-bold">You lose</span>.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Clock size={12} /> Timing</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Market hours: <span className="text-cyan-400 font-bold">{gs.startTime || '09:15'} - {gs.endTime || '15:45'} IST</span>.</li>
+                        <li>2. Trade resolves immediately if the bracket level is hit.</li>
+                        <li>3. If neither target is hit, the trade resolves automatically.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-purple-400 mb-1.5 flex items-center gap-1.5"><Coins size={12} /> Bet Limits</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span></li>
+                        <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets || 250} Tickets</span></li>
+                        <li>3. 1 Ticket = ₹{tv}</li>
+                      </ul>
+                    </div>
+                    <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> How You Win</h3>
+                      <ul className="text-gray-300 space-y-1.5 pl-1">
+                        <li>1. Current Nifty = 24,000. Upper target = <span className="text-green-400 font-bold">24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}</span>. Lower target = <span className="text-red-400 font-bold">23,{String(1000 - (gs.bracketGap || 20)).padStart(3, '0')}</span>.</li>
+                        <li>2. You click <span className="text-green-400 font-bold">BUY</span> → You're betting price will reach the upper bracket.</li>
+                        <li>3. If Nifty touches 24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')} → <span className="text-green-400 font-bold">WIN {gs.winMultiplier || 2}x!</span></li>
+                        <li>4. If neither level is hit → <span className="text-red-400 font-bold">Trade lost.</span></li>
+                      </ul>
+                      <div className="mt-2 bg-dark-700/60 rounded-lg p-2">
+                        <div className="text-[10px] text-yellow-400 font-bold mb-1">Example</div>
+                        <div className="text-gray-400">Nifty is at 24,000. You BUY <span className="text-purple-400 font-bold">10 Tkt</span>. Upper target = 24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}.</div>
+                        <div className="text-gray-400">Nifty hits 24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')} after 2 minutes.</div>
+                        <div className="text-green-400 font-bold mt-1">Result: WIN! You get 10 × {gs.winMultiplier || 2} = {10 * (gs.winMultiplier || 2)} Tkt (full payout, no fee on profit)</div>
+                      </div>
+                    </div>
+                    <div className="bg-cyan-900/20 border border-cyan-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Info size={12} /> Pro Tips</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Trade during <span className="font-bold">high-volatility</span> periods (market open, news events) for better chances.</li>
+                        <li>2. The bracket gap is {gs.bracketGap || 20} points — trade when Nifty is moving fast!</li>
+                        <li>3. Multiple active trades are allowed simultaneously.</li>
+                      </ul>
+                    </div>
+                  </>)}
+
+                  {/* ===== NIFTY JACKPOT ===== */}
+                  {howToPlayGame === 'niftyjackpot' && (<>
+                    <div>
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Star size={12} /> Game Overview</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. When you play Nifty Jackpot, you can buy any number of tickets, <span className="text-yellow-400 font-bold">one at a time</span>. Enter your <span className="text-yellow-400 font-bold">predicted NIFTY price</span> — your bid is placed at that price.</li>
+                        <li>2. Add <span className="text-purple-400 font-bold">1 ticket</span> per tap (repeat for more). All stakes go into the <span className="text-purple-400 font-bold">Kitty</span>.</li>
+                        <li>3. Top <span className="text-yellow-400 font-bold">{gs.topWinners || 10}</span> ranked tickets win prizes from the Kitty.</li>
+                        <li>4. Daily ticket cap is set by admin (e.g. 100). You can change the predicted price on pending tickets during the bidding window (no cancel).</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Clock size={12} /> Bidding Window</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Bidding opens at <span className="text-cyan-400 font-bold">{gs.biddingStartTime || gs.startTime || '09:15'} IST</span>.</li>
+                        <li>2. Bidding closes at <span className="text-cyan-400 font-bold">{gs.biddingEndTime || '14:59'} IST</span>.</li>
+                        <li>3. Results declared at <span className="text-green-400 font-bold">{gs.resultTime || '15:45'} IST</span> (top {gs.topWinners || 10} winners by rank).</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-purple-400 mb-1.5 flex items-center gap-1.5"><Coins size={12} /> Bid Limits</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span> (₹{(gs.minTickets || 1) * tv})</li>
+                        <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets || 500} Tickets</span> (₹{(gs.maxTickets || 500) * tv})</li>
+                        <li>3. 1 Ticket = ₹{tv}</li>
+                      </ul>
+                    </div>
+                    <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> Ranking</h3>
+                      <ul className="text-gray-300 space-y-1.5 pl-1">
+                        <li>1. Live board: each ticket ranks by <span className="text-yellow-400 font-bold">nearest to live NIFTY spot</span>; tie → earlier ticket.</li>
+                        <li>2. After close: admin locks the official price; winners rank by <span className="text-yellow-400 font-bold">nearest to that close</span>. Equal distance shares merged rank prizes.</li>
+                      </ul>
+                      <div className="mt-3 space-y-2">
+                        <div className="bg-dark-700/60 rounded-lg p-2">
+                          <div className="text-[10px] text-yellow-400 font-bold mb-1">Example: Nearest to spot</div>
+                          <div className="text-gray-400 space-y-0.5">
+                            <div>Spot <span className="text-cyan-400 font-bold">23,090</span></div>
+                            <div>Ticket A: NIFTY <span className="text-cyan-400 font-bold">23,088</span> at 10:20</div>
+                            <div>Ticket B: NIFTY <span className="text-cyan-400 font-bold">23,100</span> at 10:19</div>
+                          </div>
+                          <div className="mt-1 text-green-400 font-bold">Result: Ticket A is higher (smaller distance to spot)</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-green-400 mb-1.5 flex items-center gap-1.5"><Zap size={12} /> Kitty Amount & Prize Pool</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Every bid is added to the <span className="text-purple-400 font-bold">Kitty Amount</span> (grows in real-time).</li>
+                        <li>2. The full prize pool is distributed to winners (no platform cut from the kitty).</li>
+                        <li>3. Remaining amount is distributed as prizes to top {gs.topWinners || 10} winners.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-green-400 mb-1.5 flex items-center gap-1.5"><Award size={12} /> After Result</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. <span className="text-green-400 font-bold">Winners (Top {gs.topWinners || 10}):</span> Bid refunded + prize money.</li>
+                        <li>2. <span className="text-red-400 font-bold">Losers:</span> Bid amount is lost.</li>
+                      </ul>
+                    </div>
+                    <div className="bg-cyan-900/20 border border-cyan-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Info size={12} /> Pro Tips</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Aim for tickets <span className="font-bold">closest to the live index</span> for a better live rank.</li>
+                        <li>2. <span className="font-bold">Earlier time breaks ties</span> when distance to spot is equal.</li>
+                        <li>3. Use <span className="text-purple-400 font-bold">Update NIFTY</span> during the window if you want to refresh your level (stake unchanged).</li>
+                        <li>4. Watch <span className="text-purple-400 font-bold">Live Top 5</span> — final prizes use the locked close, not the live board.</li>
+                      </ul>
+                    </div>
+                  </>)}
+
+                </div>
+
+                {/* Close Button */}
+                <div className="sticky bottom-0 bg-dark-800 border-t border-dark-600 rounded-b-2xl px-4 py-3">
+                  <button
+                    onClick={() => setHowToPlayGame(null)}
+                    className="w-full py-2.5 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-black font-bold rounded-xl text-sm transition-all"
+                  >
+                    Got it!
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Live winners — real ledger payouts (all games) */}
+        <div className="mt-6 bg-dark-800 rounded-2xl p-5">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <h3 className="font-bold flex items-center gap-2">
+              <Star className="text-yellow-400" size={20} />
+              Live winners
+            </h3>
+            <button
+              type="button"
+              onClick={() => {
+                setLiveWinnersLoading(true);
+                fetchLiveWinners().finally(() => setLiveWinnersLoading(false));
+              }}
+              disabled={liveWinnersLoading}
+              className="p-1.5 rounded-lg text-purple-400 hover:bg-dark-700 disabled:opacity-50"
+              title="Refresh"
+            >
+              <RefreshCw size={14} className={liveWinnersLoading ? 'animate-spin' : ''} />
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-500 mb-3">
+            Real names and win amounts from games wallet credits · refreshes automatically
+          </p>
+          <div className="space-y-3">
+            {liveWinnersLoading && liveWinners.length === 0 ? (
+              <div className="text-center text-gray-500 text-sm py-6">Loading winners…</div>
+            ) : liveWinners.length === 0 ? (
+              <div className="text-center text-gray-500 text-sm py-6">
+                No recent wins yet. Play any game to see payouts here.
+              </div>
+            ) : (
+              liveWinners.map((w) => (
+                <div
+                  key={w.id}
+                  className="flex items-center justify-between p-3 bg-dark-700 rounded-lg"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-yellow-500 to-orange-500 flex items-center justify-center shrink-0">
+                      <Trophy size={14} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{w.displayName}</div>
+                      <div className="text-xs text-gray-400 truncate">{w.game}</div>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0 pl-2">
+                    <div className="text-green-400 font-bold tabular-nums">
+                      +₹{Number(w.amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-xs text-gray-500 whitespace-nowrap">
+                      {formatGamesRelativeTime(w.createdAt)}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==================== TRADING WINDOW LOGIC ====================
+// Trading windows: 9:15:00-9:29:59, 9:30:00-9:44:59, … (session start snapped to a full minute).
+// Nifty: **LTP** = last second of the betting leg (…:59:59); **Result** = next quarter-hour **:00** (D+1s after that LTP second).
+// Market hours: 9:15 AM to 3:30 PM IST
+
+const DEFAULT_MARKET_OPEN = '09:15:00';
+const DEFAULT_MARKET_CLOSE = '15:30:00';
+const DEFAULT_BTC_MARKET_OPEN = '00:00:01';
+/** Last result tick 23:45:00 IST; 24:00:00 in admin settings is treated as this cap in window math */
+const DEFAULT_BTC_MARKET_CLOSE = '23:45:00';
+/** Default Nifty round leg when settings not loaded (seconds); must match server default (900 = 15m). */
+const DEFAULT_NIFTY_ROUND_DURATION_SEC = 900;
+/** Nifty Up/Down: always 15-minute legs in UI (same as server getNiftyRoundDurationSec). */
+const NIFTY_UP_DOWN_MIN_ROUND_SEC = 900;
+const WINDOW_OFFSET_SEC = 0;    // No gap between windows
+
+/** Persisted chart TF to match Zerodha Kite (NIFTY 50 index, token 256265). */
+const LS_NIFTY_KITE_CHART_INTERVAL = 'stockex_nifty_kite_chart_interval';
+const NIFTY_KITE_CHART_OPTIONS = [
+  { kite: '5minute', label: '5m' },
+  { kite: '15minute', label: '15m' },
+  { kite: '30minute', label: '30m' },
+  { kite: '60minute', label: '1h' },
+];
+
+// Parse "HH:MM" or "HH:MM:SS" into total seconds since midnight
+const parseTimeToSec = (timeStr) => {
+  const parts = (timeStr || '').split(':').map(Number);
+  return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
+};
+
+/** Seconds since midnight in Asia/Kolkata (correct for any client TZ). */
+const getTotalSecondsIST = () => {
+  const t = new Date().toLocaleTimeString('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    hour12: false,
+  });
+  const parts = t.split(':').map((x) => parseInt(x, 10));
+  const h = parts[0] || 0;
+  const m = parts[1] || 0;
+  const s = parts[2] || 0;
+  return h * 3600 + m * 60 + s;
+};
+
+const isWeekendIST = () => {
+  const wd = new Date().toLocaleDateString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'short',
+  });
+  return wd === 'Sat' || wd === 'Sun';
+};
+
+/** NSE cash Mon–Fri 9:15–15:30 IST — live index stream expected */
+const isNseCashMarketOpen = () => {
+  if (isWeekendIST()) return false;
+  const sec = getTotalSecondsIST();
+  const open = parseTimeToSec('09:15:00');
+  const close = parseTimeToSec('15:30:00');
+  return sec >= open && sec < close;
+};
+
+const formatTime = (hours, minutes, seconds) => {
+  const h = hours > 12 ? hours - 12 : hours;
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  return `${h}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} ${ampm}`;
+};
+
+const formatIstClockFromSec = (totalSec) => {
+  if (!Number.isFinite(totalSec)) return '';
+  const hh = Math.floor(totalSec / 3600);
+  const mm = Math.floor((totalSec % 3600) / 60);
+  const ss = totalSec % 60;
+  return formatTime(hh, mm, ss);
+};
+
+/** Snapped session open (seconds since midnight IST); matches server `getEffectiveNiftySessionBounds`. */
+const niftyMarketOpenSnappedSecForGame = (openTime) => {
+  let s = parseTimeToSec(openTime || DEFAULT_MARKET_OPEN);
+  return Math.floor(s / 60) * 60;
+};
+
+/** Last second of betting window `winNum` (1-based) — LTP clock. */
+const niftyLtpEndSecForWindowNum = (winNum, openTime, roundDurationSec) => {
+  const m = niftyMarketOpenSnappedSecForGame(openTime);
+  const D = Math.max(
+    NIFTY_UP_DOWN_MIN_ROUND_SEC,
+    Number(roundDurationSec) || DEFAULT_NIFTY_ROUND_DURATION_SEC,
+  );
+  return m + winNum * D - 1;
+};
+
+/** Scheduled result instant for window `winNum` (1-based), on the …:00 grid. */
+const niftyResultSecForWindowNum = (winNum, openTime, roundDurationSec) => {
+  const m = niftyMarketOpenSnappedSecForGame(openTime);
+  const D = Math.max(
+    NIFTY_UP_DOWN_MIN_ROUND_SEC,
+    Number(roundDurationSec) || DEFAULT_NIFTY_ROUND_DURATION_SEC,
+  );
+  return m + (winNum + 1) * D;
+};
+
+const formatCountdown = (totalSec) => {
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
+
+const getTradingWindowInfo = (openTime, closeTime, roundDurationSec = DEFAULT_NIFTY_ROUND_DURATION_SEC) => {
+  const currentSec = getTotalSecondsIST();
+
+  let marketOpenSec = parseTimeToSec(openTime || DEFAULT_MARKET_OPEN);
+  marketOpenSec = Math.floor(marketOpenSec / 60) * 60;
+  const marketCloseSec = parseTimeToSec(closeTime || DEFAULT_MARKET_CLOSE);
+  const D = Math.max(NIFTY_UP_DOWN_MIN_ROUND_SEC, Number(roundDurationSec) || DEFAULT_NIFTY_ROUND_DURATION_SEC);
+
+  const openH = Math.floor(marketOpenSec / 3600);
+  const openM = Math.floor((marketOpenSec % 3600) / 60);
+  const openS = marketOpenSec % 60;
+
+  if (currentSec < marketOpenSec) {
+    return {
+      status: 'pre_market',
+      message: 'Market not yet open',
+      nextWindowStart: formatTime(openH, openM, openS),
+      countdown: marketOpenSec - currentSec,
+      windowNumber: 0,
+      canTrade: false,
+      roundDurationSec: D,
+    };
+  }
+
+  if (currentSec >= marketCloseSec) {
+    return {
+      status: 'post_market',
+      message: 'Market closed for today',
+      nextWindowStart: `Tomorrow ${formatTime(openH, openM, openS)}`,
+      countdown: 0,
+      windowNumber: 0,
+      canTrade: false,
+      roundDurationSec: D,
+    };
+  }
+
+  const secSinceMarketOpen = currentSec - marketOpenSec;
+  const windowIndex = Math.floor(secSinceMarketOpen / D);
+  const windowStartSec = marketOpenSec + windowIndex * D;
+  const windowEndSec = marketOpenSec + (windowIndex + 1) * D - 1;
+  const ltpTimeSec = windowEndSec;
+  const resultTimeSec = marketOpenSec + (windowIndex + 2) * D;
+
+  if (windowEndSec >= marketCloseSec) {
+    return {
+      status: 'post_market',
+      message: 'Market closed for today',
+      nextWindowStart: `Tomorrow ${formatTime(openH, openM, openS)}`,
+      countdown: 0,
+      windowNumber: 0,
+      canTrade: false,
+      roundDurationSec: D,
+    };
+  }
+
+  const fmtSec = (s) => formatTime(Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60);
+
+  return {
+    status: 'open',
+    message: 'Trading Window Open',
+    windowStart: fmtSec(windowStartSec),
+    windowEnd: fmtSec(windowEndSec),
+    ltpTime: fmtSec(ltpTimeSec),
+    resultTime: fmtSec(resultTimeSec),
+    windowStartSec,
+    ltpTimeSec,
+    resultTimeSec,
+    windowEndSec,
+    countdown: windowEndSec - currentSec,
+    windowNumber: windowIndex + 1,
+    canTrade: true,
+    roundDurationSec: D,
+  };
+};
+
+// ==================== BTC TRADING WINDOW (IST) ====================
+// 15-minute IST trading windows; official result time 15 min after window ends.
+const getBTCWindowInfo = (openTime, closeTime) => {
+  const gameCfg = {
+    startTime: openTime || DEFAULT_BTC_MARKET_OPEN,
+    endTime: closeTime || DEFAULT_BTC_MARKET_CLOSE,
+  };
+  const nowSec = currentTotalSecondsISTLib();
+  const st = getBtcUpDownWindowState(nowSec, gameCfg);
+
+  const fmtSec = (totalSec) => {
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const sec = totalSec % 60;
+    return formatTime(h, m, sec);
+  };
+
+  const { startSec } = getEffectiveBtcSessionBounds(gameCfg);
+
+  if (st.status === 'pre_market') {
+    const openH = Math.floor(startSec / 3600);
+    const openM = Math.floor((startSec % 3600) / 60);
+    const openS = startSec % 60;
+    return {
+      ...st,
+      message: 'Trading not open yet',
+      nextWindowStart: formatTime(openH, openM, openS),
+      countdown: st.countdown ?? startSec - nowSec,
+      canTrade: false,
+    };
+  }
+  if (st.status === 'post_market') {
+    const openH = Math.floor(startSec / 3600);
+    const openM = Math.floor((startSec % 3600) / 60);
+    const openS = startSec % 60;
+    return {
+      ...st,
+      message: 'Trading closed for today',
+      nextWindowStart: `Tomorrow ${formatTime(openH, openM, openS)}`,
+      canTrade: false,
+    };
+  }
+  if (st.status === 'cooldown') {
+    return {
+      ...st,
+      canTrade: false,
+      message: 'Betting paused — reference/result boundary (IST)',
+    };
+  }
+
+  const resultEpoch = st.resultEpoch;
+  const settleEpoch = resultEpoch + 1000;
+
+  return {
+    ...st,
+    message: 'Trading Window Open',
+    windowStart: fmtSec(st.windowStartSec),
+    windowEnd: fmtSec(st.windowEndSec),
+    windowOpenSec: st.windowStartSec,
+    resultTime: fmtSec(st.resultTimeSec),
+    resultEpoch,
+    settleTimeSec: st.settleTimeSec,
+    settleEpoch,
+  };
+};
+
+// Instructions Modal Component
+const InstructionsModal = ({ onClose, gameId }) => {
+  const isNifty = gameId === 'updown';
+  const isBTCModal = gameId === 'btcupdown';
+  const btcWindowCount = isBTCModal
+    ? getBtcTradingWindowCount({ startTime: '00:00:01', endTime: '23:45:00' })
+    : 0;
+  const windowExamples = isBTCModal
+    ? [
+        { window: '1st', open: '00:00:01', close: '00:14:59', result: '00:30' },
+        { window: '2nd', open: '00:15', close: '00:29:59', result: '00:45' },
+        { window: '3rd', open: '00:30', close: '00:44:59', result: '01:00' },
+        { window: '4th', open: '00:45', close: '00:59:59', result: '01:15' },
+      ]
+    : [
+        { window: '1st', open: '12:00:00', close: '12:14:59', ltp: '12:15:00', result: '12:30:00' },
+        { window: '2nd', open: '12:15:00', close: '12:29:59', ltp: '12:30:00', result: '12:45:00' },
+        { window: '3rd', open: '12:30:00', close: '12:44:59', ltp: '12:45:00', result: '1:00:00 PM' },
+        { window: '4th', open: '12:45:00', close: '12:59:59', ltp: '1:00:00 PM', result: '1:15:00 PM' },
+      ];
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-dark-800 rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 bg-dark-800 p-5 pb-3 border-b border-dark-600 flex items-center justify-between rounded-t-2xl">
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            <BookOpen size={20} className="text-purple-400" />
+            How to Play
+          </h2>
+          <button onClick={onClose} className="p-1.5 hover:bg-dark-700 rounded-lg transition">
+            <X size={18} />
+          </button>
+        </div>
+        
+        <div className="p-5 space-y-5">
+          {/* Trading Window Schedule */}
+          <div>
+            <h3 className="font-bold text-green-400 mb-2 flex items-center gap-2">
+              <Clock size={16} />
+              Trading Window Schedule
+            </h3>
+            <div className="bg-dark-700 rounded-xl p-4 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-400">Market Hours</span>
+                <span className="font-medium">{isBTCModal ? 'IST 00:00:01 – session ends 23:45:00 (15-minute rounds)' : '9:15 AM - 3:30 PM IST'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Window Duration</span>
+                <span className="font-medium">15 Minutes</span>
+              </div>
+              {isBTCModal && (
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Windows per IST day</span>
+                  <span className="font-medium text-orange-300">
+                    {btcWindowCount === BTC_STANDARD_WINDOWS_PER_IST_DAY
+                      ? `${BTC_STANDARD_WINDOWS_PER_IST_DAY} (#1–#${BTC_STANDARD_WINDOWS_PER_IST_DAY})`
+                      : `${btcWindowCount} (admin end time changes total)`}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-gray-400">Result time</span>
+                <span className="font-medium">
+                  {isBTCModal
+                    ? '15 minutes after each trading window ends'
+                    : '15 minutes after LTP — same Nifty spot as the next window’s LTP'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-400">Gap Between Windows</span>
+                <span className="font-medium text-green-400">None (continuous)</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Window Examples */}
+          <div>
+            <h3 className="font-bold text-blue-400 mb-2 flex items-center gap-2">
+              <Timer size={16} />
+              Window Examples
+            </h3>
+            <div className="space-y-2 text-sm">
+              {windowExamples.map((w, i) => (
+                <div key={i} className="bg-dark-700 rounded-lg p-3 flex items-center justify-between">
+                  <div>
+                    <span className="text-purple-400 font-medium">{w.window} Window</span>
+                    <div className="text-gray-400 text-xs mt-0.5">{w.open} → {w.close}</div>
+                  </div>
+                  <div className="text-right">
+                    {!isBTCModal ? (
+                      <>
+                        <div className="text-cyan-400 text-xs">LTP @ {w.ltp}</div>
+                        <div className="text-yellow-400 font-medium text-xs">Result @ {w.result}</div>
+                      </>
+                    ) : (
+                      <div className="text-yellow-400 font-medium text-xs">Result @ {w.result}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Rules */}
+          <div>
+            <h3 className="font-bold text-yellow-400 mb-2 flex items-center gap-2">
+              <AlertCircle size={16} />
+              Rules
+            </h3>
+            <ul className="space-y-2 text-sm text-gray-300">
+              <li className="flex items-start gap-2">
+                <span className="text-green-400 mt-0.5">1.</span>
+                <span>You can only place trades during an <strong className="text-white">open trading window</strong>.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-green-400 mt-0.5">2.</span>
+                <span>Predict whether {isNifty ? 'NIFTY 50' : 'BTC/USDT'} will go <strong className="text-green-400">UP</strong> or <strong className="text-red-400">DOWN</strong>.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-green-400 mt-0.5">3.</span>
+                {isBTCModal ? (
+                  <span>
+                    The <strong className="text-cyan-400">reference price</strong> is fixed at the end of your betting window. The <strong className="text-purple-400">official result price</strong> is published 15 minutes later. If result is <strong>strictly higher</strong> → UP wins; <strong>strictly lower</strong> → DOWN wins (exact tie → both sides lose).
+                  </span>
+                ) : (
+                  <span>
+                    <strong className="text-cyan-400">LTP</strong> is Nifty&apos;s last traded price when your window ends. <strong className="text-purple-400">Result</strong> is Nifty <strong className="text-purple-400">LTP (spot)</strong> 15 minutes later — the <strong className="text-purple-400">same price and time as the next window&apos;s LTP</strong>. If Result is <strong>strictly higher</strong> than your window LTP → UP wins; <strong>strictly lower</strong> → DOWN wins (exact tie → both sides lose).
+                  </span>
+                )}
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-green-400 mt-0.5">4.</span>
+                <span>
+                  If your prediction is correct, your games wallet is credited the <strong className="text-purple-400">full gross win</strong> (stake × multiplier, e.g. ₹300 at 1.95× → <strong className="text-white">₹585</strong>).
+                  {isBTCModal && (
+                    <> Brokerage for your hierarchy is paid from the <strong className="text-orange-300">house pool</strong>, not subtracted from that amount.</>
+                  )}
+                  {!isBTCModal && (
+                    <> Hierarchy/brokerage is handled from the platform side and does not reduce your credited win.</>
+                  )}
+                </span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-green-400 mt-0.5">5.</span>
+                <span>Once a trade is placed, it <strong className="text-white">cannot be cancelled or modified</strong>.</span>
+              </li>
+            </ul>
+          </div>
+
+          {/* Tip */}
+          <div className="bg-purple-900/20 border border-purple-500/30 rounded-xl p-4 text-sm">
+            <div className="font-bold text-purple-400 mb-1">Pro Tip</div>
+            <p className="text-gray-300">Watch the live price movement during the trading window before placing your prediction. The countdown timer shows how much time is left in the current window.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/** When Zerodha/socket has no ticks, use last historical close or this LTP (override via VITE_DUMMY_NIFTY_PRICE). */
+const DUMMY_NIFTY_LTP = Number(import.meta.env.VITE_DUMMY_NIFTY_PRICE) || 24050.07;
+
+/** IST calendar date YYYY-MM-DD (for LTP tape daily bucket). */
+function getIstCalendarYmd() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+const NIFTY_BRACKET_LTP_TAPE_LS = 'stockex_niftyBracket_ltpTape_v1';
+const NIFTY_BRACKET_LTP_TAPE_MAX = 10000;
+
+function ltpTapeStorageKeyForIstDate(ymd) {
+  return `${NIFTY_BRACKET_LTP_TAPE_LS}_${ymd}`;
+}
+
+function loadLtpTapeFromStorageForToday() {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const ymd = getIstCalendarYmd();
+    const raw = localStorage.getItem(ltpTapeStorageKeyForIstDate(ymd));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    const rows = parsed?.rows;
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .filter((r) => r && r.id && Number.isFinite(Number(r.price)))
+      .slice(0, NIFTY_BRACKET_LTP_TAPE_MAX);
+  } catch {
+    return [];
+  }
+}
+
+function saveLtpTapeToStorage(rowsNewestFirst) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const ymd = getIstCalendarYmd();
+    const capped = rowsNewestFirst.slice(0, NIFTY_BRACKET_LTP_TAPE_MAX);
+    localStorage.setItem(
+      ltpTapeStorageKeyForIstDate(ymd),
+      JSON.stringify({ v: 1, savedAt: Date.now(), rows: capped })
+    );
+  } catch {
+    /* quota or private mode */
+  }
+}
+
+// ==================== LIVE CHART WITH ZERODHA CONNECTION CHECK ====================
+const GameLivePricePanel = ({
+  gameId,
+  fullHeight = false,
+  onPriceUpdate,
+  priceLines = [],
+  onFallbackPrice,
+  onDemoPriceActive,
+  /** Nifty only: show scrollable LTP + IST time log under the chart (e.g. Nifty Bracket). */
+  niftyLtpTape = false,
+}) => {
+  const socketRef = useRef(null);
+  const isLiveRef = useRef(false);
+  const onPriceUpdateRef = useRef(onPriceUpdate);
+  onPriceUpdateRef.current = onPriceUpdate;
+  const onFallbackPriceRef = useRef(onFallbackPrice);
+  onFallbackPriceRef.current = onFallbackPrice;
+  const onDemoPriceActiveRef = useRef(onDemoPriceActive);
+  onDemoPriceActiveRef.current = onDemoPriceActive;
+  const livePriceRef = useRef(null);
+  const historicalDataRef = useRef([]);
+  const niftyLtpTapeRef = useRef(false);
+  niftyLtpTapeRef.current = niftyLtpTape;
+  /** IST YYYY-MM-DD for the rows currently in state — detects midnight rollover. */
+  const ltpTapeIstYmdRef = useRef('');
+
+  const [livePrice, setLivePrice] = useState(null);
+  const [priceChange, setPriceChange] = useState(null);
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
+  const [sessionClock, setSessionClock] = useState(0);
+  const [lastKnownPrice, setLastKnownPrice] = useState(null);
+  const [candleData, setCandleData] = useState([]);
+  const [zerodhaConnected, setZerodhaConnected] = useState(false);
+  const [historicalData, setHistoricalData] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [usingDummyPrice, setUsingDummyPrice] = useState(false);
+  /** Kite: last 15m bar close today (IST) — same family as Kite 15m chart final C */
+  const [sessionClearing, setSessionClearing] = useState(null);
+  /** Historical candles interval — same strings as Kite chart dropdown (default 15m). */
+  const [niftyChartInterval, setNiftyChartInterval] = useState(() => {
+    if (typeof window === 'undefined') return '15minute';
+    try {
+      const v = localStorage.getItem(LS_NIFTY_KITE_CHART_INTERVAL);
+      if (v && NIFTY_KITE_CHART_OPTIONS.some((o) => o.kite === v)) return v;
+    } catch {
+      /* ignore */
+    }
+    return '15minute';
+  });
+  const [ltpTapeRows, setLtpTapeRows] = useState([]);
+
+  const isBTC = gameId === 'btcupdown';
+  const symbol = isBTC ? 'BTC/USDT' : 'NIFTY 50';
+
+  const pushLive = useCallback((price, changePayload, tickData) => {
+    if (!price || price <= 0 || !Number.isFinite(price)) return;
+    setUsingDummyPrice(false);
+    onDemoPriceActiveRef.current?.(false);
+    setLivePrice(price);
+    setLastKnownPrice(price);
+    onPriceUpdateRef.current?.(price);
+    if (!isBTC && niftyLtpTapeRef.current) {
+      const rounded = Math.round(Number(price) * 100) / 100;
+      const istYmd = getIstCalendarYmd();
+      const istTime = new Date().toLocaleTimeString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour12: true,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+      const id = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      setLtpTapeRows((prev) => {
+        let base = prev;
+        if (ltpTapeIstYmdRef.current && ltpTapeIstYmdRef.current !== istYmd) {
+          base = loadLtpTapeFromStorageForToday();
+        }
+        ltpTapeIstYmdRef.current = istYmd;
+        const row = { id, price: rounded, istTime, ts: Date.now() };
+        const next = [row, ...base].slice(0, NIFTY_BRACKET_LTP_TAPE_MAX);
+        saveLtpTapeToStorage(next);
+        return next;
+      });
+    }
+    if (changePayload) setPriceChange(changePayload);
+
+    if (tickData) {
+      const candle = {
+        time: Date.now(),
+        open: tickData.open || price,
+        high: tickData.high || price,
+        low: tickData.low || price,
+        close: price,
+        volume: tickData.volume || 0,
+      };
+      setCandleData((prev) => [...prev, candle].slice(-100));
+    }
+  }, [isBTC]);
+
+  useEffect(() => {
+    if (!niftyLtpTape || isBTC) {
+      setLtpTapeRows([]);
+      ltpTapeIstYmdRef.current = '';
+      return;
+    }
+    const ymd = getIstCalendarYmd();
+    ltpTapeIstYmdRef.current = ymd;
+    setLtpTapeRows(loadLtpTapeFromStorageForToday());
+  }, [niftyLtpTape, isBTC]);
+
+  useEffect(() => {
+    livePriceRef.current = livePrice;
+  }, [livePrice]);
+  useEffect(() => {
+    historicalDataRef.current = historicalData;
+  }, [historicalData]);
+
+  // Nifty: if Zerodha/socket never delivers a tick, feed a demo LTP so bracket / up-down UI can be tested.
+  useEffect(() => {
+    if (isBTC) return;
+    const delayMs = loadingHistory ? 4000 : 800;
+    const t = setTimeout(() => {
+      if (!isNseCashMarketOpen()) return;
+      if (livePriceRef.current != null && livePriceRef.current > 0) return;
+      const hist = historicalDataRef.current;
+      const lastClose = hist?.length ? Number(hist[hist.length - 1]?.close) : NaN;
+      const p =
+        Number.isFinite(lastClose) && lastClose > 0 ? lastClose : DUMMY_NIFTY_LTP;
+      if (!Number.isFinite(p) || p <= 0) return;
+      console.warn('[GameLivePricePanel] Demo NIFTY price (Zerodha offline / no ticks):', p);
+      setLivePrice(p);
+      setLastKnownPrice(p);
+      setUsingDummyPrice(true);
+      onPriceUpdateRef.current?.(p);
+      onFallbackPriceRef.current?.(p);
+      onDemoPriceActiveRef.current?.(true);
+    }, delayMs);
+    return () => clearTimeout(t);
+  }, [isBTC, loadingHistory, historicalData.length]);
+
+  // Fetch historical candles — NIFTY uses ?interval= to match Kite (15m default).
+  useEffect(() => {
+    const fetchHistoricalData = async () => {
+      try {
+        setLoadingHistory(true);
+        const endpoint = isBTC
+          ? '/api/market/btc-history'
+          : `/api/market/nifty-history?interval=${encodeURIComponent(niftyChartInterval)}`;
+        console.log('Fetching historical data from:', endpoint);
+        const response = await axios.get(endpoint);
+
+        console.log('Historical data response:', response.data?.source, response.data?.interval, response.data?.data?.length);
+
+        const rawRows = Array.isArray(response.data)
+          ? response.data
+          : response.data?.data;
+        if (rawRows && rawRows.length > 0) {
+          const formatted = rawRows.map((candle) => ({
+            time: candle.time
+              ? candle.time
+              : Math.floor(new Date(candle.timestamp).getTime() / 1000),
+            open: parseFloat(candle.open),
+            high: parseFloat(candle.high),
+            low: parseFloat(candle.low),
+            close: parseFloat(candle.close),
+          }));
+          console.log('Formatted historical data:', formatted.length, 'candles');
+          setHistoricalData(formatted);
+        }
+      } catch (error) {
+        console.error('Error fetching historical data:', error);
+      } finally {
+        setLoadingHistory(false);
+      }
+    };
+
+    fetchHistoricalData();
+  }, [isBTC, niftyChartInterval]);
+
+  useEffect(() => {
+    const id = setInterval(() => setSessionClock((c) => c + 1), 20000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Temporarily disabled - this was clearing the price
+  // useEffect(() => {
+  //   if (isBTC) return;
+  //   if (!isNseCashMarketOpen()) {
+  //     isLiveRef.current = false;
+  //     setIsLiveConnected(false);
+  //     setLivePrice(null);
+  //     setPriceChange(null);
+  //   }
+  // }, [sessionClock, isBTC]);
+
+  const nseCashOpen = !isBTC && isNseCashMarketOpen();
+  void sessionClock;
+
+  useEffect(() => {
+    const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5001';
+    console.log('Connecting to socket at:', socketUrl);
+    const socket = socketIO(socketUrl);
+    socketRef.current = socket;
+    
+    socket.on('connect', () => {
+      console.log('Socket connected successfully');
+    });
+    
+    socket.on('disconnect', () => {
+      console.log('Socket disconnected');
+    });
+
+    // Listen for Zerodha connection status
+    socket.on('zerodha_status', (status) => {
+      console.log('Zerodha status received:', status);
+      setZerodhaConnected(status.connected);
+      if (!status.connected) {
+        setIsLiveConnected(false);
+        isLiveRef.current = false;
+      }
+    });
+
+    // Request initial Zerodha status
+    socket.emit('get_zerodha_status');
+
+    if (!isBTC) {
+      socket.on('market_tick', (ticks) => {
+        if (!isNseCashMarketOpen()) return;
+        const niftyTick = ticks['256265'] ?? ticks[256265];
+        if (!niftyTick) return;
+        // Headline LTP from REST only; WS confirms feed is alive.
+        setZerodhaConnected(true);
+      });
+    }
+
+    if (isBTC) {
+      const handleBtc = (ticks) => {
+        const btcTick = ticks['BTCUSDT'] || ticks['BTC'];
+        if (btcTick && btcTick.ltp) {
+          if (!isLiveRef.current) {
+            isLiveRef.current = true;
+            setIsLiveConnected(true);
+          }
+          const ch = btcTick.change !== undefined
+            ? { change: parseFloat(btcTick.change).toFixed(2), percent: btcTick.changePercent }
+            : null;
+          pushLive(btcTick.ltp, ch, btcTick);
+        }
+      };
+      socket.on('crypto_tick', handleBtc);
+      socket.on('market_tick', handleBtc);
+    }
+
+    socket.on('disconnect', () => {
+      isLiveRef.current = false;
+      setIsLiveConnected(false);
+    });
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+      isLiveRef.current = false;
+    };
+  }, [gameId, isBTC, pushLive]);
+
+  // Kite Connect quote last_price — same as Kite app; runs during and after cash session (no mock LTP override)
+  useEffect(() => {
+    if (isBTC) return undefined;
+    let cancelled = false;
+    const syncAuthoritative = async () => {
+      try {
+        const { data } = await axios.get('/api/zerodha/game-price/NIFTY?authoritative=1');
+        if (cancelled || data?.price == null) return;
+        const price = Number(data.price);
+        if (!Number.isFinite(price) || price <= 0) return;
+        if (!isLiveRef.current) {
+          isLiveRef.current = true;
+          setIsLiveConnected(true);
+        }
+        setZerodhaConnected(true);
+        setUsingDummyPrice(false);
+        onDemoPriceActiveRef.current?.(false);
+        const refForChange =
+          data.prevDayClose != null && Number.isFinite(Number(data.prevDayClose))
+            ? Number(data.prevDayClose)
+            : data.close != null
+              ? Number(data.close)
+              : NaN;
+        let ch = null;
+        if (Number.isFinite(refForChange) && refForChange > 0) {
+          const change = price - refForChange;
+          ch = { change: change.toFixed(2), percent: ((change / refForChange) * 100).toFixed(2) };
+        }
+        if (data.sessionClearing != null && Number.isFinite(Number(data.sessionClearing))) {
+          setSessionClearing(Number(data.sessionClearing));
+        } else {
+          setSessionClearing(null);
+        }
+        pushLive(price, ch, {
+          open: data.open,
+          high: data.high,
+          low: data.low,
+          close: price,
+          volume: 0,
+        });
+      } catch {
+        /* keep cached price */
+      }
+    };
+    syncAuthoritative();
+    const id = setInterval(syncAuthoritative, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [isBTC, pushLive]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (isBTC && !isLiveRef.current) {
+        console.warn(`[LivePrice] No BTC stream for ${symbol}. Check Socket.IO / VITE_SOCKET_URL.`);
+      }
+      if (!isBTC && isNseCashMarketOpen() && !isLiveRef.current) {
+        console.warn('[LivePrice] NSE open but no Kite authoritative quote yet. Check Zerodha API + /api/zerodha/game-price.');
+      }
+    }, 12000);
+    return () => clearTimeout(t);
+  }, [gameId, isBTC, symbol]);
+
+  const displayPrice = isBTC ? livePrice : nseCashOpen ? livePrice : lastKnownPrice;
+  const isUp = priceChange ? parseFloat(priceChange.change) >= 0 : true;
+
+  let statusDot = 'bg-slate-500';
+  let statusLabel = '';
+  let statusTextClass = 'text-slate-400';
+  if (isBTC) {
+    if (isLiveConnected) {
+      statusDot = 'bg-green-500 animate-pulse';
+      statusLabel = 'LIVE';
+      statusTextClass = 'text-green-400';
+    } else {
+      statusDot = 'bg-amber-500';
+      statusLabel = 'AWAITING LIVE';
+      statusTextClass = 'text-amber-400';
+    }
+  } else if (!nseCashOpen) {
+    if (usingDummyPrice) {
+      statusDot = zerodhaConnected ? 'bg-violet-500' : 'bg-slate-500';
+      statusLabel = zerodhaConnected ? 'TEST NIFTY' : 'DEMO NIFTY';
+      statusTextClass = zerodhaConnected ? 'text-violet-300' : 'text-slate-300';
+    } else {
+      statusDot = lastKnownPrice ? 'bg-blue-500' : 'bg-slate-500';
+      statusLabel = lastKnownPrice ? 'LAST PRICE' : 'MARKET CLOSED';
+      statusTextClass = lastKnownPrice ? 'text-blue-400' : 'text-slate-400';
+    }
+  } else if (isLiveConnected) {
+    statusDot = 'bg-green-500 animate-pulse';
+    statusLabel = 'LIVE';
+    statusTextClass = 'text-green-400';
+  } else {
+    statusDot = 'bg-amber-500';
+    statusLabel = 'AWAITING LIVE';
+    statusTextClass = 'text-amber-400';
+  }
+
+  const priceLine =
+    displayPrice != null
+      ? `${isBTC ? '$' : '₹'}${displayPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : '—';
+
+  /** INR only — integer in `className` colour, paise (.xx) in red */
+  const renderInrRedPaise = (amount, className) => {
+    if (amount == null || !Number.isFinite(Number(amount))) {
+      return <span className="text-gray-500">—</span>;
+    }
+    const s = Number(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const dot = s.lastIndexOf('.');
+    if (dot === -1) {
+      return (
+        <span className={`font-bold tabular-nums tracking-tight ${className}`}>₹{s}</span>
+      );
+    }
+    return (
+      <span className={`font-bold tabular-nums tracking-tight ${className}`}>
+        ₹{s.slice(0, dot)}
+        <span className="text-red-500">{s.slice(dot)}</span>
+      </span>
+    );
+  };
+
+  const changeLine = priceChange
+    ? `${isUp ? '+' : ''}${isBTC ? '$' : '₹'}${priceChange.change} (${priceChange.percent}%)`
+    : '—';
+
+  return (
+    <div className={`bg-dark-800 rounded-xl p-3 sm:p-4 flex flex-col min-h-0 ${fullHeight ? 'h-full max-lg:max-h-full' : ''}`}>
+      {/* Header */}
+      <div className="flex items-center gap-2 flex-wrap mb-2 sm:mb-4 flex-shrink-0">
+        <span className="text-gray-400 text-sm font-medium">{symbol}</span>
+        <div className="flex items-center gap-1">
+          <div className={`w-2 h-2 rounded-full ${statusDot}`} />
+          <span className={`text-xs font-medium ${statusTextClass}`}>{statusLabel}</span>
+        </div>
+      </div>
+      
+      {!isBTC && !nseCashOpen && zerodhaConnected && usingDummyPrice && (
+        <div className="mb-2 bg-violet-900/25 border border-violet-500/40 rounded-lg px-3 py-2 text-center">
+          <div className="text-xs font-semibold text-violet-200 flex items-center justify-center gap-1.5">
+            <AlertCircle size={14} className="shrink-0" />
+            Zerodha connected — using demo NIFTY (Kite quote unavailable). Check session / API.
+          </div>
+          <p className="text-[10px] text-violet-300/80 mt-1">
+            Override with <span className="font-mono text-violet-200">VITE_DUMMY_NIFTY_PRICE</span> in client env.
+          </p>
+        </div>
+      )}
+      {!isBTC && !nseCashOpen && !zerodhaConnected && (
+        <div className="mb-2 bg-slate-800/60 border border-slate-600/50 rounded-lg px-3 py-2 text-center">
+          <div className="text-xs font-semibold text-slate-300 flex items-center justify-center gap-1.5">
+            <AlertCircle size={14} className="shrink-0" />
+            Market closed — demo NIFTY from chart history / env (Zerodha not connected).
+          </div>
+          <p className="text-[10px] text-slate-500 mt-1">
+            Set <span className="font-mono text-slate-400">VITE_DUMMY_NIFTY_PRICE</span> in client env to override.
+          </p>
+        </div>
+      )}
+      {!isBTC && nseCashOpen && (!zerodhaConnected || usingDummyPrice) && (
+        <div className="mb-2 bg-amber-900/25 border border-amber-500/40 rounded-lg px-3 py-2 text-center">
+          <div className="text-xs font-semibold text-amber-300 flex items-center justify-center gap-1.5">
+            <AlertCircle size={14} className="shrink-0" />
+            {usingDummyPrice
+              ? 'Demo NIFTY price — Zerodha offline or no ticks (for UI / bracket testing).'
+              : 'Zerodha not connected — waiting for feed or demo price…'}
+          </div>
+          <p className="text-[10px] text-gray-500 mt-1">
+            Set <span className="font-mono text-gray-400">VITE_DUMMY_NIFTY_PRICE</span> in client env to override the default LTP.
+          </p>
+        </div>
+      )}
+      {!isBTC && (
+        <div className="mb-2 flex flex-wrap items-center justify-center gap-1.5">
+          <span className="text-[10px] text-gray-500 mr-0.5">IST · chart = Kite</span>
+          {NIFTY_KITE_CHART_OPTIONS.map(({ kite, label }) => (
+            <button
+              key={kite}
+              type="button"
+              onClick={() => {
+                setNiftyChartInterval(kite);
+                try {
+                  localStorage.setItem(LS_NIFTY_KITE_CHART_INTERVAL, kite);
+                } catch {
+                  /* ignore */
+                }
+              }}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
+                niftyChartInterval === kite
+                  ? 'bg-emerald-600/30 border-emerald-500/50 text-emerald-200'
+                  : 'bg-dark-700/50 border-slate-600/40 text-gray-400 hover:border-slate-500'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="mt-2 sm:mt-4 flex flex-col min-h-0 flex-1">
+        <div className="min-h-0 flex-1 overflow-hidden max-lg:max-h-[min(32vh,320px)]">
+          <LiveChart
+            key={isBTC ? 'btc-chart' : `nifty-${niftyChartInterval}`}
+            symbol={symbol}
+            isBTC={isBTC}
+            livePrice={displayPrice}
+            isLiveConnected={isLiveConnected}
+            priceLines={priceLines}
+            historicalData={historicalData}
+          />
+        </div>
+        {niftyLtpTape && !isBTC && (
+          <div className="mt-2 shrink-0 rounded-lg border border-cyan-600/25 bg-dark-900/60 overflow-hidden flex flex-col max-h-[min(280px,38vh)]">
+            <div className="px-2 py-1 text-[10px] font-semibold text-cyan-300/90 border-b border-dark-600 bg-dark-800/90 flex flex-col gap-0.5">
+              <div className="flex items-center justify-between gap-2">
+                <span>LTP trail (IST)</span>
+                <span className="text-gray-500 font-normal">newest ↑ · scroll for older</span>
+              </div>
+              <p className="text-[9px] text-gray-500 font-normal leading-snug">
+                Today on this device — every Kite quote (~2.5s) while this page is open; scroll back for e.g. 12:00 pm. New IST day starts a fresh list.
+              </p>
+            </div>
+            <div className="overflow-y-auto min-h-0 overscroll-y-contain divide-y divide-dark-700/80 text-[11px]">
+              {ltpTapeRows.length === 0 ? (
+                <p className="px-2 py-3 text-gray-500 text-center text-[10px] leading-snug">
+                  Waiting for Kite quotes… entries appear on each live update and stay for the whole IST day.
+                </p>
+              ) : (
+                ltpTapeRows.map((row) => (
+                  <div
+                    key={row.id}
+                    className="flex items-center justify-between gap-2 px-2 py-1.5 tabular-nums"
+                  >
+                    <span className="text-white font-medium">
+                      ₹{row.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <span className="text-gray-500 shrink-0 text-[10px]">{row.istTime}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+        <div className="mt-2 sm:mt-3 text-center flex-shrink-0 space-y-2">
+          {!isBTC && (
+            <div className="text-[10px] text-gray-500 uppercase tracking-wide">
+              LTP · Kite Connect last_price (IST)
+            </div>
+          )}
+          <div className="text-2xl sm:text-3xl">
+            {isBTC ? (
+              <span className="font-bold tracking-tight">{priceLine}</span>
+            ) : (
+              renderInrRedPaise(displayPrice, 'text-2xl sm:text-3xl text-white')
+            )}
+          </div>
+          {!isBTC && sessionClearing != null && Number.isFinite(sessionClearing) && (
+            <div className="rounded-lg bg-cyan-950/40 border border-cyan-600/30 px-3 py-2">
+              <div className="text-[10px] text-cyan-400/90 uppercase tracking-wide mb-0.5">
+                Clearing (last 15m bar close, IST)
+              </div>
+              <div className="text-lg sm:text-xl">
+                {renderInrRedPaise(sessionClearing, 'text-lg sm:text-xl text-cyan-300')}
+              </div>
+              <p className="text-[9px] text-gray-500 mt-1 leading-snug">
+                Same source as Kite 15m chart final candle &quot;C&quot; for today — can differ from LTP after close.
+              </p>
+            </div>
+          )}
+          <div className={`text-sm font-medium mt-1 ${priceChange ? (isUp ? 'text-green-400' : 'text-red-400') : 'text-gray-500'}`}>
+            {changeLine}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/** Latest `GameResult` for a window # (by calendar time); used for tracker + pending UI vs server. */
+function pickLatestGameResultForWindow(results, winNum) {
+  const n = Number(winNum);
+  if (!Number.isFinite(n)) return null;
+  const hits = (results || []).filter((r) => Number(r.windowNumber) === n);
+  if (hits.length === 0) return null;
+  return hits.reduce((best, r) => {
+    const t = new Date(r.windowDate || r.resultTime || r.createdAt || 0).getTime();
+    const bt = new Date(best.windowDate || best.resultTime || best.createdAt || 0).getTime();
+    return t > bt ? r : best;
+  }, hits[0]);
+}
+
+/**
+ * Nifty chain: window W reference open = prior window's official close (same Nifty @ result instant).
+ * For W≥2 returns that price when published; else current row's openPrice; else null.
+ */
+function niftyChainedOpenPriceForWindow(winNum, results) {
+  const n = Number(winNum);
+  if (!Number.isFinite(n) || n < 2) return null;
+  const prevGr = pickLatestGameResultForWindow(results, n - 1);
+  const prevClose = Number(prevGr?.closePrice);
+  if (Number.isFinite(prevClose) && prevClose > 0) return prevClose;
+  const curGr = pickLatestGameResultForWindow(results, n);
+  const curOpen = Number(curGr?.openPrice);
+  if (Number.isFinite(curOpen) && curOpen > 0) return curOpen;
+  return null;
+}
+
+// Individual Game Screen Component
+const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue = 300 }) => {
+  // Use the actual tokenValue from settings, fallback to global tokenValue
+  const actualTokenValue = tokenValue || settings?.tokenValue || 300;
+  const isBTC = game.id === 'btcupdown';
+  const isUpDownGame = game.id === 'updown' || game.id === 'btcupdown';
+  const [betAmount, setBetAmount] = useState('');
+  const [prediction, setPrediction] = useState(null);
+  const [showInstructions, setShowInstructions] = useState(false);
+  const gameStartTime = settings?.startTime;
+  const gameEndTime = settings?.endTime;
+  const niftyRoundSec = Math.max(
+    NIFTY_UP_DOWN_MIN_ROUND_SEC,
+    Number(settings?.roundDuration) || DEFAULT_NIFTY_ROUND_DURATION_SEC
+  );
+  const [windowInfo, setWindowInfo] = useState(() =>
+    isBTC
+      ? getBTCWindowInfo(gameStartTime, gameEndTime)
+      : getTradingWindowInfo(gameStartTime, gameEndTime, niftyRoundSec)
+  );
+  const [activeTrades, setActiveTrades] = useState([]); // pending trades waiting for result
+  const [tradeHistory, setTradeHistory] = useState([]);
+  const [tradeResults, setTradeResults] = useState([]); // Recent trade results with messages
+  const [gameResults, setGameResults] = useState([]); // Previous window results
+  const [loadingResults, setLoadingResults] = useState(true);
+  const currentPriceRef = useRef(null);
+  const lastNonZeroPriceRef = useRef(null);
+  const activeTradesRef = useRef([]);
+  activeTradesRef.current = activeTrades;
+  const prevWindowNumberRef = useRef(windowInfo.windowNumber);
+  const pendingWindowsRef = useRef([]);
+  const gameResultsRef = useRef([]);
+  const settlingWindowNumbersRef = useRef(new Set());
+  const checkTradeResultsInFlightRef = useRef(false);
+  // Tracks windows waiting for result (Nifty: boundary tick; BTC: until GameResult after result time)
+  const [pendingWindows, setPendingWindows] = useState([]);
+  // Always keep the last completed window for display
+  const [lastCompletedWindow, setLastCompletedWindow] = useState(null);
+  // { windowNumber, windowEndLTP, ltpTime, resultTime, resultPrice, marketDirection, resolved? }
+
+  // Admin-configured settings with fallbacks
+  const winMultiplier = settings?.winMultiplier || 1.95;
+  const brokeragePercent =
+    settings?.brokeragePercent != null && Number.isFinite(Number(settings.brokeragePercent))
+      ? Number(settings.brokeragePercent)
+      : 5;
+  const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
+
+  const computeUpDownSettlement = useCallback(
+    (amountRs, won) => {
+      const amt = Number(amountRs);
+      if (!won) return { brokerage: 0, pnl: -amt, grossWin: 0 };
+      const grossWin = amt * winMultiplier;
+      const profitBeforeFee = grossWin - amt;
+      const brokerage =
+        brokeragePercent > 0
+          ? parseFloat(((profitBeforeFee * brokeragePercent) / 100).toFixed(2))
+          : 0;
+      // Matches server: wallet credits full grossWin; brokerage is funded from pool, not deducted from user credit.
+      const pnl = parseFloat((grossWin - amt).toFixed(2));
+      return { brokerage, pnl, grossWin };
+    },
+    [winMultiplier, brokeragePercent]
+  );
+
+  // Ticket conversion helpers
+  const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
+  const toRupees = (tokens) => parseFloat((tokens * tokenValue).toFixed(2));
+  const balanceTokens = toTokens(balance);
+  const minBetTokens = settings?.minTickets || 1;
+  const maxBetTokens = settings?.maxTickets || 500;
+
+  useEffect(() => {
+    pendingWindowsRef.current = pendingWindows;
+  }, [pendingWindows]);
+
+  useEffect(() => {
+    gameResultsRef.current = gameResults;
+  }, [gameResults]);
+
+  // Track live price from GameLivePricePanel (Socket.IO ticks)
+  const handlePriceUpdate = useCallback((price) => {
+    currentPriceRef.current = price;
+    if (price != null && Number.isFinite(price) && price > 0) {
+      lastNonZeroPriceRef.current = price;
+    }
+  }, []);
+
+  // Update trading window info every second (unified for both Nifty and BTC).
+  // If the user opens after a window boundary, we never see windowNumber "tick" — still create a pending row
+  // for the previous window once clock >= current window start and we have a live price (Nifty); BTC uses server results.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const info = isBTC
+        ? getBTCWindowInfo(gameStartTime, gameEndTime)
+        : getTradingWindowInfo(gameStartTime, gameEndTime, niftyRoundSec);
+      setWindowInfo(info);
+
+      if (info.status !== 'open' || info.windowNumber < 2 || info.windowStartSec == null) return;
+
+      const prevNum = info.windowNumber - 1;
+      const nowSec = isBTC ? currentTotalSecondsISTLib() : getTotalSecondsIST();
+      if (nowSec < info.windowStartSec) return;
+
+      const raw = currentPriceRef.current || lastNonZeroPriceRef.current;
+      if (raw == null || !Number.isFinite(raw) || raw <= 0) return;
+
+      setPendingWindows((prev) => {
+        if (prev.some((pw) => pw.windowNumber === prevNum)) return prev;
+        let resultTimeSecVal;
+        let settleEpochVal;
+        if (isBTC) {
+          // Result fix for UI window #prevNum matches getBtcUpDownWindowState(activeK = prevNum - 1)
+          resultTimeSecVal = btcResultRefSecForUiWindow(prevNum);
+          const settleSec = resultTimeSecVal + 1;
+          settleEpochVal = Date.now() + Math.max(0, settleSec - nowSec) * 1000;
+        } else {
+          const Dn = info.roundDurationSec || NIFTY_UP_DOWN_MIN_ROUND_SEC;
+          resultTimeSecVal = info.resultTimeSec - Dn;
+          const settleSec = resultTimeSecVal + 1;
+          settleEpochVal = Date.now() + Math.max(0, settleSec - nowSec) * 1000;
+        }
+        const resultEpoch =
+          isBTC
+            ? Date.now() + Math.max(0, resultTimeSecVal - nowSec) * 1000
+            : Date.now() + Math.max(0, resultTimeSecVal - nowSec) * 1000;
+        const prevPendingRow = prev.find((pw) => pw.windowNumber === prevNum - 1);
+        const windowOpenLTP = prevPendingRow?.windowEndLTP ?? null;
+        return [
+          ...prev,
+          {
+            windowNumber: prevNum,
+            windowEndLTP: parseFloat(parseFloat(raw).toFixed(2)),
+            windowOpenLTP,
+            ltpTime: isBTC ? info.windowStart : formatIstClockFromSec((info.windowStartSec ?? 0) - 1),
+            resultTimeSec: resultTimeSecVal,
+            resultEpoch,
+            settleEpoch: settleEpochVal,
+            resultTime: isBTC ? info.resultTime : formatIstClockFromSec(resultTimeSecVal),
+            trades: [],
+          },
+        ];
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isBTC, gameStartTime, gameEndTime, niftyRoundSec]);
+
+  // Fetch trade history on mount
+  const fetchTradeHistory = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`/api/user/game-bets/${game.id}?limit=20`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setTradeHistory(data);
+    } catch (error) {
+      console.error('Error fetching trade history:', error);
+    }
+  }, [game.id, user.token]);
+
+  // Fetch game results on mount and when window changes
+  const fetchGameResults = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`/api/user/game-results/${game.id}`, {
+        params: { limit: 20, _ts: Date.now() },
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setGameResults(data);
+    } catch (error) {
+      console.error('Error fetching game results:', error);
+    } finally {
+      setLoadingResults(false);
+    }
+  }, [game.id, user.token]);
+
+  useEffect(() => {
+    fetchGameResults();
+    fetchTradeHistory();
+  }, [fetchGameResults, fetchTradeHistory]);
+
+  // Refresh published window results when the trading window advances (so tracker stays current without a full reload)
+  useEffect(() => {
+    fetchGameResults();
+  }, [windowInfo.windowNumber, fetchGameResults]);
+
+  // Helper function to resolve a single trade
+  const resolveTrade = useCallback(async (trade) => {
+    const exitPrice = currentPriceRef.current || 0;
+    const priceDiff = exitPrice - trade.entryPrice;
+    const marketWentUp = priceDiff > 0;
+    const marketWentDown = priceDiff < 0;
+    const won =
+      (trade.prediction === 'UP' && marketWentUp) || (trade.prediction === 'DOWN' && marketWentDown);
+    const { brokerage, pnl, grossWin } = computeUpDownSettlement(trade.amount, won);
+
+    const resolvedTrade = {
+      ...trade,
+      status: 'resolved',
+      exitPrice: parseFloat(exitPrice.toFixed(2)),
+      priceDiff: parseFloat(priceDiff.toFixed(2)),
+      pnl,
+      won,
+      brokerage,
+      grossWin: won ? grossWin : 0,
+      resultTime: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    // Send to backend first — only update UI if wallet credit succeeds
+    try {
+      await axios.post('/api/user/game-bet/resolve', {
+        gameId: game.id,
+        settlementDay:
+          typeof trade.settlementDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(trade.settlementDay)
+            ? trade.settlementDay
+            : undefined,
+        trades: [{
+          amount: resolvedTrade.amount,
+          won: resolvedTrade.won,
+          pnl: resolvedTrade.pnl,
+          brokerage: resolvedTrade.brokerage,
+          prediction: resolvedTrade.prediction,
+          windowNumber: resolvedTrade.windowNumber,
+          entryPrice: resolvedTrade.entryPrice,
+          exitPrice: resolvedTrade.exitPrice,
+          ...(trade.transactionId ? { transactionId: trade.transactionId } : {}),
+          settlementDay:
+            typeof trade.settlementDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(trade.settlementDay)
+              ? trade.settlementDay
+              : undefined,
+        }]
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+
+      refreshBalance();
+      fetchGameResults();
+      setActiveTrades(prev => prev.filter(t => t.id !== trade.id));
+      setTradeHistory(prev => [resolvedTrade, ...prev]);
+    } catch (err) {
+      console.error('Error resolving trade on server:', err);
+    }
+  }, [game.id, user.token, computeUpDownSettlement, refreshBalance, fetchGameResults]);
+
+  // When window number changes, capture LTP and queue for result (both Nifty & BTC).
+  // Always track the closed window so the tracker shows LTP even with no bets; trades resolve when non-empty.
+  useEffect(() => {
+    const prevWinNum = prevWindowNumberRef.current;
+    prevWindowNumberRef.current = windowInfo.windowNumber;
+
+    if (prevWinNum <= 0 || prevWinNum === windowInfo.windowNumber) return;
+
+    const windowEndLTP = currentPriceRef.current || lastNonZeroPriceRef.current || 0;
+    const nowSecTick = isBTC ? currentTotalSecondsISTLib() : getTotalSecondsIST();
+    let resultTimeSecVal;
+    let resultEpochVal;
+    let settleEpochVal;
+    if (isBTC) {
+      resultTimeSecVal = btcResultRefSecForUiWindow(prevWinNum);
+      resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
+      settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
+    } else {
+      const Dw = windowInfo.roundDurationSec ?? NIFTY_UP_DOWN_MIN_ROUND_SEC;
+      resultTimeSecVal = (windowInfo.resultTimeSec ?? 0) - Dw;
+      resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
+      settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
+    }
+
+    const tradesSnapshot = activeTradesRef.current;
+
+    setPendingWindows((prev) => {
+      const existingIdx = prev.findIndex((pw) => pw.windowNumber === prevWinNum);
+      const prevPendingRow = prev.find((pw) => pw.windowNumber === prevWinNum - 1);
+      const windowOpenLTP = prevPendingRow?.windowEndLTP ?? null;
+      const row = {
+        windowNumber: prevWinNum,
+        windowEndLTP: parseFloat(windowEndLTP.toFixed(2)),
+        windowOpenLTP,
+        ltpTime: !isBTC ? formatIstClockFromSec((windowInfo.windowStartSec ?? 0) - 1) : windowInfo.windowStart,
+        resultTimeSec: resultTimeSecVal,
+        resultEpoch: resultEpochVal,
+        settleEpoch: settleEpochVal,
+        resultTime: !isBTC ? formatIstClockFromSec(resultTimeSecVal) : (windowInfo.resultTime || ''),
+        trades: [...tradesSnapshot],
+      };
+      if (existingIdx >= 0) {
+        const ex = prev[existingIdx];
+        const mergedTrades =
+          tradesSnapshot.length > 0 ? [...tradesSnapshot] : [...(ex.trades || [])];
+        const existingOpenLTP = ex.windowOpenLTP ?? windowOpenLTP;
+        const next = [...prev];
+        next[existingIdx] = { ...ex, ...row, windowOpenLTP: existingOpenLTP, trades: mergedTrades };
+        return next;
+      }
+      return [...prev, row];
+    });
+    setActiveTrades([]);
+  }, [
+    windowInfo.windowNumber,
+    windowInfo.windowStart,
+    windowInfo.windowStartSec,
+    windowInfo.resultTime,
+    windowInfo.resultTimeSec,
+    windowInfo.roundDurationSec,
+    isBTC,
+  ]);
+
+  // Bets in the current window only (for Active Trades section; API may return older unsettled rows)
+  const openUpDownTrades = useMemo(() => {
+    const cur = Number(windowInfo.windowNumber);
+    return (activeTrades || [])
+      .filter((t) => Number(t.windowNumber) === cur)
+      .map((t) => ({ ...t, _awaitingResult: false }));
+  }, [activeTrades, windowInfo.windowNumber]);
+
+  // All trades from pending windows — both resolved and awaiting result
+  const allTradesForHistory = useMemo(() => {
+    const fromPending = (pendingWindows || [])
+      .flatMap((pw) => {
+        const serverResult = pickLatestGameResultForWindow(gameResults, pw.windowNumber);
+        const isResolved = pw.resolved || !!serverResult;
+
+        // BTC: prices from GameResult; Nifty: window-end vs result.
+        const resultPrice = serverResult?.closePrice ?? (isBTC ? null : pw.resultPrice) ?? null;
+        const openPrice =
+          serverResult?.openPrice ??
+          (isBTC
+            ? null
+            : niftyChainedOpenPriceForWindow(pw.windowNumber, gameResults) ??
+              pw.windowOpenLTP ??
+              pw.windowEndLTP) ??
+          null;
+
+        return (pw.trades || []).map((t) => {
+          if (!isResolved || resultPrice == null || openPrice == null) {
+            return {
+              ...t,
+              _awaitingResult: true,
+              _settledWindow: pw.windowNumber,
+            };
+          }
+          // Compute win/loss for resolved window (tie → loss; matches server settleUpDownFromPrices)
+          const priceWentUp = resultPrice > openPrice;
+          const priceWentDown = resultPrice < openPrice;
+          const won =
+            (t.prediction === 'UP' && priceWentUp) || (t.prediction === 'DOWN' && priceWentDown);
+          const amt = Number(t.amount) || 0;
+          const grossWin = won ? amt * winMultiplier : 0;
+          const pnl = won ? parseFloat((grossWin - amt).toFixed(2)) : -amt;
+          return {
+            ...t,
+            _awaitingResult: false,
+            _settledWindow: pw.windowNumber,
+            won,
+            pnl,
+            grossWin,
+            entryPrice: openPrice,
+            exitPrice: resultPrice,
+          };
+        });
+      });
+
+    return fromPending;
+  }, [pendingWindows, gameResults, winMultiplier, isBTC]);
+
+  // Pending rows + API ledger wins/losses (server); dedupe by id
+  const upDownMergedHistory = useMemo(() => {
+    const pending = allTradesForHistory || [];
+    const api = (tradeHistory || []).map((t) => ({
+      ...t,
+      _awaitingResult: false,
+      id: t.id || `api-${t.windowNumber}-${t.time}-${t.amount}`,
+    }));
+    const seen = new Set(pending.map((t) => String(t.id)));
+    const out = [...pending];
+    for (const t of api) {
+      const k = String(t.id);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(t);
+    }
+    return out;
+  }, [allTradesForHistory, tradeHistory]);
+
+  const settlePendingWindowOnServer = useCallback(
+    async (pw, resultPrice) => {
+      const gr = pickLatestGameResultForWindow(gameResultsRef.current, pw.windowNumber);
+      const openPx = isBTC
+        ? (Number(gr?.openPrice) > 0 ? Number(gr.openPrice) : pw.windowOpenLTP ?? null)
+        : Number(gr?.openPrice) > 0
+          ? Number(gr.openPrice)
+          : niftyChainedOpenPriceForWindow(pw.windowNumber, gameResultsRef.current) ??
+            pw.windowOpenLTP ??
+            pw.windowEndLTP;
+      const closePx =
+        Number(gr?.closePrice) > 0 ? Number(gr.closePrice) : resultPrice;
+      const priceDiff = openPx != null ? closePx - openPx : closePx - pw.windowEndLTP;
+      const marketWentUp = priceDiff > 0;
+      const marketWentDown = priceDiff < 0;
+
+      const resolvedTrades = (pw.trades || []).map((trade) => {
+        const amt = Number(trade.amount);
+        const won =
+          (trade.prediction === 'UP' && marketWentUp) || (trade.prediction === 'DOWN' && marketWentDown);
+        const { brokerage, pnl, grossWin } = computeUpDownSettlement(amt, won);
+        return {
+          ...trade,
+          amount: amt,
+          status: 'resolved',
+          entryPrice: openPx ?? pw.windowEndLTP,
+          exitPrice: parseFloat(closePx.toFixed(2)),
+          priceDiff: parseFloat(priceDiff.toFixed(2)),
+          pnl,
+          won,
+          brokerage,
+          grossWin: won ? grossWin : 0,
+          resultTime: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+        };
+      });
+
+      if (resolvedTrades.length > 0) {
+        const firstDay = resolvedTrades.find(
+          (t) => typeof t.settlementDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.settlementDay)
+        )?.settlementDay;
+        await axios.post(
+          '/api/user/game-bet/resolve',
+          {
+            gameId: game.id,
+            ...(firstDay ? { settlementDay: firstDay } : {}),
+            trades: resolvedTrades.map((t) => ({
+              amount: t.amount,
+              won: t.won,
+              pnl: t.pnl,
+              brokerage: t.brokerage,
+              prediction: t.prediction,
+              windowNumber: t.windowNumber,
+              entryPrice: t.entryPrice,
+              exitPrice: t.exitPrice,
+              ...(t.transactionId ? { transactionId: t.transactionId } : {}),
+              ...(typeof t.settlementDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.settlementDay)
+                ? { settlementDay: t.settlementDay }
+                : {}),
+            })),
+          },
+          { headers: { Authorization: `Bearer ${user.token}` } }
+        );
+      }
+
+      return resolvedTrades;
+    },
+    [game.id, user.token, computeUpDownSettlement, isBTC]
+  );
+
+  // Resolve pending windows when result time is reached — only after wallet API succeeds (retries if price/API fails)
+  useEffect(() => {
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      const list = pendingWindowsRef.current;
+      const nowEpoch = Date.now();
+      const nowSecForDue = isBTC ? currentTotalSecondsISTLib() : getTotalSecondsIST();
+
+      const isDue = (pw) =>
+        pw.settleEpoch != null
+          ? nowEpoch >= pw.settleEpoch
+          : pw.resultEpoch
+            ? nowEpoch >= pw.resultEpoch
+            : nowSecForDue >= pw.resultTimeSec;
+
+      if (
+        user?.token &&
+        game?.id &&
+        list.some((pw) => !pw.resolved && isDue(pw)) &&
+        (isBTC || game.id === 'updown')
+      ) {
+        try {
+          const { data } = await axios.get(`/api/user/game-results/${game.id}`, {
+            params: { limit: 40, _ts: Date.now() },
+            headers: { Authorization: `Bearer ${user.token}` },
+          });
+          if (!cancelled) {
+            gameResultsRef.current = data;
+            setGameResults(data);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      for (const pw of list) {
+        if (pw.resolved) continue;
+        const due = isDue(pw);
+        if (!due) continue;
+        if (settlingWindowNumbersRef.current.has(pw.windowNumber)) continue;
+
+        // BTC & Nifty: wait for published GameResult (official open/close); server resolves from the same row.
+        let resultPrice;
+        if (isBTC || game.id === 'updown') {
+          const gr = pickLatestGameResultForWindow(gameResultsRef.current, pw.windowNumber);
+          const c = Number(gr?.closePrice);
+          const o = Number(gr?.openPrice);
+          resultPrice =
+            Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0 ? c : null;
+        } else {
+          const nextPw = list.find((p) => p.windowNumber === pw.windowNumber + 1);
+          const nextLtp =
+            nextPw?.windowEndLTP != null &&
+            Number.isFinite(nextPw.windowEndLTP) &&
+            nextPw.windowEndLTP > 0
+              ? nextPw.windowEndLTP
+              : null;
+          const raw = nextLtp ?? currentPriceRef.current ?? lastNonZeroPriceRef.current;
+          resultPrice = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null;
+        }
+        if (resultPrice == null) {
+          if (!isBTC && game.id === 'updown') {
+            console.warn(
+              '[UpDown] Nifty settlement waiting for official GameResult (window %s)',
+              pw.windowNumber
+            );
+          } else if (!isBTC) {
+            console.warn('[UpDown] Settlement waiting for valid price (window %s)', pw.windowNumber);
+          }
+          continue;
+        }
+
+        settlingWindowNumbersRef.current.add(pw.windowNumber);
+        try {
+          const resolvedTrades = await settlePendingWindowOnServer(pw, resultPrice);
+          if (cancelled) return;
+
+          const resultPx = parseFloat(resultPrice.toFixed(2));
+          const grDir = pickLatestGameResultForWindow(gameResultsRef.current, pw.windowNumber);
+          const diffForDirection =
+            isBTC || game.id === 'updown'
+              ? (Number(grDir?.closePrice) || 0) - (Number(grDir?.openPrice) || 0)
+              : resultPrice - pw.windowEndLTP;
+          const direction =
+            diffForDirection > 0 ? 'UP' : diffForDirection < 0 ? 'DOWN' : 'TIE';
+
+          setPendingWindows((prev) =>
+            prev.map((p) =>
+              p.windowNumber === pw.windowNumber
+                ? { ...p, resolved: true, resultPrice: resultPx, marketDirection: direction }
+                : p
+            )
+          );
+
+          setLastCompletedWindow({
+            windowNumber: pw.windowNumber,
+            windowEndLTP: pw.windowEndLTP,
+            ltpTime: pw.ltpTime,
+            resultTime: pw.resultTime,
+            resultPrice: resultPx,
+            marketDirection: direction,
+            resolved: true,
+          });
+
+          if (resolvedTrades.length > 0) {
+            refreshBalance();
+            try {
+              window.dispatchEvent(new CustomEvent(AUTO_REFRESH_EVENT));
+            } catch {
+              /* ignore */
+            }
+            setTradeHistory((prev) => [...resolvedTrades.slice().reverse(), ...prev]);
+          }
+          fetchGameResults();
+        } catch (err) {
+          console.error(
+            '[UpDown] Settlement failed — will retry:',
+            err?.response?.data || err?.message || err
+          );
+        } finally {
+          settlingWindowNumbersRef.current.delete(pw.windowNumber);
+        }
+      }
+    };
+
+    const interval = setInterval(() => {
+      tick();
+    }, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [settlePendingWindowOnServer, refreshBalance, fetchGameResults, isBTC, game.id, user?.token]);
+
+  // Clean up old resolved pending windows (remove when next window's result arrives)
+  useEffect(() => {
+    setPendingWindows(prev => {
+      if (prev.length <= 1) return prev;
+      // If the latest entry is resolved, remove all older resolved entries
+      const latestResolved = prev.filter(pw => pw.resolved);
+      if (latestResolved.length > 1) {
+        // Keep only the most recent resolved + any still pending
+        const pending = prev.filter(pw => !pw.resolved);
+        const newest = latestResolved[latestResolved.length - 1];
+        return [...pending, newest];
+      }
+      return prev;
+    });
+  }, [pendingWindows]);
+
+  const quickAmounts = [1, 2, 5, 10];
+
+  const handlePlaceBet = async () => {
+    if (!betAmount || parseFloat(betAmount) <= 0 || !prediction) return;
+    const tokenAmt = parseFloat(betAmount);
+    const amt = toRupees(tokenAmt);
+    if (tokenAmt < minBetTokens) {
+      alert(`Minimum bet is ${minBetTokens} tickets`);
+      return;
+    }
+    if (tokenAmt > maxBetTokens) {
+      alert(`Maximum bet is ${maxBetTokens} tickets`);
+      return;
+    }
+    if (amt > balance) {
+      alert('Insufficient balance');
+      return;
+    }
+    if (!windowInfo.canTrade) {
+      alert('Trading window is closed. Please wait for the next window.');
+      return;
+    }
+    if (!gameEnabled) {
+      alert('This game is currently disabled by admin.');
+      return;
+    }
+
+    try {
+      const { data } = await axios.post('/api/user/game-bet/place', {
+        gameId: game.id,
+        prediction,
+        amount: amt,
+        entryPrice: parseFloat((currentPriceRef.current || 0).toFixed(2)),
+        windowNumber: windowInfo.windowNumber
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+
+      const newTrade = {
+        id: data.betId || Date.now() + Math.random(),
+        windowNumber: windowInfo.windowNumber,
+        prediction,
+        amount: amt,
+        entryPrice: parseFloat((currentPriceRef.current || 0).toFixed(2)),
+        status: 'pending',
+        time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+        placedAt: Date.now(),
+        windowStart: windowInfo.windowStart,
+        windowEnd: windowInfo.windowEnd,
+        windowResultTime: windowInfo.resultTime,
+        settlementDay: data.settlementDay,
+        transactionId: data.transactionId,
+      };
+
+      setActiveTrades(prev => [...prev, newTrade]);
+      refreshBalance();
+      try {
+        window.dispatchEvent(new CustomEvent(AUTO_REFRESH_EVENT));
+      } catch {
+        /* ignore */
+      }
+      setBetAmount('');
+      setPrediction(null);
+    } catch (error) {
+      alert(error.response?.data?.message || 'Failed to place bet');
+    }
+  };
+
+  // Window status badge
+  const WindowStatusBadge = () => {
+    if (windowInfo.status === 'open') {
+      return (
+        <div className="bg-green-900/30 border border-green-500/40 rounded-xl p-4 mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-green-400 font-bold text-sm">WINDOW #{windowInfo.windowNumber}</span>
+            </div>
+            <span className="text-xs text-gray-400">{windowInfo.windowStart} → {windowInfo.windowEnd}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-gray-400 text-sm">Window Closes In</span>
+            <span className="text-2xl font-bold text-green-400 font-mono">{formatCountdown(windowInfo.countdown)}</span>
+          </div>
+          <div className="mt-2 text-xs space-y-1">
+            {!isBTC ? (
+              <div className="flex justify-between">
+                <span className="text-gray-500">LTP @</span>
+                <span className="text-cyan-400">{windowInfo.ltpTime}</span>
+              </div>
+            ) : null}
+            <div className="flex justify-between">
+              <span className="text-gray-500">Result @</span>
+              <span className="text-purple-400">{windowInfo.resultTime}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
+    if (windowInfo.status === 'pre_market') {
+      return (
+        <div className="bg-blue-900/20 border border-blue-500/30 rounded-xl p-4 mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Clock size={16} className="text-blue-400" />
+            <span className="text-blue-400 font-bold text-sm">PRE-MARKET</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-gray-400 text-sm">First window opens at</span>
+            <span className="text-blue-400 font-medium">{windowInfo.nextWindowStart}</span>
+          </div>
+          <div className="text-xs text-gray-500 mt-1">Countdown: {formatCountdown(windowInfo.countdown)}</div>
+        </div>
+      );
+    }
+    
+    if (windowInfo.status === 'post_market') {
+      return (
+        <div className="bg-red-900/20 border border-red-500/30 rounded-xl p-4 mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Lock size={16} className="text-red-400" />
+            <span className="text-red-400 font-bold text-sm">MARKET CLOSED</span>
+          </div>
+          <p className="text-gray-400 text-sm">Trading resumes {windowInfo.nextWindowStart}</p>
+        </div>
+      );
+    }
+
+    if (windowInfo.status === 'cooldown') {
+      return (
+        <div className="bg-amber-900/20 border border-amber-500/30 rounded-xl p-4 mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Timer size={16} className="text-amber-400" />
+            <span className="text-amber-400 font-bold text-sm">BETTING PAUSED</span>
+          </div>
+          <p className="text-gray-400 text-sm">{windowInfo.message}</p>
+        </div>
+      );
+    }
+    
+    return null;
+  };
+
+  // Last two closed windows: N-2 and N-1 — result from session or API (BTC: no pre-result price row)
+  const currSymbol = isBTC ? '$' : '₹';
+  const prevWindowNumber =
+    windowInfo.windowNumber > 1 ? windowInfo.windowNumber - 1 : null;
+  const prevPrevWindowNumber =
+    windowInfo.windowNumber > 2 ? windowInfo.windowNumber - 2 : null;
+  const trackerWindowNumbers = [prevPrevWindowNumber, prevWindowNumber].filter(
+    (n) => n != null
+  );
+
+  const buildWindowView = (winNum) => {
+    if (winNum == null || !Number.isFinite(winNum)) return null;
+    const pw = pendingWindows.find((p) => p.windowNumber === winNum);
+    const completed =
+      lastCompletedWindow?.windowNumber === winNum ? lastCompletedWindow : null;
+    const serverRaw = pickLatestGameResultForWindow(gameResults, winNum);
+    let server = serverRaw;
+    if (isBTC && serverRaw) {
+      const nowSec = currentTotalSecondsISTLib();
+      if (nowSec < btcResultRefSecForUiWindow(winNum)) {
+        server = null;
+      }
+    }
+
+    const btcRefClock = (sec) => {
+      const h = Math.floor(sec / 3600) % 24;
+      const m = Math.floor((sec % 3600) / 60);
+      return formatTime(h, m, 0);
+    };
+
+    const niftyLtpClock = () =>
+      formatIstClockFromSec(niftyLtpEndSecForWindowNum(winNum, gameStartTime, niftyRoundSec));
+    const niftyResultClock = () =>
+      formatIstClockFromSec(niftyResultSecForWindowNum(winNum, gameStartTime, niftyRoundSec));
+
+    // Nifty: prefer live `pendingWindows` so we show the leg you traded (LTP @ …:59) before/without stale GameResult rows
+    // (e.g. same window # from an old 1-minute schedule on the same day).
+    if (!isBTC) {
+      if (pw) {
+        const chained = niftyChainedOpenPriceForWindow(winNum, gameResults);
+        const ltpPx =
+          winNum < 2
+            ? pw.windowEndLTP
+            : chained ?? pw.windowOpenLTP ?? pw.windowEndLTP;
+        return {
+          ltp: ltpPx,
+          ltpWhen: pw.ltpTime || niftyLtpClock(),
+          resolved: !!pw.resolved,
+          resultPrice: pw.resolved ? pw.resultPrice : null,
+          marketDirection: pw.resolved ? pw.marketDirection : null,
+          resultWhen: pw.resultTime || niftyResultClock(),
+          resultAt: pw.resultTime || niftyResultClock(),
+        };
+      }
+      if (completed) {
+        const chained = niftyChainedOpenPriceForWindow(winNum, gameResults);
+        const ltpPx =
+          winNum < 2
+            ? completed.windowEndLTP
+            : chained ?? completed.windowOpenLTP ?? completed.windowEndLTP;
+        return {
+          ltp: ltpPx,
+          ltpWhen: completed.ltpTime || niftyLtpClock(),
+          resolved: true,
+          resultPrice: completed.resultPrice,
+          marketDirection: completed.marketDirection,
+          resultWhen: completed.resultTime || niftyResultClock(),
+          resultAt: completed.resultTime || niftyResultClock(),
+        };
+      }
+      if (server) {
+        return {
+          ltp: server.openPrice,
+          ltpWhen: niftyLtpClock(),
+          resolved: true,
+          resultPrice: server.closePrice,
+          marketDirection:
+            server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE',
+          resultWhen: niftyResultClock(),
+          resultAt: niftyResultClock(),
+        };
+      }
+      return null;
+    }
+
+    if (server) {
+      const resultWhen = btcRefClock(btcResultRefSecForUiWindow(winNum));
+      return {
+        ltp: server.openPrice,
+        ltpWhen: '',
+        resolved: true,
+        resultPrice: server.closePrice,
+        marketDirection:
+          server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE',
+        resultWhen,
+        resultAt: resultWhen,
+      };
+    }
+    if (pw) {
+      return {
+        ltp: null,
+        ltpWhen: '',
+        resolved: !!pw.resolved,
+        resultPrice: pw.resolved ? pw.resultPrice : null,
+        marketDirection: pw.resolved ? pw.marketDirection : null,
+        resultWhen: btcRefClock(btcResultRefSecForUiWindow(winNum)),
+        resultAt: btcRefClock(btcResultRefSecForUiWindow(winNum)),
+      };
+    }
+    if (completed) {
+      return {
+        ltp: null,
+        ltpWhen: '',
+        resolved: true,
+        resultPrice: completed.resultPrice,
+        marketDirection: completed.marketDirection,
+        resultWhen: completed.resultTime || '',
+        resultAt: completed.resultTime || '',
+      };
+    }
+    return null;
+  };
+
+  const fmtPx = (n) =>
+    n != null && Number.isFinite(n)
+      ? `${currSymbol}${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : '—';
+
+  const WindowResultTracker = () => {
+    if (prevWindowNumber == null) {
+      return (
+        <div className="bg-dark-800 rounded-xl p-4 border border-dark-600 mb-3">
+          <h3 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-1.5">
+            <BarChart3 size={12} className="text-purple-400" />
+            Recent windows
+          </h3>
+          <p className="text-gray-500 text-sm text-center py-3">
+            {windowInfo.windowNumber <= 1
+              ? 'No previous window yet.'
+              : 'Unavailable right now.'}
+          </p>
+        </div>
+      );
+    }
+
+    const sortedNums = [...trackerWindowNumbers].sort((a, b) => a - b);
+    const rows = sortedNums.map((n) => ({ n, view: buildWindowView(n) }));
+    const allMissing = rows.every((r) => !r.view);
+
+    if (allMissing && loadingResults) {
+      return (
+        <div className="bg-dark-800 rounded-xl p-4 border border-dark-600 mb-3">
+          <h3 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-1.5">
+            <BarChart3 size={12} className="text-purple-400" />
+            Recent windows
+          </h3>
+          <div className="text-center py-4">
+            <RefreshCw className="animate-spin mx-auto text-purple-400 mb-2" size={20} />
+            <div className="text-gray-500 text-sm">Loading…</div>
+          </div>
+        </div>
+      );
+    }
+
+    const renderCard = (winNum, view) => {
+      const isLatestClosed = winNum === prevWindowNumber;
+      const pwForWin = pendingWindows.find((p) => Number(p.windowNumber) === Number(winNum));
+      if (!view) {
+        return (
+          <div
+            key={winNum}
+            className="bg-dark-800 rounded-xl p-4 border border-dark-600 mb-2 last:mb-0"
+          >
+            <h3 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-1.5">
+              <BarChart3 size={12} className="text-purple-400" />
+              Window #{winNum}
+            </h3>
+            {isLatestClosed ? (
+              <div className="text-gray-500 text-sm text-center py-2 space-y-2">
+                <p>
+                  {isBTC ? (
+                    <>
+                      <span className="text-gray-400">Result</span> is published after{' '}
+                      <span className="text-purple-400 font-medium">{windowInfo.resultTime}</span> IST when
+                      the official window prices are ready.
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-gray-400">LTP</span> when this window ends;{' '}
+                      <span className="text-gray-400">Result</span> (same Nifty spot as the next window&apos;s LTP)
+                      {pwForWin?.resultTime ? (
+                        <>
+                          {' '}
+                          @ <span className="text-purple-400 font-medium">{pwForWin.resultTime}</span> IST.
+                        </>
+                      ) : (
+                        '.'
+                      )}
+                    </>
+                  )}
+                </p>
+                <p className="text-gray-600 text-xs">
+                  {isBTC
+                    ? 'Loading official BTC result from the server…'
+                    : 'Waiting for a live price tick. If you reloaded after LTP time, the next quote may differ slightly.'}
+                </p>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm text-center py-2">
+                No data for window #{winNum} yet. Older rounds appear here from{' '}
+                <span className="text-gray-400">Previous Results</span> after they settle.
+              </p>
+            )}
+          </div>
+        );
+      }
+
+      const dir = view.marketDirection;
+      const dirClass =
+        dir === 'UP' ? 'text-green-400' : dir === 'DOWN' ? 'text-red-400' : 'text-yellow-400';
+      const title = isLatestClosed ? `Last window (#${winNum})` : `Window #${winNum}`;
+
+      return (
+        <div
+          key={winNum}
+          className="bg-dark-800 rounded-xl p-4 border border-dark-600 mb-2 last:mb-0"
+        >
+          <h3 className="text-xs font-bold text-gray-400 mb-3 flex items-center gap-1.5">
+            <BarChart3 size={12} className="text-purple-400" />
+            {title}
+          </h3>
+          <div className="bg-dark-700/50 rounded-lg p-3 border border-dark-600 space-y-3">
+            {!isBTC ? (
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-gray-400 text-sm shrink-0 pt-0.5">LTP</span>
+                <div className="text-right min-w-0">
+                  <div className="text-cyan-400 font-bold font-mono tabular-nums">
+                    {fmtPx(view.ltp)}
+                  </div>
+                  {view.ltpWhen ? (
+                    <div className="text-[10px] text-gray-500 mt-1 leading-snug">
+                      LTP @ {view.ltpWhen}
+                      <span className="text-gray-600"> IST</span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-gray-400 text-sm shrink-0 pt-0.5">Result</span>
+              {view.resolved ? (
+                <div className="text-right min-w-0">
+                  <div>
+                    <span className={`font-bold font-mono tabular-nums ${dirClass}`}>
+                      {fmtPx(view.resultPrice)}
+                    </span>
+                    <span className={`ml-2 text-xs font-bold ${dirClass}`}>
+                      {dir === 'UP' ? 'UP ▲' : dir === 'DOWN' ? 'DOWN ▼' : 'TIE'}
+                    </span>
+                  </div>
+                  {view.resultWhen ? (
+                    <div className="text-[10px] text-gray-500 mt-1 leading-snug">
+                      Result @ {view.resultWhen}
+                      <span className="text-gray-600"> IST</span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="text-right min-w-0">
+                  <div className="text-yellow-400 text-sm font-medium">Pending</div>
+                  {view.resultWhen ? (
+                    <div className="text-[10px] text-gray-500 mt-1 leading-snug">
+                      Result @ {view.resultWhen}
+                      <span className="text-gray-600"> IST</span>
+                    </div>
+                  ) : view.resultAt ? (
+                    <div className="text-[10px] text-gray-500 mt-1 leading-snug">
+                      Result @ {view.resultAt}
+                      <span className="text-gray-600"> IST</span>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <div className="mb-3 space-y-0">
+        {rows.map(({ n, view }) => renderCard(n, view))}
+      </div>
+    );
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const { data } = await axios.get(`/api/user/game-bets/${game.id === 'btcupdown' ? 'btcupdown' : 'updown'}`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setTradeHistory(data);
+    } catch (error) {
+      console.error('Error fetching history:', error);
+    }
+  };
+
+  const checkTradeResults = async () => {
+    if (checkTradeResultsInFlightRef.current) return;
+    checkTradeResultsInFlightRef.current = true;
+    try {
+      const { data } = await axios.get(`/api/user/updown/results?gameId=${game.id === 'btcupdown' ? 'btcupdown' : 'updown'}`, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      if (!data.results?.length) return;
+
+      const aggregated = aggregateUpdownResultsByWindow(data.results)
+        .filter((r) => r.won)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+      let addedAny = false;
+      setTradeResults((prev) => {
+        const nextTop = aggregated.slice(0, RECENT_UP_DOWN_WINS);
+        const prevWn = new Set(prev.map((p) => p.windowNumber));
+        addedAny = nextTop.some((n) => !prevWn.has(n.windowNumber));
+        return nextTop;
+      });
+
+      if (addedAny) {
+        fetchActiveTrades();
+        fetchHistory();
+      }
+    } catch (error) {
+      console.error('Error checking trade results:', error);
+    } finally {
+      checkTradeResultsInFlightRef.current = false;
+    }
+  };
+
+  const fetchActiveTrades = async () => {
+    try {
+      const endpoint = isBTC
+        ? '/api/user/updown/active?gameId=btcupdown'
+        : '/api/user/updown/active?gameId=updown';
+      const { data } = await axios.get(endpoint, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      const rows = Array.isArray(data) ? data : [];
+      setActiveTrades(
+        rows.map((t) => ({
+          ...t,
+          id: t.id != null ? t.id : t._id,
+          windowNumber: t.windowNumber != null ? Number(t.windowNumber) : t.windowNumber,
+        }))
+      );
+    } catch (error) {
+      console.error('Error fetching active trades:', error);
+    }
+  };
+
+  // Fetch active trades and history on mount and when the trading window advances (ledger must stay in sync)
+  useEffect(() => {
+    console.log('[DEBUG] GameScreen useEffect triggered for game:', game.id);
+    fetchActiveTrades();
+    fetchHistory();
+    checkTradeResults();
+  }, [game.id, user.token, windowInfo.windowNumber]);
+
+  // Check for results + server window results periodically (keeps tracker/history in sync after auto-settle)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchGameResults();
+      checkTradeResults();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [game.id, user.token]);
+
+  return (
+    <div className="h-screen bg-dark-900 text-white flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className={`bg-gradient-to-r ${game.color} h-1 flex-shrink-0`}></div>
+      <div className="bg-dark-800 border-b border-dark-600 flex-shrink-0">
+        <div className="px-4 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button onClick={onBack} className="p-2 hover:bg-dark-700 rounded-lg transition">
+                <ArrowLeft size={20} />
+              </button>
+              <div className="flex items-center gap-2">
+                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${game.color} flex items-center justify-center`}>
+                  <game.icon size={20} />
+                </div>
+                <div>
+                  <h1 className="font-bold">{game.name}</h1>
+                  <p className="text-xs text-gray-400">{winMultiplier}x Returns</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowInstructions(true)}
+                className="p-2 bg-dark-700 hover:bg-dark-600 rounded-lg transition"
+                title="Instructions"
+              >
+                <Info size={18} className="text-purple-400" />
+              </button>
+              <div className="flex items-center gap-2.5 rounded-xl bg-dark-700/95 border border-purple-500/35 px-3 py-2 sm:px-4 sm:py-2.5 min-w-0 max-w-[min(100%,220px)] sm:max-w-none">
+                <Coins size={22} className="text-purple-400 shrink-0" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] sm:text-xs font-medium text-sky-200/90 tracking-wide">Games wallet</div>
+                  <div className="text-lg sm:text-xl font-bold text-white tabular-nums leading-snug">
+                    {balanceTokens} Tkt
+                  </div>
+                  <div className="text-sm sm:text-base text-gray-400 tabular-nums leading-tight">
+                    ₹{Number(balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3-Column Desktop Layout / Stacked Mobile - Full Height */}
+      <div className="px-3 py-2 flex-1 min-h-0 overflow-y-auto overscroll-y-contain lg:overflow-hidden touch-pan-y">
+        <div className="flex flex-col lg:flex-row gap-3 min-h-min lg:h-full lg:min-h-0">
+
+          {/* LEFT COLUMN - Trading Window Status */}
+          <div className="lg:w-[240px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
+            <WindowStatusBadge />
+            <WindowResultTracker />
+
+            {/* Game Info Card */}
+            <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+              <div className="flex items-center gap-3 mb-3">
+                <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${game.color} flex items-center justify-center`}>
+                  <game.icon size={24} />
+                </div>
+                <div>
+                  <h3 className="font-bold">{game.name}</h3>
+                  <p className="text-xs text-gray-400">{game.description}</p>
+                </div>
+              </div>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Win Multiplier</span>
+                  <span className="text-green-400 font-bold">{winMultiplier}x</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Fee on win profit</span>
+                  <span className="text-green-400 font-medium">None</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Min Bet</span>
+                  <span className="font-medium">{minBetTokens} Tickets</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Max Bet</span>
+                  <span className="font-medium">{maxBetTokens} Tickets</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">1 Ticket</span>
+                  <span className="font-medium">₹{tokenValue}</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-gray-400">Players</span>
+                  <span className="font-medium">{game.players}</span>
+                </div>
+              </div>
+              <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
+                Win 1 Ticket bet → <span className="text-green-400 font-medium">{(winMultiplier - 1).toFixed(2)} T profit</span> (stake returned + full multiplier payout, no fee on profit)
+              </div>
+              <button
+                onClick={() => setShowInstructions(true)}
+                className="w-full mt-3 py-2 bg-dark-700 hover:bg-dark-600 rounded-lg text-sm text-purple-400 font-medium transition flex items-center justify-center gap-2"
+              >
+                <BookOpen size={14} />
+                How to Play
+              </button>
+            </div>
+          </div>
+
+          {/* CENTER COLUMN - Live price (Socket.IO only) */}
+          <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
+            <GameLivePricePanel 
+              gameId={game.id} 
+              fullHeight 
+              onPriceUpdate={handlePriceUpdate} 
+              priceLines={openUpDownTrades
+                .filter((trade, index, self) => 
+                  index === self.findIndex(t => t.entryPrice === trade.entryPrice) && 
+                  (trade.prediction === 'UP' || trade.prediction === 'DOWN')
+                )
+                .map(t => ({ id: t.id, price: t.entryPrice, prediction: t.prediction }))}
+            />
+          </div>
+
+          {/* RIGHT COLUMN - Betting Controls + Active Trades + History */}
+          <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            {/* Betting Controls - Always visible when window is open */}
+            <div className="space-y-3 flex-shrink-0">
+              {/* Trade Results Display */}
+              {tradeResults.length > 0 && (
+                <div className="rounded-xl border-2 border-dark-500 bg-dark-900/80 shadow-lg shadow-black/30 flex flex-col min-h-0 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-dark-600 bg-dark-800/90 shrink-0">
+                    <h3 className="text-xs font-bold text-gray-300 tracking-wide uppercase flex items-center gap-1.5">
+                      <Trophy size={14} className="text-amber-400 shrink-0" aria-hidden />
+                      Recent Results
+                    </h3>
+                  </div>
+                  <div className="p-3 max-h-36 overflow-y-auto overscroll-y-contain touch-pan-y scrollbar-thin [scrollbar-width:thin] [scrollbar-color:rgba(100,116,139,0.5)_transparent]">
+                    <div className="space-y-2">
+                      {tradeResults.slice(0, RECENT_UP_DOWN_WINS).map((result) => (
+                        <div
+                          key={`updown-result-${result.windowNumber}`}
+                          role="status"
+                          className={`rounded-xl border-2 p-3 text-xs font-medium shadow-md ${
+                            result.won
+                              ? 'bg-green-950/40 text-green-300 border-green-500/50 shadow-green-900/20'
+                              : 'bg-red-950/40 text-red-300 border-red-500/50 shadow-red-900/20'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2 mb-2">
+                            <span className="truncate font-semibold text-white/90">
+                              Window #{result.windowNumber}
+                            </span>
+                            <span className="font-bold shrink-0 px-2 py-0.5 rounded-md bg-black/25 border border-white/10">
+                              {result.won ? 'YOU WON!' : 'YOU LOST'}
+                            </span>
+                          </div>
+                          <div className="rounded-lg bg-black/20 border border-white/5 px-2.5 py-2 text-[11px] leading-snug break-words">
+                            <div className="text-gray-400 text-[10px] uppercase tracking-wide mb-1">Outcome</div>
+                            <div>
+                              {result.prediction} → {result.resultPrice?.toLocaleString()}
+                              {result.pnl ? (
+                                <span className="ml-2 font-mono tabular-nums">
+                                  {result.pnl >= 0 ? '+' : ''}
+                                  {result.pnl.toLocaleString()} T
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                          {result.betPlacedAt ? (
+                            <div className="mt-2 rounded-lg bg-black/20 border border-white/5 px-2.5 py-2 text-[10px] text-gray-400 flex items-center gap-1.5">
+                              <Clock size={12} className="shrink-0 text-gray-500" aria-hidden />
+                              <span>
+                                <span className="text-gray-500 uppercase tracking-wide mr-1">Placed</span>
+                                {formatBetPlacedAtIST(result.betPlacedAt)}
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {/* Bet Amount */}
+              <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+                <label className="block text-sm text-gray-400 mb-2">Enter Tickets</label>
+                <input
+                  type="number"
+                  value={betAmount}
+                  onChange={e => setBetAmount(e.target.value)}
+                  min={minBetTokens}
+                  max={maxBetTokens}
+                  step="0.01"
+                  className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-xl font-bold text-center focus:border-purple-500 focus:outline-none"
+                />
+                <div className="text-[10px] text-gray-500 mt-1 text-center">Min {minBetTokens} • Max {maxBetTokens} Tickets (1Tkt = ₹{actualTokenValue})</div>
+                <div className="grid grid-cols-4 gap-1.5 mt-2">
+                  {quickAmounts.map(amt => (
+                    <button
+                      key={amt}
+                      onClick={() => setBetAmount(amt.toString())}
+                      className="py-1.5 bg-dark-700 hover:bg-dark-600 rounded-lg text-xs font-medium transition"
+                    >
+                      {amt} T
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Prediction Selection */}
+              <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+                <label className="block text-sm text-gray-400 mb-2">Make Your Prediction</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setPrediction('UP')}
+                    disabled={!windowInfo.canTrade}
+                    className={`p-3 rounded-xl border-2 transition-all ${
+                      !windowInfo.canTrade ? 'opacity-50 cursor-not-allowed border-dark-600' :
+                      prediction === 'UP' 
+                        ? 'border-green-500 bg-green-500/20' 
+                        : 'border-dark-600 hover:border-green-500/50'
+                    }`}
+                  >
+                    <ArrowUpCircle size={24} className={`mx-auto mb-1 ${prediction === 'UP' ? 'text-green-400' : 'text-gray-400'}`} />
+                    <div className="font-bold text-sm">UP</div>
+                    <div className="text-[10px] text-gray-400">{winMultiplier}x Returns</div>
+                  </button>
+                  <button
+                    onClick={() => setPrediction('DOWN')}
+                    disabled={!windowInfo.canTrade}
+                    className={`p-3 rounded-xl border-2 transition-all ${
+                      !windowInfo.canTrade ? 'opacity-50 cursor-not-allowed border-dark-600' :
+                      prediction === 'DOWN' 
+                        ? 'border-red-500 bg-red-500/20' 
+                        : 'border-dark-600 hover:border-red-500/50'
+                    }`}
+                  >
+                    <ArrowDownCircle size={24} className={`mx-auto mb-1 ${prediction === 'DOWN' ? 'text-red-400' : 'text-gray-400'}`} />
+                    <div className="font-bold text-sm">DOWN</div>
+                    <div className="text-[10px] text-gray-400">{winMultiplier}x Returns</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Place Bet Button */}
+              <button
+                onClick={handlePlaceBet}
+                disabled={!betAmount || !prediction || parseFloat(betAmount) <= 0 || !windowInfo.canTrade}
+                className={`w-full py-3 rounded-xl font-bold text-sm transition-all ${
+                  betAmount && prediction && parseFloat(betAmount) > 0 && windowInfo.canTrade
+                    ? `bg-gradient-to-r ${game.color} hover:opacity-90`
+                    : 'bg-dark-700 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                {!windowInfo.canTrade
+                  ? 'Trading Window Closed'
+                  : betAmount && prediction 
+                    ? `Place Trade - ${parseFloat(betAmount)} Tickets` 
+                    : 'Select Amount & Prediction'}
+              </button>
+            </div>
+
+            {/* Active Trades: current window only */}
+            <div className="mt-3 flex-shrink-0">
+              <div className="flex items-center justify-between mb-1.5">
+                <h3 className="text-xs font-bold text-yellow-400">
+                  Active Trades - Window #{windowInfo.windowNumber} ({openUpDownTrades.length})
+                </h3>
+                <div className="flex items-center gap-2">
+                  {openUpDownTrades.length > 0 && (
+                    <div className="flex items-center gap-1">
+                      <RefreshCw className="animate-spin text-green-400" size={10} />
+                      <span className="text-[10px] text-green-400">Open</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {openUpDownTrades.length === 0 ? (
+                <div className="bg-dark-800 rounded-xl p-2.5 border border-dark-600 text-center">
+                  <p className="text-[10px] text-gray-500">No active trades. Place a trade in this window to see it here.</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {openUpDownTrades.map(trade => {
+                    const isUp = trade.prediction === 'UP';
+                    const key = trade._awaitingResult ? `${trade.id}-pending-${trade._settledWindow}` : `${trade.id}-live`;
+                    return (
+                      <div key={key} className={`rounded-lg p-2.5 border-l-4 ${
+                        isUp ? 'bg-green-900/20 border-green-500' : 'bg-red-900/20 border-red-500'
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-xs font-bold ${isUp ? 'text-green-400' : 'text-red-400'}`}>
+                              {trade.prediction}
+                            </span>
+                            <span className="text-xs text-gray-400">{toTokens(trade.amount)} T</span>
+                            {trade._awaitingResult && (
+                              <span className="text-[9px] text-amber-400/90 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                                Awaiting result
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-gray-400 shrink-0">W#{trade.windowNumber}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Circuit Breaker Info Section - Compact */}
+            {!isBTC && (
+              <div className="mt-3 flex-shrink-0">
+                <div className="bg-gradient-to-r from-yellow-900/20 to-orange-900/20 rounded-xl p-2.5 border border-yellow-500/30">
+                  <h3 className="text-[10px] font-bold text-yellow-400 flex items-center gap-1 mb-1.5">
+                    <AlertCircle size={10} />
+                    Circuit Breaker Rules
+                  </h3>
+                  <div className="flex gap-2 text-[9px]">
+                    <div className="flex-1 bg-green-900/30 rounded-lg p-1.5 border border-green-500/20">
+                      <span className="font-bold text-green-400">🟢 UPPER CIRCUIT</span>
+                      <p className="text-gray-400 mt-0.5">Ask=0 → BUY blocked</p>
+                    </div>
+                    <div className="flex-1 bg-red-900/30 rounded-lg p-1.5 border border-red-500/20">
+                      <span className="font-bold text-red-400">🔴 LOWER CIRCUIT</span>
+                      <p className="text-gray-400 mt-0.5">Bid=0 → SELL blocked</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Results Section - Previous Window Results */}
+            <div className="mt-3 flex-shrink-0">
+              <div className="flex items-center justify-between mb-1.5">
+                <h3 className="text-xs font-bold text-purple-400 flex items-center gap-1">
+                  <Trophy size={12} />
+                  Previous Results
+                </h3>
+                <button 
+                  onClick={fetchGameResults}
+                  className="text-[10px] text-gray-500 hover:text-gray-300 flex items-center gap-1"
+                >
+                  <RefreshCw size={10} />
+                  Refresh
+                </button>
+              </div>
+              
+              {loadingResults ? (
+                <div className="bg-dark-800 rounded-xl p-2 border border-dark-600 text-center">
+                  <RefreshCw className="animate-spin mx-auto text-purple-400" size={14} />
+                </div>
+              ) : gameResults.length === 0 ? (
+                <div className="bg-dark-800 rounded-xl p-2 border border-dark-600 text-center">
+                  <p className="text-[10px] text-gray-500">No results yet</p>
+                </div>
+              ) : (
+                <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin">
+                  {gameResults.slice(0, 10).map((result, idx) => (
+                    <div 
+                      key={result._id || idx} 
+                      className={`flex-shrink-0 bg-dark-800 rounded-lg px-2 py-1.5 border ${
+                        result.result === 'UP' ? 'border-green-500/30' : 'border-red-500/30'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] text-gray-500">#{result.windowNumber}</span>
+                        <span className={`text-[10px] font-bold ${
+                          result.result === 'UP' ? 'text-green-400' : 'text-red-400'
+                        }`}>
+                          {result.result === 'UP' ? '▲' : '▼'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Trade History */}
+            <div className="mt-3 flex-1 min-h-0 flex flex-col">
+              <div className="flex items-center justify-between mb-1.5 flex-shrink-0">
+                <h3 className="text-xs font-bold text-gray-300">Trade History (Previous Windows)</h3>
+                <div className="flex items-center gap-2">
+                  {upDownMergedHistory.length > 0 && (
+                    <span className="text-[10px] text-gray-500">{upDownMergedHistory.length} trade{upDownMergedHistory.length !== 1 ? 's' : ''}</span>
+                  )}
+                </div>
+              </div>
+
+              {upDownMergedHistory.length === 0 && openUpDownTrades.length === 0 ? (
+                <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 text-center">
+                  <Clock size={16} className="mx-auto mb-1.5 text-gray-600" />
+                  <p className="text-[10px] text-gray-500">No trades yet. Place your first trade!</p>
+                </div>
+              ) : upDownMergedHistory.length === 0 ? null : (
+                <div className="flex-1 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
+                  {/* Summary Row */}
+                  <div className="bg-dark-800 rounded-lg p-2 border border-dark-600 flex items-center justify-between">
+                    <div className="text-[11px]">
+                      <span className="text-gray-400">P&L: </span>
+                      <span className={`font-bold ${
+                        (upDownMergedHistory || []).reduce((sum, t) => sum + (Number(t.pnl) || 0), 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {(upDownMergedHistory || []).reduce((sum, t) => sum + (Number(t.pnl) || 0), 0) >= 0 ? '+' : ''}{toTokens((upDownMergedHistory || []).reduce((sum, t) => sum + (Number(t.pnl) || 0), 0))} T
+                      </span>
+                    </div>
+                    <div className="text-[11px]">
+                      <span className="text-green-400">{(upDownMergedHistory || []).filter((t) => t.won === true).length}W</span>
+                      <span className="text-gray-600 mx-0.5">/</span>
+                      <span className="text-red-400">{(upDownMergedHistory || []).filter((t) => t.won === false).length}L</span>
+                    </div>
+                  </div>
+
+                  {/* Individual Trades */}
+                  {(upDownMergedHistory || []).map((trade, idx) => (
+                    <div
+                      key={`${trade.id}-${idx}`}
+                      className={`bg-dark-800 rounded-lg p-2 border ${
+                        trade.won === true
+                          ? 'border-green-500/20'
+                          : trade.won === false
+                            ? 'border-red-500/20'
+                            : 'border-amber-500/15'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              trade.won === true
+                                ? 'bg-green-500/20 text-green-400'
+                                : trade.won === false
+                                  ? 'bg-red-500/20 text-red-400'
+                                  : 'bg-amber-500/15 text-amber-300'
+                            }`}
+                          >
+                            {trade.prediction || 'UP'}
+                          </span>
+                          <span className="text-[10px] text-gray-500">#{trade.windowNumber || '--'}</span>
+                          {trade._awaitingResult && (
+                            <span className="text-[10px] text-yellow-400">
+                              Pending
+                            </span>
+                          )}
+                        </div>
+                        <span
+                          className={`text-xs font-bold ${
+                            trade.won === true
+                              ? 'text-green-400'
+                              : trade.won === false
+                                ? 'text-red-400'
+                                : 'text-gray-400'
+                          }`}
+                        >
+                          {trade._awaitingResult
+                            ? '—'
+                            : `${(Number(trade.pnl) || 0) >= 0 ? '+' : ''}${toTokens(Number(trade.pnl) || 0)} T`}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-gray-500">
+                        <span>{toTokens(trade.amount || 0)} T • {trade.time || '--'}</span>
+                        <span>
+                          {game.id === 'btcupdown' ? '$' : ''}{(trade.entryPrice || 0).toLocaleString()} → {game.id === 'btcupdown' ? '$' : ''}{(trade.exitPrice || 0).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <GamesWalletGameLedgerPanel
+              gameId={ledgerGameIdFromUi(game.id)}
+              userToken={user?.token}
+              tokenValue={actualTokenValue}
+              title="Order history"
+              limit={500}
+              enableDateFilter
+            />
+
+          </div>
+
+        </div>
+      </div>
+
+      {/* Instructions Modal */}
+      {showInstructions && (
+        <InstructionsModal onClose={() => setShowInstructions(false)} gameId={game.id} />
+      )}
+    </div>
+  );
+};
+
+// ==================== NIFTY NUMBER SCREEN ====================
+const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue }) => {
+  // Use the actual tokenValue from settings, fallback to global tokenValue
+  const actualTokenValue = tokenValue || settings?.tokenValue || 300;
+  const [selectedNumbers, setSelectedNumbers] = useState([]);
+  const [betAmount, setBetAmount] = useState('');
+  const [todayBets, setTodayBets] = useState([]);
+  const [remaining, setRemaining] = useState(0);
+  const [maxBetsPerDay, setMaxBetsPerDay] = useState(10);
+  const [betHistory, setBetHistory] = useState([]);
+  const [placing, setPlacing] = useState(false);
+  const [loadingBet, setLoadingBet] = useState(true);
+  const [message, setMessage] = useState(null);
+  const [editingBetId, setEditingBetId] = useState(null);
+  const [editAmount, setEditAmount] = useState('');
+  const [modifying, setModifying] = useState(false);
+  // 2-step betting process states
+  const [currentStep, setCurrentStep] = useState(1);
+  const [selectedNumber, setSelectedNumber] = useState(null);
+  const [numberOfBets, setNumberOfBets] = useState(1);
+
+  // Admin-configured settings with fallbacks
+  const fixedProfit = settings?.fixedProfit || 4000;
+  const minTickets = settings?.minTickets || 1;
+  const maxTickets = settings?.maxTickets || 100;
+  const minBet = minTickets * actualTokenValue;
+  const maxBet = maxTickets * actualTokenValue;
+  const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
+  const resultTimeDisplay = settings?.resultTime || '15:45';
+
+  const [dailyResult, setDailyResult] = useState(null);
+
+  const formatNiftyBetPlacedIST = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+  };
+
+  // Numbers already bet on today (to disable in grid)
+  const todayNumbers = todayBets.map(b => b.selectedNumber);
+
+  // Ticket conversion helpers using correct token value
+  const toTokens = (rs) => parseFloat((rs / actualTokenValue).toFixed(2));
+  const toRupees = (tokens) => parseFloat((tokens * actualTokenValue).toFixed(2));
+  const balanceTokens = toTokens(balance);
+
+  useEffect(() => {
+    fetchTodayBets();
+    fetchHistory();
+    (async () => {
+      try {
+        const { data } = await axios.get('/api/user/nifty-number/daily-result', {
+          headers: { Authorization: `Bearer ${user.token}` },
+        });
+        setDailyResult(data);
+      } catch (e) {
+        console.error('Error fetching Nifty Number daily result:', e);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    const tick = async () => {
+      try {
+        const { data: dr } = await axios.get('/api/user/nifty-number/daily-result', {
+          headers: { Authorization: `Bearer ${user.token}` },
+        });
+        setDailyResult(dr);
+      } catch {
+        /* ignore */
+      }
+      try {
+        const { data } = await axios.get('/api/user/nifty-number/today', {
+          headers: { Authorization: `Bearer ${user.token}` },
+        });
+        setTodayBets(data.bets || []);
+        setRemaining(data.remaining ?? 0);
+        setMaxBetsPerDay(data.maxBetsPerDay ?? 10);
+      } catch {
+        /* ignore */
+      }
+    };
+    const id = setInterval(tick, 45000);
+    return () => clearInterval(id);
+  }, [user.token]);
+
+  const fetchTodayBets = async () => {
+    try {
+      const { data } = await axios.get('/api/user/nifty-number/today', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setTodayBets(data.bets || []);
+      setRemaining(data.remaining ?? 0);
+      setMaxBetsPerDay(data.maxBetsPerDay ?? 10);
+      try {
+        const { data: dr } = await axios.get('/api/user/nifty-number/daily-result', {
+          headers: { Authorization: `Bearer ${user.token}` },
+        });
+        setDailyResult(dr);
+      } catch {
+        /* ignore */
+      }
+    } catch (error) {
+      console.error('Error fetching today bets:', error);
+    } finally {
+      setLoadingBet(false);
+    }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const { data } = await axios.get('/api/user/nifty-number/history', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setBetHistory(data);
+    } catch (error) {
+      console.error('Error fetching history:', error);
+    }
+  };
+
+  const toggleNumber = (num) => {
+    if (todayNumbers.includes(num)) return;
+    setSelectedNumbers(prev => {
+      if (prev.includes(num)) return prev.filter(n => n !== num);
+      if (prev.length >= remaining) {
+        setMessage({ type: 'error', text: `You can only pick ${remaining} more number(s) today` });
+        return prev;
+      }
+      return [...prev, num];
+    });
+  };
+
+  const handlePlaceBet = async (betCount) => {
+    const count = betCount || numberOfBets;
+    console.log('Placing bet:', { selectedNumber, count, minBet, balance });
+    if (selectedNumber == null || count <= 0) return;
+    const amt = minBet; // Use minimum bet amount
+    const totalCost = amt * count;
+    if (totalCost > balance) { setMessage({ type: 'error', text: `Insufficient balance. Need ₹${totalCost.toLocaleString()} for ${count} ticket(s)` }); return; }
+    if (!gameEnabled) { setMessage({ type: 'error', text: 'Game is currently disabled' }); return; }
+
+    setPlacing(true);
+    setMessage(null);
+    try {
+      // Place single bet record with quantity
+      await axios.post('/api/user/nifty-number/bet', {
+        selectedNumbers: [selectedNumber],
+        amount: amt,
+        quantity: count
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      
+      setMessage({ type: 'success', text: `${count} ticket(s) placed for .${selectedNumber.toString().padStart(2, '0')}!` });
+      resetSteps();
+      refreshBalance();
+      fetchTodayBets();
+      fetchHistory();
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to place tickets' });
+    } finally {
+      setPlacing(false);
+    }
+  };
+
+  const handleModifyBet = async (betId) => {
+    const newAmt = parseFloat(editAmount);
+    if (isNaN(newAmt) || newAmt <= 0) { setMessage({ type: 'error', text: 'Enter a valid amount' }); return; }
+    if (newAmt < minBet) { setMessage({ type: 'error', text: `Minimum bet is ₹${minBet}` }); return; }
+    if (newAmt > maxBet) { setMessage({ type: 'error', text: `Maximum bet is ₹${maxBet}` }); return; }
+
+    setModifying(true);
+    setMessage(null);
+    try {
+      await axios.put(`/api/user/nifty-number/bet/${betId}`, {
+        newAmount: newAmt
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setMessage({ type: 'success', text: `Bet updated to ₹${newAmt.toLocaleString()}` });
+      setEditingBetId(null);
+      setEditAmount('');
+      refreshBalance();
+      fetchTodayBets();
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to modify bet' });
+    } finally {
+      setModifying(false);
+    }
+  };
+
+  const quickAmounts = [100, 200, 500, 1000, 2000, 5000];
+
+  // Step navigation functions
+  const handleNumberSelect = (number) => {
+    setSelectedNumber(number);
+    setCurrentStep(2);
+  };
+
+  const handleBetCountSelect = async (count) => {
+    console.log('Bet count selected:', count, 'remaining:', remaining, 'placing:', placing);
+    if (count > remaining || placing) return;
+    
+    setNumberOfBets(count);
+    // Auto place bet when count is selected - pass count directly to avoid stale state
+    await handlePlaceBet(count);
+  };
+
+  const handleBackToStep1 = () => {
+    setCurrentStep(1);
+    setSelectedNumber(null);
+    setNumberOfBets(1);
+  };
+
+  const resetSteps = () => {
+    setCurrentStep(1);
+    setSelectedNumber(null);
+    setNumberOfBets(1);
+  };
+
+  return (
+    <div className="h-screen bg-dark-900 text-white flex flex-col overflow-hidden">
+      {/* Header Color Bar */}
+      <div className={`bg-gradient-to-r ${game.color} h-1 flex-shrink-0`}></div>
+      {/* Header */}
+      <div className="bg-dark-800 border-b border-dark-600 flex-shrink-0">
+        <div className="px-4 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button onClick={onBack} className="p-2 hover:bg-dark-700 rounded-lg transition">
+                <ArrowLeft size={20} />
+              </button>
+              <div className="flex items-center gap-2">
+                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${game.color} flex items-center justify-center`}>
+                  <game.icon size={20} />
+                </div>
+                <div>
+                  <h1 className="font-bold">{game.name}</h1>
+                  <p className="text-xs text-gray-400">Win ₹{fixedProfit.toLocaleString()} profit</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-dark-700 rounded-lg px-3 py-1.5 text-right">
+              <div className="text-[10px] text-gray-400">Balance</div>
+              <div className="font-bold text-purple-400">₹{balance.toLocaleString()}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3-Column Desktop Layout / Stacked Mobile - Full Height */}
+      <div className="px-3 py-2 flex-1 min-h-0 overflow-y-auto overscroll-y-contain lg:overflow-hidden touch-pan-y">
+        <div className="flex flex-col lg:flex-row gap-3 min-h-min lg:h-full lg:min-h-0">
+
+          {/* LEFT COLUMN - Game Info + Today's Bet Status */}
+          <div className="lg:w-[260px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
+            {/* Today's official Nifty Number result after admin declare-result */}
+            <div
+              className={`mb-3 rounded-xl p-3 border ${
+                dailyResult?.declared
+                  ? 'bg-emerald-950/40 border-emerald-500/45'
+                  : 'bg-amber-950/20 border-amber-600/35'
+              }`}
+            >
+              {dailyResult?.declared ? (
+                <>
+                  <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wide text-center">
+                    Aaj ka result (clearing)
+                  </div>
+                  <div className="text-3xl font-black text-white mt-1 text-center tabular-nums">
+                    .{String(dailyResult.resultNumber).padStart(2, '0')}
+                  </div>
+                  <p className="text-[10px] text-gray-400 text-center mt-1 leading-snug">
+                    NIFTY ka last paisa (decimal) — isi se jeet/haar
+                  </p>
+                  {dailyResult.closingPrice != null && Number.isFinite(Number(dailyResult.closingPrice)) && (
+                    <div className="text-xs text-cyan-300 text-center mt-1 font-semibold tabular-nums">
+                      Band bhav ₹{Number(dailyResult.closingPrice).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  )}
+                  {dailyResult.resultDeclaredAt && (
+                    <div className="text-[9px] text-gray-500 text-center mt-1">
+                      Declare: {new Date(dailyResult.resultDeclaredAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </div>
+                  )}
+                  {todayBets.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-emerald-500/25 text-[11px] text-center text-gray-300">
+                      Aapke aaj ke entries:{' '}
+                      <span className="text-green-400 font-bold">{todayBets.filter((b) => b.status === 'won').length} jeet</span>
+                      <span className="text-gray-500"> · </span>
+                      <span className="text-red-400 font-bold">{todayBets.filter((b) => b.status === 'lost').length} haar</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="text-[10px] font-semibold text-amber-300 flex items-center justify-center gap-1">
+                    <AlertCircle size={12} className="shrink-0" />
+                    Result abhi pending
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-2 leading-relaxed text-center">
+                    Clearing ke baad yahan <span className="text-white font-semibold">jeetne wala number (.XX)</span> dikhega. Policy:{' '}
+                    <span className="text-cyan-300 font-medium">{resultTimeDisplay} IST</span> ke aas-paas admin result declare karte hain — tab har line par{' '}
+                    <span className="text-green-400">WIN</span> / <span className="text-red-400">LOSS</span> dikhega.
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* Today's Bets Status */}
+            {loadingBet ? (
+              <div className="flex items-center justify-center py-6">
+                <RefreshCw className="animate-spin text-purple-500" size={20} />
+              </div>
+            ) : todayBets.length > 0 ? (
+              <div className="bg-dark-800 rounded-xl p-3 border border-purple-500/30 mb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-purple-400 font-bold text-xs flex items-center gap-1.5">
+                    <Target size={12} />
+                    TODAY'S BETS ({todayBets.reduce((s, b) => s + (b.quantity || 1), 0)}/{maxBetsPerDay})
+                  </span>
+                  {remaining > 0 && <span className="text-[10px] text-gray-500">{remaining} left</span>}
+                </div>
+                <div className="space-y-1.5 max-h-[280px] overflow-y-auto">
+                  {todayBets.map((bet, idx) => (
+                    <div key={bet._id || idx} className={`p-2 rounded-lg text-xs ${
+                      bet.status === 'won' ? 'bg-green-900/20' :
+                      bet.status === 'lost' ? 'bg-red-900/20' :
+                      bet.status === 'expired' ? 'bg-gray-800/50 border border-gray-600/40' :
+                      'bg-yellow-900/10'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-purple-400 font-bold text-sm">.{bet.selectedNumber.toString().padStart(2, '0')}</span>
+                            <span className="text-gray-400">₹{bet.amount.toLocaleString()}</span>
+                            {(bet.quantity || 1) > 1 && (
+                              <span className="text-[10px] text-purple-300 bg-purple-500/20 px-1.5 py-0.5 rounded">×{bet.quantity}</span>
+                            )}
+                          </div>
+                          <div className="text-[9px] text-gray-500 tabular-nums leading-tight">
+                            <span className="text-gray-400">Date</span> {bet.betDate || '—'}
+                            {bet.createdAt && formatNiftyBetPlacedIST(bet.createdAt) && (
+                              <>
+                                {' · '}
+                                <span className="text-gray-400">Placed</span> {formatNiftyBetPlacedIST(bet.createdAt)} IST
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {bet.status === 'pending' && (
+                            <>
+                              <button
+                                onClick={() => { setEditingBetId(editingBetId === bet._id ? null : bet._id); setEditAmount(bet.amount.toString()); }}
+                                className="text-[10px] text-blue-400 hover:text-blue-300 px-1.5 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 transition"
+                              >
+                                {editingBetId === bet._id ? 'Cancel' : 'Edit'}
+                              </button>
+                            </>
+                          )}
+                          {bet.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
+                          {bet.status === 'expired' && <span className="text-gray-400 font-medium">Removed (refunded)</span>}
+                          {bet.status === 'won' && <span className="text-green-400 font-bold">WIN +₹{bet.profit?.toLocaleString()}</span>}
+                          {bet.status === 'lost' && <span className="text-red-400 font-bold">LOSS -₹{bet.amount.toLocaleString()}</span>}
+                        </div>
+                      </div>
+                                      {bet.status !== 'pending' && bet.resultNumber != null && (
+                        <div className="text-[10px] mt-1.5 text-gray-500">
+                          Result .{String(bet.resultNumber).padStart(2, '0')} · aapka .{String(bet.selectedNumber).padStart(2, '0')}{' '}
+                          {bet.status === 'won' ? (
+                            <span className="text-green-400 font-bold">→ JEET</span>
+                          ) : (
+                            <span className="text-red-400 font-bold">→ HAAR</span>
+                          )}
+                        </div>
+                      )}
+                      {/* Inline Edit */}
+                      {editingBetId === bet._id && bet.status === 'pending' && (
+                        <div className="mt-2 flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            value={editAmount}
+                            onChange={e => setEditAmount(e.target.value)}
+                            className="flex-1 bg-dark-700 border border-dark-500 rounded px-2 py-1 text-xs font-bold focus:border-blue-500 focus:outline-none"
+                            min={minBet}
+                            max={maxBet}
+                          />
+                          <button
+                            onClick={() => handleModifyBet(bet._id)}
+                            disabled={modifying}
+                            className="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-[10px] font-bold transition disabled:opacity-50"
+                          >
+                            {modifying ? '...' : 'Save'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-purple-900/20 border border-purple-500/30 rounded-xl p-3 mb-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <Target size={14} className="text-purple-400" />
+                  <span className="text-purple-400 font-bold text-xs">NO BETS TODAY</span>
+                </div>
+                <p className="text-gray-400 text-xs">Pick numbers and place your bets →</p>
+              </div>
+            )}
+
+            {/* Game Info Card */}
+            <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+              <div className="flex items-center gap-3 mb-3">
+                <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${game.color} flex items-center justify-center`}>
+                  <game.icon size={24} />
+                </div>
+                <div>
+                  <h3 className="font-bold">{game.name}</h3>
+                  <p className="text-xs text-gray-400">Pick .00 to .95 (multiples of 5)</p>
+                </div>
+              </div>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Win Profit</span>
+                  <span className="text-green-400 font-bold">₹{fixedProfit.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Min Bet</span>
+                  <span className="font-medium">{minTickets} Ticket{minTickets > 1 ? 's' : ''} (₹{minBet.toLocaleString()})</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Max Bet</span>
+                  <span className="font-medium">{maxTickets} Tickets (₹{maxBet.toLocaleString()})</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Bets/Day</span>
+                  <span className="text-yellow-400 font-bold">{maxBetsPerDay}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Result At</span>
+                  <span className="font-medium">{resultTimeDisplay} IST</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-gray-400">Betting</span>
+                  <span className="text-cyan-400 font-medium">{settings?.biddingStartTime || '09:15'} - {settings?.biddingEndTime || '15:24'}</span>
+                </div>
+              </div>
+              <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
+                Bet {minTickets} Ticket (₹{minBet}) → If you win: <span className="text-green-400 font-medium">+₹{fixedProfit.toLocaleString()} profit</span>
+              </div>
+              <p className="text-[10px] text-gray-500 mt-2 text-center leading-snug">
+                Jeet/haar upar wale &quot;Aaj ka result&quot; box aur har line par tab dikhega jab admin aaj ka result declare karein ({resultTimeDisplay} IST policy).
+              </p>
+            </div>
+
+            {/* Bet History */}
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 mt-3">
+              <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
+                <Clock size={12} className="text-gray-400" />
+                History
+              </h3>
+              {betHistory.length === 0 ? (
+                <p className="text-gray-500 text-[10px] text-center py-2">No bets yet</p>
+              ) : (
+                <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                  {betHistory.map((bet, idx) => (
+                    <div key={bet._id || idx} className={`flex items-center justify-between p-2 rounded-lg text-xs ${
+                      bet.status === 'won' ? 'bg-green-900/20' :
+                      bet.status === 'lost' ? 'bg-red-900/20' :
+                      bet.status === 'expired' ? 'bg-gray-800/50' :
+                      'bg-dark-700'
+                    }`}>
+                      <div>
+                        <div className="text-[10px] text-gray-500">
+                          <span className="text-gray-400">Date</span> {bet.betDate}
+                          {bet.createdAt && formatNiftyBetPlacedIST(bet.createdAt) && (
+                            <>
+                              {' · '}
+                              <span className="text-gray-400">Placed</span> {formatNiftyBetPlacedIST(bet.createdAt)} IST
+                            </>
+                          )}
+                        </div>
+                        <div className="font-bold">.{bet.selectedNumber.toString().padStart(2, '0')} <span className="text-gray-400 font-normal">₹{bet.amount.toLocaleString()}</span>{(bet.quantity || 1) > 1 && <span className="text-purple-300 text-[10px] ml-1">×{bet.quantity}</span>}</div>
+                        {bet.status !== 'pending' && bet.resultNumber != null && (
+                          <div className="text-[9px] text-gray-500 mt-0.5">
+                            Result .{String(bet.resultNumber).padStart(2, '0')}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        {bet.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
+                        {bet.status === 'expired' && <span className="text-gray-400 font-medium">Removed</span>}
+                        {bet.status === 'won' && <span className="text-green-400 font-bold">WIN +₹{bet.profit?.toLocaleString()}</span>}
+                        {bet.status === 'lost' && <span className="text-red-400 font-bold">LOSS -₹{bet.amount.toLocaleString()}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <GamesWalletGameLedgerPanel
+              gameId={ledgerGameIdFromUi(game.id)}
+              userToken={user?.token}
+              tokenValue={actualTokenValue}
+              title="Order history — Nifty Number"
+              limit={500}
+              enableDateFilter
+            />
+          </div>
+
+          {/* CENTER COLUMN - Nifty live price */}
+          <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
+            <GameLivePricePanel gameId="updown" fullHeight />
+          </div>
+
+          {/* RIGHT COLUMN - Number Picker + Bet Controls */}
+          <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            {/* Message */}
+            {message && (
+              <div className={`p-2 rounded-lg text-xs font-medium mb-2 ${message.type === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                {message.text}
+              </div>
+            )}
+
+            {remaining === 0 && todayBets.length > 0 ? (
+              /* All bets used today - show summary */
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center p-6">
+                  <div className="w-16 h-16 rounded-full mx-auto mb-3 flex items-center justify-center bg-purple-500/20">
+                    <Check size={28} className="text-purple-400" />
+                  </div>
+                  <div className="text-lg font-bold text-purple-400 mb-1">All {maxBetsPerDay} bets placed!</div>
+                  <div className="flex flex-wrap gap-1.5 justify-center mb-2">
+                    {todayBets.map((b, i) => (
+                      <span key={i} className={`px-2 py-1 rounded-lg text-xs font-bold ${
+                        b.status === 'won' ? 'bg-green-500/20 text-green-400' :
+                        b.status === 'lost' ? 'bg-red-500/20 text-red-400' :
+                        'bg-purple-500/20 text-purple-400'
+                      }`}>.{b.selectedNumber.toString().padStart(2, '0')}</span>
+                    ))}
+                  </div>
+                  <div className="text-gray-400 text-sm mb-1">
+                    Total: ₹{todayBets.reduce((s, b) => s + b.amount, 0).toLocaleString()}
+                  </div>
+                  <div className="text-yellow-400 text-xs font-medium">Result policy {resultTimeDisplay} IST — declare ke baad yahi screen par WIN/LOSS</div>
+                  <div className="text-[10px] text-gray-500 mt-2">You can still edit pending bet amounts from the left panel</div>
+                </div>
+              </div>
+            ) : (
+              /* Betting UI - 2-Step Process */
+              <div className="space-y-2 overflow-y-auto flex-1">
+                {/* Step Indicator */}
+                <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      {[1, 2].map(step => (
+                        <div key={step} className="flex items-center">
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
+                            step < currentStep ? 'bg-green-600 text-white' :
+                            step === currentStep ? 'bg-purple-600 text-white' :
+                            'bg-dark-700 text-gray-500'
+                          }`}>
+                            {step < currentStep ? '✓' : step}
+                          </div>
+                          {step < 2 && (
+                            <div className={`w-8 h-0.5 mx-1 transition-all ${
+                              step < currentStep ? 'bg-green-600' : 'bg-dark-700'
+                            }`} />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <span className="text-[10px] text-gray-500">Step {currentStep} of 2</span>
+                  </div>
+                  
+                  {/* Step 1: Select Number */}
+                  {currentStep === 1 && (
+                    <div>
+                      <div className="text-sm font-medium text-purple-400 mb-2">Step 1: Select a Number</div>
+                      <div className="grid grid-cols-5 gap-1.5">
+                        {Array.from({ length: 20 }, (_, idx) => {
+                          const i = idx * 5;
+                          const isAlreadyBet = todayNumbers.includes(i);
+                          return (
+                            <button
+                              key={i}
+                              onClick={() => handleNumberSelect(i)}
+                              disabled={isAlreadyBet}
+                              className={`py-2 rounded text-xs font-bold transition-all ${
+                                isAlreadyBet
+                                  ? 'bg-yellow-900/30 text-yellow-600 cursor-not-allowed ring-1 ring-yellow-500/30'
+                                  : 'bg-dark-700 hover:bg-purple-600 hover:text-white text-gray-300'
+                              }`}
+                            >
+                              .{i.toString().padStart(2, '0')}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Step 2: Select number of tickets */}
+                  {currentStep === 2 && (
+                    <div>
+                      <div className="text-sm font-medium text-purple-400 mb-2">
+                        Step 2: Select number of tickets for .{selectedNumber?.toString().padStart(2, '0')}
+                      </div>
+                                            <div className="grid grid-cols-3 gap-2">
+                        {[1, 2, 3, 5, 10, 20].map(count => (
+                          <button
+                            key={count}
+                            onClick={() => handleBetCountSelect(count)}
+                            disabled={count > remaining || placing}
+                            className={`py-2 rounded text-xs font-bold transition-all ${
+                              count > remaining
+                                ? 'bg-gray-700 text-gray-600 cursor-not-allowed'
+                                : placing
+                                ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                                : 'bg-dark-700 hover:bg-purple-600 hover:text-white text-gray-300'
+                            }`}
+                          >
+                            {placing ? '...' : `${count} ticket${count > 1 ? 's' : ''}`}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mt-2 text-[10px] text-gray-500 text-center">
+                        {remaining} tickets remaining today
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Navigation Buttons */}
+                  <div className="flex gap-2 mt-3">
+                    {currentStep > 1 && (
+                      <button
+                        onClick={handleBackToStep1}
+                        className="flex-1 py-2 bg-dark-700 hover:bg-dark-600 rounded text-xs font-medium transition-all"
+                      >
+                        ← Back
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/** Nifty Bracket `resultTime` from settings (HH:mm) → e.g. "3:30 PM IST" */
+function formatBracketResultTimeIST(hhmm) {
+  const raw = (hhmm && String(hhmm).trim()) || '15:30';
+  const [hStr, mStr = '0'] = raw.split(':');
+  const h = parseInt(hStr, 10);
+  const m = parseInt(String(mStr).slice(0, 2), 10);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return '3:30 PM IST';
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${period} IST`;
+}
+
+// ==================== NIFTY BRACKET SCREEN ====================
+const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue = 300 }) => {
+  const [betAmount, setBetAmount] = useState('');
+  const [activeTrades, setActiveTrades] = useState([]);
+  const [tradeHistory, setTradeHistory] = useState([]);
+  const [placing, setPlacing] = useState(false);
+  const [message, setMessage] = useState(null);
+  const [currentPrice, setCurrentPrice] = useState(null);
+  const [demoPriceActive, setDemoPriceActive] = useState(false);
+  const [lockedDisplayPrice, setLockedDisplayPrice] = useState(null);
+  const [timerTick, setTimerTick] = useState(0); // For live countdown
+  const resolveCheckRef = useRef(null);
+
+  const fetchActiveTrades = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/user/nifty-bracket/active', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setActiveTrades(data);
+    } catch (error) {
+      console.error('Error fetching active trades:', error);
+    }
+  }, [user?.token]);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/user/nifty-bracket/history', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setTradeHistory(data);
+    } catch (error) {
+      console.error('Error fetching history:', error);
+    }
+  }, [user?.token]);
+
+  // Debug: Monitor currentPrice changes
+  useEffect(() => {
+    console.log('NiftyBracket currentPrice changed to:', currentPrice);
+  }, [currentPrice]);
+
+  // Fetch active trades and history on mount / token change
+  useEffect(() => {
+    console.log('[DEBUG] GameScreen useEffect triggered for game:', game.id);
+    fetchActiveTrades();
+    fetchHistory();
+  }, [game.id, user?.token, fetchActiveTrades, fetchHistory]);
+
+  // Instructions Modal */interval to check currentPrice periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      console.log('Periodic check - NiftyBracket currentPrice:', currentPrice);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [currentPrice]);
+
+  // Reset locked price when no active trades
+  useEffect(() => {
+    if (activeTrades.length === 0 && lockedDisplayPrice) {
+      setLockedDisplayPrice(null);
+    }
+  }, [activeTrades.length, lockedDisplayPrice]);
+
+  const bracketGap = settings?.bracketGap || 20;
+  const expiryMinutes = settings?.expiryMinutes || 5;
+  const winMultiplier = settings?.winMultiplier || 2;
+  const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
+
+  // Calculate BUY/SELL prices with spread
+  const buyPrice = currentPrice ? currentPrice + 5 : null; // BUY price = current + 5
+  const sellPrice = currentPrice ? currentPrice - 5 : null; // SELL price = current - 5
+
+  // Ticket conversion helpers
+  const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
+  const toRupees = (tokens) => parseFloat((tokens * tokenValue).toFixed(2));
+  const balanceTokens = toTokens(balance);
+  const minBetTokens = settings?.minTickets || 1;
+  const maxBetTokens = settings?.maxTickets || 250;
+  const resultTimeDisplay = formatBracketResultTimeIST(settings?.resultTime);
+  const settleAtResultTime = settings?.settleAtResultTime !== false;
+
+  const upperTarget = currentPrice ? parseFloat((currentPrice + bracketGap).toFixed(2)) : null;
+  const lowerTarget = currentPrice ? parseFloat((currentPrice - bracketGap).toFixed(2)) : null;
+
+  const resolvingRef = useRef(false);
+  const activeTradesRef = useRef([]);
+  const currentPriceRef = useRef(null);
+
+  useEffect(() => {
+    activeTradesRef.current = activeTrades;
+  }, [activeTrades]);
+  useEffect(() => {
+    currentPriceRef.current = currentPrice;
+  }, [currentPrice]);
+
+  // Every second: after result time / expiry, settle with latest LTP (session-close or intraday timer)
+  useEffect(() => {
+    if (activeTrades.length === 0) return;
+
+    const interval = setInterval(async () => {
+      setTimerTick((t) => t + 1);
+      const trades = activeTradesRef.current;
+      const price = currentPriceRef.current;
+      const now = new Date();
+      if (!price || resolvingRef.current) return;
+
+      const due = trades.filter(
+        (t) => t.status === 'active' && new Date(t.expiresAt).getTime() <= now.getTime()
+      );
+      if (due.length === 0) return;
+
+      resolvingRef.current = true;
+      try {
+        for (const trade of due) {
+          try {
+            const { data } = await axios.post(
+              '/api/user/nifty-bracket/resolve',
+              { tradeId: trade._id, currentPrice: price },
+              { headers: { Authorization: `Bearer ${user.token}` } }
+            );
+            setMessage({
+              type: data.trade.status === 'won' ? 'success' : 'error',
+              text: data.message,
+            });
+          } catch {
+            /* already resolved or not yet allowed */
+          }
+        }
+      } finally {
+        resolvingRef.current = false;
+        fetchActiveTrades();
+        fetchHistory();
+        refreshBalance();
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [activeTrades.length, fetchActiveTrades, fetchHistory, refreshBalance, user?.token]);
+
+  // Intraday mode only: settle when live price touches band before result time
+  useEffect(() => {
+    if (settleAtResultTime) return;
+    if (!currentPrice || activeTrades.length === 0 || resolvingRef.current) return;
+
+    const checkAndResolve = async () => {
+      resolvingRef.current = true;
+      for (const trade of activeTrades) {
+        if (trade.status !== 'active') continue;
+        try {
+          const { data } = await axios.post(
+            '/api/user/nifty-bracket/resolve',
+            { tradeId: trade._id, currentPrice },
+            { headers: { Authorization: `Bearer ${user.token}` } }
+          );
+          setMessage({
+            type: data.trade.status === 'won' ? 'success' : 'error',
+            text: data.message,
+          });
+          fetchActiveTrades();
+          fetchHistory();
+          refreshBalance();
+        } catch {
+          /* not ready */
+        }
+      }
+      resolvingRef.current = false;
+    };
+
+    checkAndResolve();
+  }, [
+    currentPrice,
+    settleAtResultTime,
+    activeTrades,
+    user?.token,
+    fetchActiveTrades,
+    fetchHistory,
+    refreshBalance,
+  ]);
+
+  const handlePlaceTrade = async (prediction) => {
+    if (!betAmount || !currentPrice) return;
+    const tokenAmt = parseFloat(betAmount);
+    const amt = toRupees(tokenAmt);
+    if (tokenAmt < minBetTokens) { setMessage({ type: 'error', text: `Minimum bet is ${minBetTokens} tickets` }); return; }
+    if (tokenAmt > maxBetTokens) { setMessage({ type: 'error', text: `Maximum bet is ${maxBetTokens} tickets` }); return; }
+    if (amt > balance) { setMessage({ type: 'error', text: 'Insufficient balance' }); return; }
+    if (!gameEnabled) { setMessage({ type: 'error', text: 'Game is currently disabled' }); return; }
+
+    setPlacing(true);
+    setMessage(null);
+    try {
+      const { data } = await axios.post('/api/user/nifty-bracket/trade', {
+        prediction,
+        amount: amt,
+        entryPrice: currentPrice
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      const lockedPrice = prediction === 'BUY' ? upperTarget : lowerTarget;
+      setMessage({ type: 'success', text: `${prediction} trade placed! Target: ₹${lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` });
+      setLockedDisplayPrice(lockedPrice); // Lock the target price
+      fetchActiveTrades();
+      refreshBalance();
+    } catch (error) {
+      console.error('Bracket trade error:', error.response?.data || error.message);
+      setMessage({ type: 'error', text: error.response?.data?.message || error.message || 'Failed to place trade' });
+    } finally {
+      setPlacing(false);
+    }
+  };
+
+  const quickAmounts = [1, 2, 3, 5, 10, 20];
+
+  const formatTimeLeft = (expiresAt) => {
+    const diff = new Date(expiresAt) - new Date();
+    if (diff <= 0) return 'Expired';
+    const mins = Math.floor(diff / 60000);
+    const secs = Math.floor((diff % 60000) / 1000);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="h-screen bg-dark-900 text-white flex flex-col overflow-hidden">
+      {/* Header Color Bar */}
+      <div className={`bg-gradient-to-r ${game.color} h-1 flex-shrink-0`}></div>
+      {/* Header */}
+      <div className="bg-dark-800 border-b border-dark-600 flex-shrink-0">
+        <div className="px-4 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button onClick={onBack} className="p-2 hover:bg-dark-700 rounded-lg transition">
+                <ArrowLeft size={20} />
+              </button>
+              <div className="flex items-center gap-2">
+                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${game.color} flex items-center justify-center`}>
+                  <game.icon size={20} />
+                </div>
+                <div>
+                  <h1 className="font-bold">{game.name}</h1>
+                  <p className="text-xs text-gray-400">{winMultiplier}x Returns • ±{bracketGap} pts</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {currentPrice && (
+                <div className="bg-dark-700 rounded-lg px-3 py-1.5 text-right">
+                  <div className="text-[10px] text-gray-400 flex items-center justify-end gap-1">
+                    Nifty
+                    {demoPriceActive && (
+                      <span className="text-[9px] text-amber-400 font-semibold">DEMO</span>
+                    )}
+                  </div>
+                  <div className="font-bold text-cyan-400">{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                </div>
+              )}
+              <div className="bg-dark-700 rounded-lg px-3 py-1.5 text-right">
+                <div className="text-[10px] text-gray-400">Balance</div>
+                <div className="font-bold text-purple-400">{balanceTokens} Tkt</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3-Column Desktop Layout */}
+      <div className="px-3 py-2 flex-1 min-h-0 overflow-y-auto overscroll-y-contain lg:overflow-hidden touch-pan-y">
+        <div className="flex flex-col lg:flex-row gap-3 min-h-min lg:h-full lg:min-h-0">
+
+          {/* LEFT COLUMN - Game Info + Active Trades */}
+          <div className="lg:w-[260px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
+            {/* Bracket Info */}
+            {currentPrice && (
+              <div className="bg-dark-800 rounded-xl p-3 border border-cyan-500/30 mb-3">
+                <div className="text-xs text-gray-400 mb-2 font-medium">Current Bracket Levels</div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between bg-green-900/20 rounded-lg p-2 border border-green-500/20">
+                    <div className="flex items-center gap-1.5">
+                      <ArrowUpCircle size={14} className="text-green-400" />
+                      <span className="text-xs text-green-400 font-bold">BUY Target</span>
+                    </div>
+                    <span className="font-bold text-green-400">{upperTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="text-center text-xs text-gray-500">
+                    Entry: <span className="text-white font-bold">{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex items-center justify-between bg-red-900/20 rounded-lg p-2 border border-red-500/20">
+                    <div className="flex items-center gap-1.5">
+                      <ArrowDownCircle size={14} className="text-red-400" />
+                      <span className="text-xs text-red-400 font-bold">SELL Target</span>
+                    </div>
+                    <span className="font-bold text-red-400">{lowerTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </div>
+                <div className="mt-2 text-[10px] text-gray-500 text-center">Gap: ±{bracketGap} pts</div>
+              </div>
+            )}
+
+            {/* Game Info Card */}
+            <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+              <div className="flex items-center gap-3 mb-3">
+                <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${game.color} flex items-center justify-center`}>
+                  <game.icon size={24} />
+                </div>
+                <div>
+                  <h3 className="font-bold">{game.name}</h3>
+                  <p className="text-xs text-gray-400">{game.description}</p>
+                </div>
+              </div>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Win Multiplier</span>
+                  <span className="text-green-400 font-bold">{winMultiplier}x</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Fee on win profit</span>
+                  <span className="text-green-400 font-medium">None</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Bracket Gap</span>
+                  <span className="text-cyan-400 font-bold">±{bracketGap} pts</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Min Bet</span>
+                  <span className="font-medium">{minBetTokens} Tickets</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Max Bet</span>
+                  <span className="font-medium">{maxBetTokens} Tickets</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">1 Ticket</span>
+                  <span className="font-medium">₹{tokenValue}</span>
+                </div>
+                {settleAtResultTime && (
+                  <div className="flex justify-between py-1">
+                    <span className="text-gray-400">Settlement</span>
+                    <span className="text-cyan-300 text-xs font-medium text-right">At {resultTimeDisplay}</span>
+                  </div>
+                )}
+              </div>
+              <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
+                Win 1T bet → <span className="text-green-400 font-medium">{(winMultiplier - 1).toFixed(2)} T profit</span> (full payout, no fee on profit)
+              </div>
+            </div>
+
+            {/* Active Trades - Live Updates */}
+            {activeTrades.length > 0 && (
+              <div className="mt-3 bg-dark-800 rounded-xl p-3 border border-yellow-500/30">
+                <h3 className="font-bold text-xs text-yellow-400 mb-2 flex items-center gap-1.5">
+                  <RefreshCw size={12} className="animate-spin" />
+                  Active Trades ({activeTrades.length})
+                  <span className="text-[9px] text-gray-500 ml-auto">{settleAtResultTime ? 'Result time' : 'Live'}</span>
+                </h3>
+                <div className="space-y-2">
+                  {activeTrades.map(trade => {
+                    const timeLeft = new Date(trade.expiresAt) - new Date();
+                    const isExpiringSoon = timeLeft > 0 && timeLeft < 60000; // Less than 1 min
+                    const isExpired = timeLeft <= 0;
+                    const sessionCloseUi = trade.settlesAtSessionClose === true || settleAtResultTime;
+                    const statusLabel = sessionCloseUi
+                      ? (isExpired ? 'Settling…' : formatTimeLeft(trade.expiresAt))
+                      : (isExpired ? 'Expired' : isExpiringSoon ? 'Expiring Soon' : 'Active');
+
+                    return (
+                      <div key={trade._id} className={`bg-dark-700 rounded-lg p-2.5 text-xs border ${
+                        isExpired ? 'border-gray-500/30' : isExpiringSoon && !sessionCloseUi ? 'border-red-500/50 animate-pulse' : 'border-dark-600'
+                      }`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${
+                            trade.prediction === 'BUY' ? 'bg-green-500/30 text-green-400' : 'bg-red-500/30 text-red-400'
+                          }`}>{trade.prediction}</span>
+                          <span className="text-gray-300 font-medium">{toTokens(trade.amount)} T</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px]">
+                          <span className="text-gray-500">{trade.lowerTarget?.toLocaleString('en-IN')} ↔ {trade.upperTarget?.toLocaleString('en-IN')}</span>
+                          <span className={`font-bold px-1.5 py-0.5 rounded ${
+                            isExpired ? 'bg-gray-500/20 text-gray-400' :
+                            isExpiringSoon && !sessionCloseUi ? 'bg-red-500/30 text-red-400' :
+                            'bg-yellow-500/20 text-yellow-400'
+                          }`}>
+                            {statusLabel}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Trade History */}
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 mt-3">
+              <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
+                <Clock size={12} className="text-gray-400" />
+                History
+                {activeTrades.length > 0 && (
+                  <span className="text-yellow-400 text-[9px] ml-auto">({activeTrades.length} active)</span>
+                )}
+              </h3>
+              <div className="mb-2 flex items-center justify-between gap-2 rounded-lg bg-cyan-950/40 border border-cyan-500/30 px-2.5 py-1.5">
+                <span className="text-[10px] text-gray-400 shrink-0">Result at</span>
+                <span className="text-[10px] font-semibold text-cyan-200 text-right tabular-nums">{resultTimeDisplay}</span>
+              </div>
+              {settleAtResultTime && (
+                <p className="text-[9px] text-gray-500 mb-2 leading-snug">
+                  Win/loss uses Nifty LTP at result time — the live chart touching your band earlier does not settle the trade.
+                </p>
+              )}
+              {/* Show active trades in history section too */}
+              {activeTrades.length > 0 && (
+                <div className="mb-2 pb-2 border-b border-dark-600">
+                  <div className="text-[9px] text-yellow-400 mb-1 font-medium">Running Trades:</div>
+                  {activeTrades.map(t => {
+                    const timeLeft = new Date(t.expiresAt) - new Date();
+                    const isEx = timeLeft <= 0;
+                    const sc = t.settlesAtSessionClose === true || settleAtResultTime;
+                    const runLabel = sc ? (isEx ? 'Settling…' : formatTimeLeft(t.expiresAt)) : 'Active';
+                    return (
+                      <div key={t._id} className="flex items-center justify-between p-2 rounded-lg text-xs bg-yellow-900/20 mb-1">
+                        <div>
+                          <span className={`font-bold text-[10px] ${t.prediction === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{t.prediction}</span>
+                          <span className="text-gray-400 ml-1">{toTokens(t.amount)} T</span>
+                        </div>
+                        <span className="text-yellow-400 text-[10px] font-medium">{runLabel}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {tradeHistory.length === 0 && activeTrades.length === 0 ? (
+                <p className="text-gray-500 text-[10px] text-center py-2">No trades yet</p>
+              ) : (
+                <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                  {tradeHistory.map((t, idx) => (
+                    <div key={t._id || idx} className={`flex items-center justify-between p-2 rounded-lg text-xs ${
+                      t.status === 'won' ? 'bg-green-900/20' :
+                      t.status === 'lost' ? 'bg-red-900/20' :
+                      t.status === 'expired' ? 'bg-gray-800' :
+                      'bg-dark-700'
+                    }`}>
+                      <div>
+                        <span className={`font-bold text-[10px] ${t.prediction === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>{t.prediction}</span>
+                        <span className="text-gray-400 ml-1">{toTokens(t.amount)} T</span>
+                      </div>
+                      <div className="text-right">
+                        {t.status === 'won' && <span className="text-green-400 font-bold">+{toTokens(t.profit)} T</span>}
+                        {t.status === 'lost' && <span className="text-red-400 font-bold">-{toTokens(t.amount)} T</span>}
+                        {t.status === 'expired' && (
+                          <span className="text-gray-400 font-medium" title="Legacy: was refunded before no-refund rule">Refunded</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <GamesWalletGameLedgerPanel
+              gameId={ledgerGameIdFromUi(game.id)}
+              userToken={user?.token}
+              tokenValue={tokenValue}
+              title="Order history — Nifty Bracket"
+              limit={500}
+              enableDateFilter
+            />
+          </div>
+
+          {/* CENTER COLUMN - Nifty live price */}
+          <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
+            <GameLivePricePanel
+              gameId="updown"
+              fullHeight
+              niftyLtpTape
+              onPriceUpdate={(p) => {
+                if (p != null && Number.isFinite(p) && p > 0) setCurrentPrice(p);
+              }}
+              onFallbackPrice={(p) => {
+                if (p != null && Number.isFinite(p) && p > 0) setCurrentPrice(p);
+              }}
+              onDemoPriceActive={setDemoPriceActive}
+            />
+          </div>
+
+          {/* RIGHT COLUMN - Betting Controls */}
+          <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            {/* Message */}
+            {message && (
+              <div className={`p-2 rounded-lg text-xs font-medium mb-2 ${
+                message.type === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                message.type === 'info' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' :
+                'bg-red-500/20 text-red-400 border border-red-500/30'
+              }`}>
+                {message.text}
+              </div>
+            )}
+
+            <div className="space-y-3 flex-shrink-0">
+              {/* Bet Amount */}
+              <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+                <label className="block text-sm text-gray-400 mb-2">Enter Tickets</label>
+                <input
+                  type="number"
+                  value={betAmount}
+                  onChange={e => setBetAmount(e.target.value)}
+                  min={minBetTokens}
+                  max={maxBetTokens}
+                  step="0.01"
+                  className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-xl font-bold text-center focus:border-cyan-500 focus:outline-none"
+                />
+                <div className="text-[10px] text-gray-500 mt-1 text-center">Min {minBetTokens} • Max {maxBetTokens} Tickets (1Tkt = ₹{tokenValue})</div>
+                <div className="grid grid-cols-3 gap-1.5 mt-2">
+                  {quickAmounts.map(amt => (
+                    <button
+                      key={amt}
+                      onClick={() => setBetAmount(amt.toString())}
+                      className="py-1.5 bg-dark-700 hover:bg-dark-600 rounded-lg text-xs font-medium transition"
+                    >
+                      {amt} T
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Bracket Display + BUY/SELL */}
+              <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+                <label className="block text-sm text-gray-400 mb-3 text-center">Pick Your Side</label>
+                {!currentPrice || currentPrice <= 0 ? (
+                  <div className="text-center py-4">
+                    <RefreshCw className="animate-spin text-cyan-400 mx-auto mb-2" size={20} />
+                    <p className="text-xs text-gray-500">Waiting for price (live or demo)…</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Current LTP Display */}
+                    <div className={`rounded-xl p-3 mb-3 text-center border ${
+                      lockedDisplayPrice ? 'bg-green-900/30 border-green-500/50' : 'bg-dark-700 border-cyan-500/30'
+                    }`}>
+                      <div className={`text-[10px] mb-1 flex items-center justify-center gap-1 ${
+                        lockedDisplayPrice ? 'text-green-400' : 'text-cyan-400'
+                      }`}>
+                        {lockedDisplayPrice && <Lock size={10} />}
+                        {lockedDisplayPrice ? `${lockedDisplayPrice === upperTarget ? 'BUY TARGET (Locked)' : 'LTP'}` : 'NIFTY 50 LTP'}
+                      </div>
+                      <div className={`text-2xl font-bold ${
+                        lockedDisplayPrice ? 'text-green-400' : 'text-white'
+                      }`}>
+                        ₹{(lockedDisplayPrice || currentPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </div>
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        {lockedDisplayPrice ? `Target locked for result at 3:30 PM` : `Bracket: ±${bracketGap} points`}
+                      </div>
+                    </div>
+
+                    {/* BUY Button - Green - Price Goes UP */}
+                    <button
+                      onClick={() => handlePlaceTrade('BUY')}
+                      disabled={!betAmount || parseFloat(betAmount) <= 0 || placing || !currentPrice}
+                      className={`w-full p-4 rounded-xl border-2 transition-all mb-3 ${
+                        betAmount && parseFloat(betAmount) > 0 && currentPrice
+                          ? 'border-green-500 bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 shadow-lg shadow-green-500/20'
+                          : 'border-dark-600 bg-dark-700 opacity-50 cursor-not-allowed'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                            <ArrowUpCircle size={24} className="text-white" />
+                          </div>
+                          <div className="text-left">
+                            <div className="font-bold text-white text-lg">BUY (UP)</div>
+                            <div className="text-xs text-white/80">Win if price hits ↑</div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-white font-bold text-xl">₹{upperTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                          <div className="text-xs text-white/80">+{bracketGap} pts</div>
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* SELL Button - Red - Price Goes DOWN */}
+                    <button
+                      onClick={() => handlePlaceTrade('SELL')}
+                      disabled={!betAmount || parseFloat(betAmount) <= 0 || placing || !currentPrice}
+                      className={`w-full p-4 rounded-xl border-2 transition-all ${
+                        betAmount && parseFloat(betAmount) > 0 && currentPrice
+                          ? 'border-red-500 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 shadow-lg shadow-red-500/20'
+                          : 'border-dark-600 bg-dark-700 opacity-50 cursor-not-allowed'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                            <ArrowDownCircle size={24} className="text-white" />
+                          </div>
+                          <div className="text-left">
+                            <div className="font-bold text-white text-lg">SELL (DOWN)</div>
+                            <div className="text-xs text-white/80">Win if price hits ↓</div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-white font-bold text-xl">₹{lowerTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                          <div className="text-xs text-white/80">-{bracketGap} pts</div>
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* Win Info */}
+                    <div className="mt-3 p-2 bg-yellow-900/20 border border-yellow-500/30 rounded-lg text-center">
+                      <span className="text-yellow-400 text-xs font-medium">Win {winMultiplier}x = ₹{betAmount ? (parseFloat(betAmount) * tokenValue * winMultiplier).toLocaleString() : '0'}</span>
+                      <span className="text-gray-500 text-[10px] ml-1">(no fee on profit)</span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+                          </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/** Default ladder — must match server `nifty-jackpot/leaderboard` / declare-result */
+const DEFAULT_NIFTY_JACKPOT_PRIZE_PERCENTAGES = [
+  { rank: '1st', percent: 45 },
+  { rank: '2nd', percent: 10 },
+  { rank: '3rd', percent: 3 },
+  { rank: '4th', percent: 2 },
+  { rank: '5th', percent: 1.5 },
+  { rank: '6th', percent: 1 },
+  { rank: '7th', percent: 1 },
+  { rank: '8th-10th', percent: 0.75, count: 3 },
+  { rank: '11th-20th', percent: 0.5, count: 10 },
+];
+
+/** Ladder shape — must match `server/utils/niftyJackpotPrize.js` */
+function ladderPercentFromLadder(rank, prizePercentages) {
+  const p = prizePercentages;
+  if (rank === 1) return p[0]?.percent ?? 45;
+  if (rank === 2) return p[1]?.percent ?? 10;
+  if (rank === 3) return p[2]?.percent ?? 3;
+  if (rank === 4) return p[3]?.percent ?? 2;
+  if (rank === 5) return p[4]?.percent ?? 1.5;
+  if (rank === 6) return p[5]?.percent ?? 1;
+  if (rank === 7) return p[6]?.percent ?? 1;
+  if (rank >= 8 && rank <= 10) return p[7]?.percent ?? 0.75;
+  if (rank >= 11 && rank <= 20) return p[8]?.percent ?? 0.5;
+  return 0;
+}
+
+/** Matches server `resolveJackpotPrizePercentForRank` (prizePercentages ladder, else 0–100 prizeDistribution per rank) */
+function resolveJackpotPrizePercentForRankClient(rank, gameSettings) {
+  const gc = gameSettings || {};
+  const ladder = gc.prizePercentages;
+  if (Array.isArray(ladder) && ladder.length > 0) {
+    return ladderPercentFromLadder(rank, ladder);
+  }
+  const pd = gc.prizeDistribution;
+  if (
+    Array.isArray(pd) &&
+    pd.length > 0 &&
+    pd.every((x) => typeof x === 'number' && x >= 0 && x <= 100)
+  ) {
+    if (rank >= 1 && rank <= pd.length) return pd[rank - 1];
+    return 0;
+  }
+  return ladderPercentFromLadder(rank, DEFAULT_NIFTY_JACKPOT_PRIZE_PERCENTAGES);
+}
+
+function formatJackpotPoolPercent(percent) {
+  const n = Number(percent);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  const s = Number.isInteger(n) ? String(n) : n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  return `${s}%`;
+}
+
+/**
+ * Gross ₹ for leaderboard row at `index` (same as Super Admin / `declareNiftyJackpotResult`):
+ * rank = index + 1 → full ladder % for that rank × pool.
+ */
+function estimatedJackpotGrossPrizeForEntryAtIndex(fullLeaderboard, index, totalPool, topWinners, gameSettings) {
+  const list = fullLeaderboard || [];
+  const pool = Number(totalPool);
+  if (!list.length || index < 0 || index >= list.length || !Number.isFinite(pool) || pool <= 0) {
+    return null;
+  }
+  const rank = index + 1;
+  if (rank > topWinners) return 0;
+  const pct = resolveJackpotPrizePercentForRankClient(rank, gameSettings);
+  if (!Number.isFinite(pct) || pct <= 0) return 0;
+  return Math.round((pool * pct) / 100);
+}
+
+// ==================== NIFTY JACKPOT SCREEN ====================
+const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue = 300 }) => {
+  const [todayBid, setTodayBid] = useState(null);
+  const [todayBids, setTodayBids] = useState([]);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [leaderboardSpot, setLeaderboardSpot] = useState(null);
+  const [myRank, setMyRank] = useState(null);
+  const [totalBids, setTotalBids] = useState(0);
+  const [totalPool, setTotalPool] = useState(0);
+  const [uniquePlayerCount, setUniquePlayerCount] = useState(0);
+  const [anonymousPodium, setAnonymousPodium] = useState([]);
+  const [podiumIsOfficial, setPodiumIsOfficial] = useState(false);
+  const [jackpotRankingMode, setJackpotRankingMode] = useState('nearest_spot');
+  const [jackpotRankingReference, setJackpotRankingReference] = useState(null);
+  const [ticketsToday, setTicketsToday] = useState(0);
+  const [totalStakedToday, setTotalStakedToday] = useState(0);
+  const [bidHistory, setBidHistory] = useState([]);
+  const [placing, setPlacing] = useState(false);
+  const [modifyingBidId, setModifyingBidId] = useState(null);
+  const [message, setMessage] = useState(null);
+  const [lockedPrice, setLockedPrice] = useState(null);
+  const [priceLocked, setPriceLocked] = useState(false);
+  const [lockedAt, setLockedAt] = useState(null);
+  const [predictedPriceInput, setPredictedPriceInput] = useState('');
+  const [predictionDrafts, setPredictionDrafts] = useState({});
+  const spotPrefillDoneRef = useRef(false);
+  /** Same LTP as center chart — sent as `?spot=` so LIVE TOP 5 ranks move with ticks (no full page refresh). */
+  const jackpotChartSpotRef = useRef(null);
+  const jackpotLbThrottleTimerRef = useRef(null);
+
+  // Admin-configured settings with fallbacks
+  const topWinners = settings?.topWinners || 10;
+  const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
+  /** Matches server: NODE_ENV !== 'production' bypasses jackpot bidding hours */
+  const showJackpotOffHoursTestHint =
+    import.meta.env.DEV ||
+    import.meta.env.VITE_NIFTY_JACKPOT_TEST_BIDDING === 'true' ||
+    import.meta.env.VITE_NIFTY_JACKPOT_TEST_BIDDING === '1';
+
+  // Ticket conversion helpers
+  const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
+  const balanceTokens = toTokens(balance);
+  const oneTicketRs = Number(tokenValue) || 300;
+
+  const prizeStructureRows = useMemo(() => {
+    const n = Math.max(1, Math.min(100, Number(topWinners) || 20));
+    return Array.from({ length: n }, (_, i) => {
+      const rank = i + 1;
+      return {
+        rank,
+        percent: resolveJackpotPrizePercentForRankClient(rank, settings),
+      };
+    });
+  }, [topWinners, settings]);
+
+  useEffect(() => {
+    if (spotPrefillDoneRef.current) return;
+    if (leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot))) {
+      setPredictedPriceInput(Number(leaderboardSpot).toFixed(2));
+      spotPrefillDoneRef.current = true;
+    }
+  }, [leaderboardSpot]);
+
+  useEffect(() => {
+    setPredictionDrafts((prev) => {
+      const pendingIds = new Set(
+        todayBids.filter((b) => b.status === 'pending' && b._id).map((b) => String(b._id))
+      );
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (!pendingIds.has(k)) delete next[k];
+      }
+      for (const b of todayBids) {
+        if (b.status !== 'pending' || !b._id) continue;
+        const id = String(b._id);
+        if (next[id] !== undefined) continue;
+        if (b.niftyPriceAtBid != null && Number.isFinite(Number(b.niftyPriceAtBid))) {
+          next[id] = Number(b.niftyPriceAtBid).toFixed(2);
+        } else {
+          next[id] = '';
+        }
+      }
+      return next;
+    });
+  }, [todayBids]);
+
+  const fetchLeaderboard = useCallback(async () => {
+    try {
+      const spot = jackpotChartSpotRef.current;
+      const params = { limit: 200, _ts: Date.now() };
+      if (spot != null && Number.isFinite(Number(spot)) && Number(spot) > 0) {
+        params.spot = Number(spot);
+      }
+      const { data } = await axios.get('/api/user/nifty-jackpot/leaderboard', {
+        headers: { Authorization: `Bearer ${user.token}` },
+        params,
+      });
+      setLeaderboard(data.leaderboard || []);
+      setLeaderboardSpot(
+        data.referenceSpot != null && Number.isFinite(Number(data.referenceSpot))
+          ? Number(data.referenceSpot)
+          : null
+      );
+      setJackpotRankingMode(
+        data.rankingMode === 'nearest_locked_close' ? 'nearest_locked_close' : 'nearest_spot'
+      );
+      setJackpotRankingReference(
+        data.rankingReference != null && Number.isFinite(Number(data.rankingReference))
+          ? Number(data.rankingReference)
+          : null
+      );
+      setMyRank(data.myRank);
+      setTotalBids(data.totalBids || 0);
+      setTotalPool(data.totalPool || 0);
+      setUniquePlayerCount(data.uniquePlayerCount ?? 0);
+      setAnonymousPodium(Array.isArray(data.anonymousPodium) ? data.anonymousPodium : []);
+      setPodiumIsOfficial(!!data.podiumIsOfficial);
+      if (data.ticketsToday != null) setTicketsToday(data.ticketsToday);
+    } catch (error) {
+      console.error('Error fetching leaderboard:', error);
+    }
+  }, [user?.token]);
+
+  const handleJackpotChartPrice = useCallback((price) => {
+    if (price == null || !Number.isFinite(Number(price)) || Number(price) <= 0) return;
+    jackpotChartSpotRef.current = Number(price);
+    if (jackpotLbThrottleTimerRef.current) return;
+    jackpotLbThrottleTimerRef.current = setTimeout(() => {
+      jackpotLbThrottleTimerRef.current = null;
+      void fetchLeaderboard();
+    }, 400);
+  }, [fetchLeaderboard]);
+
+  useEffect(() => {
+    fetchTodayBid();
+    fetchLeaderboard();
+    fetchHistory();
+    fetchLockedPrice();
+    const interval = setInterval(fetchLeaderboard, 8000);
+    const priceInterval = setInterval(fetchLockedPrice, 30000);
+    return () => {
+      clearInterval(interval);
+      clearInterval(priceInterval);
+      if (jackpotLbThrottleTimerRef.current) {
+        clearTimeout(jackpotLbThrottleTimerRef.current);
+        jackpotLbThrottleTimerRef.current = null;
+      }
+    };
+  }, [fetchLeaderboard]);
+
+  const fetchLockedPrice = async () => {
+    try {
+      const { data } = await axios.get('/api/user/nifty-jackpot/locked-price', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setPriceLocked(data.locked);
+      setLockedPrice(data.lockedPrice);
+      setLockedAt(data.lockedAt);
+    } catch (error) {
+      console.error('Error fetching locked price:', error);
+    }
+  };
+
+  const fetchTodayBid = async () => {
+    try {
+      const { data } = await axios.get('/api/user/nifty-jackpot/today', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setTodayBid(data.bid);
+      setTodayBids(Array.isArray(data.bids) ? data.bids : []);
+      setTicketsToday(data.ticketsToday ?? 0);
+      setTotalStakedToday(data.totalStakedToday ?? 0);
+    } catch (error) {
+      console.error('Error fetching today bid:', error);
+    }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const { data } = await axios.get('/api/user/nifty-jackpot/history', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setBidHistory(data);
+    } catch (error) {
+      console.error('Error fetching history:', error);
+    }
+  };
+
+  const parseJackpotPredictedPriceClient = (raw) => {
+    const n = parseFloat(String(raw ?? '').replace(/,/g, '').trim());
+    if (!Number.isFinite(n) || n <= 0) {
+      return { ok: false, error: 'Enter your predicted NIFTY price' };
+    }
+    if (n < 1000 || n > 200000) {
+      return { ok: false, error: 'Predicted price must be between 1,000 and 200,000' };
+    }
+    return { ok: true, value: Math.round(n * 100) / 100 };
+  };
+
+  const handlePlaceBid = async () => {
+    const amt = oneTicketRs;
+    if (!Number.isFinite(amt) || amt <= 0) {
+      setMessage({ type: 'error', text: 'Invalid ticket price' });
+      return;
+    }
+    if (amt > balance) {
+      setMessage({ type: 'error', text: 'Insufficient balance' });
+      return;
+    }
+    if (!gameEnabled) {
+      setMessage({ type: 'error', text: 'Game is currently disabled' });
+      return;
+    }
+    const priceParse = parseJackpotPredictedPriceClient(predictedPriceInput);
+    if (!priceParse.ok) {
+      setMessage({ type: 'error', text: priceParse.error });
+      return;
+    }
+
+    setPlacing(true);
+    setMessage(null);
+    try {
+      const { data } = await axios.post(
+        '/api/user/nifty-jackpot/bid',
+        { amount: amt, predictedPrice: priceParse.value },
+        { headers: { Authorization: `Bearer ${user.token}` } }
+      );
+      setTodayBid(data.bid);
+      const px = data.bid?.niftyPriceAtBid;
+      const pxText =
+        px != null && Number.isFinite(Number(px))
+          ? ` at predicted NIFTY ₹${Number(px).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+          : '.';
+      setMessage({ type: 'success', text: `1 ticket placed${pxText}` });
+      refreshBalance();
+      fetchLeaderboard();
+      fetchHistory();
+      fetchTodayBid();
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to place bid' });
+    } finally {
+      setPlacing(false);
+    }
+  };
+
+  const handleUpdatePredictionBid = async (bidId) => {
+    if (!bidId) return;
+    const id = String(bidId);
+    const priceParse = parseJackpotPredictedPriceClient(predictionDrafts[id]);
+    if (!priceParse.ok) {
+      setMessage({ type: 'error', text: priceParse.error });
+      return;
+    }
+    setModifyingBidId(bidId);
+    setMessage(null);
+    try {
+      const { data } = await axios.put(
+        `/api/user/nifty-jackpot/bid/${bidId}`,
+        { predictedPrice: priceParse.value },
+        { headers: { Authorization: `Bearer ${user.token}` } }
+      );
+      const px = data.bid?.niftyPriceAtBid;
+      if (px != null && Number.isFinite(Number(px))) {
+        setPredictionDrafts((p) => ({ ...p, [id]: Number(px).toFixed(2) }));
+      }
+      const pxText =
+        px != null && Number.isFinite(Number(px))
+          ? ` Predicted NIFTY ₹${Number(px).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+          : '';
+      setMessage({ type: 'success', text: `Prediction saved.${pxText}` });
+      fetchTodayBid();
+      fetchLeaderboard();
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Could not update order' });
+    } finally {
+      setModifyingBidId(null);
+    }
+  };
+
+  const formatNiftyBidPx = (px) =>
+    px != null && Number.isFinite(Number(px))
+      ? `₹${Number(px).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : null;
+
+  /** User's predicted NIFTY level stored per ticket — not ticket ₹ */
+  const niftyAtBidDisplay = (niftyPriceAtBid) => formatNiftyBidPx(niftyPriceAtBid) || '—';
+
+  return (
+    <div className="h-screen bg-dark-900 text-white flex flex-col overflow-hidden">
+      {/* Header Color Bar */}
+      <div className={`bg-gradient-to-r ${game.color} h-1 flex-shrink-0`}></div>
+      {/* Header */}
+      <div className="bg-dark-800 border-b border-dark-600 flex-shrink-0">
+        <div className="px-4 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button onClick={onBack} className="p-2 hover:bg-dark-700 rounded-lg transition">
+                <ArrowLeft size={20} />
+              </button>
+              <div className="flex items-center gap-2">
+                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${game.color} flex items-center justify-center`}>
+                  <game.icon size={20} />
+                </div>
+                <div>
+                  <h1 className="font-bold">{game.name}</h1>
+                  <p className="text-xs text-gray-400">Top {topWinners} win prizes!</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {priceLocked && lockedPrice && (
+                <div className="bg-green-900/30 border border-green-500/30 rounded-lg px-3 py-1.5 text-right">
+                  <div className="text-[10px] text-green-400 flex items-center gap-1">
+                    <Lock size={9} /> Locked Price
+                  </div>
+                  <div className="font-bold text-green-400">₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                </div>
+              )}
+              {myRank && (
+                <div className="bg-yellow-900/30 border border-yellow-500/30 rounded-lg px-3 py-1.5 text-right">
+                  <div className="text-[10px] text-yellow-400">Your Rank</div>
+                  <div className="font-bold text-yellow-400">#{myRank}</div>
+                </div>
+              )}
+              <div className="bg-dark-700 rounded-lg px-3 py-1.5 text-right">
+                <div className="text-[10px] text-gray-400">Balance</div>
+                <div className="font-bold text-purple-400">{balanceTokens} Tkt</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3-Column Layout */}
+      <div className="px-3 py-2 flex-1 min-h-0 overflow-y-auto overscroll-y-contain lg:overflow-hidden touch-pan-y">
+        <div className="flex flex-col lg:flex-row gap-3 min-h-min lg:h-full lg:min-h-0">
+
+          {/* LEFT COLUMN - Game Info + Achievements + History */}
+          <div className="lg:w-[280px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto space-y-3">
+
+            {/* Top 3 — predicted price + bid time only (no names) */}
+            <div className="bg-dark-800 rounded-xl p-3 border border-emerald-500/30">
+              <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5 text-emerald-400">
+                <Trophy size={14} />
+                {podiumIsOfficial ? 'Top 3 winners (today)' : 'Top 3 today'}
+              </h3>
+              <p className="text-[9px] text-gray-500 mb-2">
+                {podiumIsOfficial
+                  ? 'Official ranks 1–3 · names hidden'
+                  : 'Live order (nearest spot) · final ranks after result'}
+                {podiumIsOfficial &&
+                  jackpotRankingReference != null &&
+                  Number.isFinite(Number(jackpotRankingReference)) && (
+                  <span className="text-cyan-500/90">
+                    {' '}
+                    · result ₹{jackpotRankingReference.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </span>
+                )}
+                {!podiumIsOfficial && leaderboardSpot != null && (
+                  <span className="text-cyan-500/90"> · spot ₹{leaderboardSpot.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                )}
+              </p>
+              {anonymousPodium.length === 0 ? (
+                <p className="text-gray-500 text-[10px] text-center py-3">No bids yet today</p>
+              ) : (
+                <div className="space-y-1">
+                  {anonymousPodium.map((row, idx) => {
+                    const bidTime = row.bidTime
+                      ? new Date(row.bidTime).toLocaleTimeString('en-IN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                        })
+                      : '--:--';
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex items-center justify-between gap-2 p-2 rounded-lg text-xs ${
+                          idx < 3 ? 'bg-dark-700/80' : 'bg-dark-700/40'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div
+                            className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${
+                              idx === 0
+                                ? 'bg-yellow-500 text-black'
+                                : idx === 1
+                                  ? 'bg-gray-300 text-black'
+                                  : idx === 2
+                                    ? 'bg-orange-600 text-white'
+                                    : 'bg-dark-600 text-gray-400'
+                            }`}
+                          >
+                            {idx + 1}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-cyan-300 font-semibold tabular-nums truncate">
+                              {niftyAtBidDisplay(row.niftyPriceAtBid)}
+                            </div>
+                            <div className="text-[9px] text-gray-600">Predicted NIFTY</div>
+                          </div>
+                        </div>
+                        <div className="text-cyan-400/90 text-[11px] tabular-nums flex-shrink-0">{bidTime}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="mt-2 text-center text-[10px] text-gray-500">
+                {totalBids} entr{totalBids !== 1 ? 'ies' : 'y'} · {uniquePlayerCount} player{uniquePlayerCount !== 1 ? 's' : ''}
+              </div>
+            </div>
+
+            {/* Prize Structure */}
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
+              <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
+                <Award size={12} className="text-yellow-400" />
+                Prize Structure (full pool share)
+              </h3>
+              <p className="text-[9px] text-gray-500 mb-1.5">
+                Each rank wins the shown <span className="text-cyan-400/90">% of the total kitty</span> (not tickets). ₹ shown is a projection from the current pool.
+              </p>
+              <p className="text-[9px] text-amber-200/90 mb-1.5 leading-snug rounded-md bg-amber-950/25 border border-amber-700/30 px-2 py-1.5">
+                <span className="font-semibold text-amber-300">Ties (same distance to result / spot):</span> earlier
+                ticket is ranked higher. Each list position gets that rank&apos;s full pool % (same as Super Admin) — e.g.
+                two tickets at the same distance are still #1 and #2 with 1st and 2nd prize %, not a merged split.
+              </p>
+              <div className="space-y-1 text-xs max-h-[200px] overflow-y-auto">
+                {prizeStructureRows.map(({ rank, percent }) => (
+                  <div key={rank} className="flex justify-between py-1 border-b border-dark-600 gap-2">
+                    <span className="text-gray-400 shrink-0">#{rank}</span>
+                    <div className="text-right min-w-0">
+                      <span className="text-green-400 font-bold tabular-nums">{formatJackpotPoolPercent(percent)}</span>
+                      <span className="text-gray-500 text-[10px] ml-1">of pool</span>
+                      {totalPool > 0 && percent > 0 && (
+                        <div className="text-[10px] text-gray-500 tabular-nums">
+                          ≈ ₹{Math.round((totalPool * percent) / 100).toLocaleString('en-IN')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="space-y-1 text-xs mt-1">
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Top Winners</span>
+                  <span className="text-yellow-400 font-bold">{topWinners}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">1 Ticket</span>
+                  <span className="font-medium">₹{tokenValue}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Result At</span>
+                  <span className="font-medium">{settings?.resultTime || '15:45'} IST</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-gray-400">Nifty Price</span>
+                  {priceLocked && lockedPrice ? (
+                    <span className="text-green-400 font-bold flex items-center gap-1"><Lock size={10} /> ₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  ) : (
+                    <span className="text-yellow-400 text-[10px]">Not locked yet</span>
+                  )}
+                </div>
+              </div>
+              <p className="text-[10px] text-gray-500 mt-2 text-center">
+                Clearing and top {topWinners} winners are decided at {settings?.resultTime || '15:45'} IST.
+              </p>
+            </div>
+
+            {/* Bid History */}
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
+              <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
+                <Clock size={12} className="text-gray-400" />
+                Your History
+              </h3>
+              {bidHistory.length === 0 ? (
+                <p className="text-gray-500 text-[10px] text-center py-2">No bids yet</p>
+              ) : (
+                <div className="space-y-1 max-h-[160px] overflow-y-auto">
+                  {bidHistory.map((bid, idx) => {
+                    const niftyAtBid = formatNiftyBidPx(bid.niftyPriceAtBid);
+                    return (
+                    <div key={bid._id || idx} className={`flex items-center justify-between p-2 rounded-lg text-xs ${
+                      bid.status === 'won' ? 'bg-green-900/20' :
+                      bid.status === 'lost' ? 'bg-red-900/20' :
+                      'bg-dark-700'
+                    }`}>
+                      <div>
+                        <div className="text-[10px] text-gray-500">{bid.betDate}</div>
+                        <div className="text-[10px] text-gray-500 mt-0.5">Predicted NIFTY</div>
+                        <div className="text-[12px] text-cyan-300 font-bold tabular-nums">
+                          {niftyAtBid || (
+                            <span className="text-gray-500 font-medium text-[11px]">Not recorded</span>
+                          )}
+                        </div>
+                        {bid.rank != null && (
+                          <div className="text-[10px] text-gray-500 mt-1">Rank #{bid.rank}</div>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        {bid.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
+                        {bid.status === 'won' && <span className="text-green-400 font-bold">+{toTokens(bid.prize)} T</span>}
+                        {bid.status === 'lost' && <span className="text-red-400 font-bold">-{toTokens(bid.amount)} T</span>}
+                      </div>
+                    </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <GamesWalletGameLedgerPanel
+              gameId={ledgerGameIdFromUi(game.id)}
+              userToken={user?.token}
+              tokenValue={tokenValue}
+              title="Order history — Nifty Jackpot"
+              limit={500}
+              enableDateFilter
+              footerNote="Newest entries appear first. The Balance column is your games wallet after that line — read from the bottom upward to follow time order."
+            />
+          </div>
+
+          {/* CENTER COLUMN - Nifty live price */}
+          <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
+            <GameLivePricePanel gameId="updown" fullHeight onPriceUpdate={handleJackpotChartPrice} />
+          </div>
+
+          {/* RIGHT COLUMN - Kitty + Top 5 + Bid Controls */}
+          <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            {/* Kitty Amount Box */}
+            <div className="bg-gradient-to-r from-purple-900/40 to-pink-900/40 border border-purple-500/30 rounded-xl p-3 mb-2 text-center">
+              <div className="text-[10px] text-purple-300 font-medium mb-1 flex items-center justify-center gap-1">
+                <Zap size={10} /> BANK 
+              </div>
+              <div className="text-2xl font-bold text-purple-300 tabular-nums">
+                ₹{Number(totalPool || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[10px] text-gray-400 mt-1">
+                {uniquePlayerCount} contributor{uniquePlayerCount !== 1 ? 's' : ''} in the kitty
+              </div>
+            </div>
+
+            {showJackpotOffHoursTestHint && (
+              <div className="mb-2 bg-emerald-900/20 border border-emerald-500/35 rounded-lg px-2.5 py-2 text-[10px] text-emerald-200/95 leading-snug">
+                <span className="font-semibold text-emerald-300">Test mode</span>
+                — bidding hours are not enforced on the API in local dev, so you can place tickets anytime and use dummy NIFTY. Production still uses{' '}
+                {settings?.biddingStartTime || '09:15'}–{settings?.biddingEndTime || '14:59'} IST unless{' '}
+                <span className="font-mono text-emerald-400/90">NIFTY_JACKPOT_ALLOW_TEST_BIDDING</span> is set on the server.
+              </div>
+            )}
+
+            {/* Live Top 5 Users Box */}
+            <div className="bg-dark-800 rounded-xl p-3 border border-yellow-500/30 mb-2">
+              <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5 text-yellow-400">
+                <Crown size={14} />
+                LIVE TOP 5
+              </h3>
+              <p className="text-[9px] text-gray-500 mb-2">
+                {jackpotRankingMode === 'nearest_locked_close'
+                  ? 'Nearest to declared result · tie → earlier time'
+                  : 'Nearest to live spot first · tie → earlier time'}
+                {jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference)) && (
+                  <span className="text-cyan-500/90">
+                    {' '}
+                    ·{' '}
+                    {jackpotRankingMode === 'nearest_locked_close' ? 'result' : 'spot'} ₹
+                    {jackpotRankingReference.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  </span>
+                )}
+              </p>
+              <p className="text-[9px] text-gray-500 mb-2 leading-snug">
+                Right column: <span className="text-gray-400">Stake</span> = ticket cost (usually 1 ticket).{' '}
+                <span className="text-emerald-300/90">Est. gross</span> = that row&apos;s rank % × pool (same as Super Admin
+                and settlement).
+              </p>
+              {!podiumIsOfficial && (
+                <p className="text-[9px] text-cyan-500/80 mb-2 leading-snug">
+                  Order updates with the chart LTP (nearest spot) — no refresh needed.
+                </p>
+              )}
+              {leaderboard.slice(0, 5).length === 0 ? (
+                <p className="text-gray-500 text-[10px] text-center py-3">No bids yet today</p>
+              ) : (
+                <div className="space-y-1">
+                  {leaderboard.slice(0, 5).map((entry, idx) => {
+                    const isMe = entry.userId?.toString() === user._id?.toString() || entry.userId === user._id;
+                    const bidTime = entry.bidTime ? new Date(entry.bidTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--';
+                    const estGross = estimatedJackpotGrossPrizeForEntryAtIndex(
+                      leaderboard,
+                      idx,
+                      totalPool,
+                      topWinners,
+                      settings
+                    );
+                    return (
+                      <div
+                        key={String(entry.bidId ?? idx)}
+                        className={`flex items-center justify-between p-2 rounded-lg text-xs transition-all duration-300 ease-out ${
+                        isMe ? 'bg-yellow-900/30 border border-yellow-500/20' :
+                        idx < 3 ? 'bg-dark-700/80' : 'bg-dark-700/40'
+                      }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                            idx === 0 ? 'bg-yellow-500 text-black' :
+                            idx === 1 ? 'bg-gray-300 text-black' :
+                            idx === 2 ? 'bg-orange-600 text-white' :
+                            'bg-dark-600 text-gray-400'
+                          }`}>
+                            {idx + 1}
+                          </div>
+                          <div>
+                            <div className={`font-medium ${isMe ? 'text-yellow-400' : 'text-white'}`}>
+                              {isMe ? 'You' : entry.name}
+                            </div>
+                            <div className="text-[10px] text-gray-500 flex items-center gap-1.5 flex-wrap">
+                              <span className="text-cyan-300 font-semibold tabular-nums">{niftyAtBidDisplay(entry.niftyPriceAtBid)}</span>
+                              <span className="text-gray-600">|</span>
+                              <span className="text-cyan-400/90">{bidTime}</span>
+                            </div>
+                            <div className="text-[9px] text-gray-600 mt-0.5">Predicted NIFTY</div>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0 pl-1">
+                          <div
+                            className="text-yellow-300 font-bold text-[11px] tabular-nums"
+                            title="Amount staked on this ticket (not the prize)"
+                          >
+                            ₹{Number(entry.amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                          <div className="text-[9px] text-gray-500">Stake</div>
+                          {estGross != null && estGross > 0 && (
+                            <>
+                              <div className="text-emerald-300/95 font-bold text-[11px] tabular-nums mt-1">
+                                ≈ ₹{estGross.toLocaleString('en-IN')}
+                              </div>
+                              <div className="text-[9px] text-emerald-500/80">Est. gross</div>
+                            </>
+                          )}
+                          {estGross === 0 && (
+                            <div className="text-[9px] text-gray-600 mt-1">Outside top {topWinners}</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Message */}
+            {message && (
+              <div className={`p-2 rounded-lg text-xs font-medium mb-2 ${message.type === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                {message.text}
+              </div>
+            )}
+
+            <div className="space-y-3 overflow-y-auto flex-1">
+              {ticketsToday > 0 && todayBid && (
+                <div className="rounded-xl p-3 border border-yellow-500/30 bg-yellow-900/15 text-center text-xs">
+                  <div className="text-gray-400 mb-1">Your tickets today</div>
+                  <div className="text-lg font-bold text-yellow-400">{ticketsToday}</div>
+                  <div className="text-[10px] text-gray-500 mt-1">
+                    Staked ₹{Number(totalStakedToday || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    {myRank != null && (
+                      <span className="text-cyan-400/90"> · Best rank #{myRank}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {ticketsToday > 0 && todayBid && (
+                <div className={`rounded-xl p-4 border ${
+                  todayBid.status === 'won' ? 'bg-green-900/20 border-green-500/30' :
+                  todayBid.status === 'lost' ? 'bg-red-900/20 border-red-500/30' :
+                  todayBid.status === 'expired' ? 'bg-gray-800/50 border-gray-500/30' :
+                  'bg-yellow-900/20 border-yellow-500/30'
+                }`}>
+                  <div className="text-center">
+                    <div className="text-gray-400 text-xs mb-1">Latest entry</div>
+                    {formatNiftyBidPx(todayBid.niftyPriceAtBid) && (
+                      <div className="text-cyan-400 text-sm font-semibold mb-1">
+                        Predicted {formatNiftyBidPx(todayBid.niftyPriceAtBid)}
+                      </div>
+                    )}
+                    {myRank != null && (
+                      <div className={`text-sm font-bold ${myRank <= topWinners ? 'text-green-400' : 'text-red-400'}`}>
+                        Best rank #{myRank}{myRank <= topWinners ? ' 🏆' : ''}
+                      </div>
+                    )}
+                    {todayBid.status === 'pending' && (
+                      <div className="text-yellow-400 text-[10px] font-medium mt-2">Result at {settings?.resultTime || '15:45'} IST</div>
+                    )}
+                    {todayBid.status === 'pending' && todayBids.filter((b) => b.status === 'pending').length > 0 && (
+                      <div className="mt-3 space-y-2 text-left border-t border-yellow-500/20 pt-3">
+                        <div className="text-[10px] text-gray-500 text-center">Edit predicted NIFTY per ticket (no cancel)</div>
+                        {todayBids
+                          .filter((b) => b.status === 'pending')
+                          .map((b) => {
+                            const bidKey = String(b._id);
+                            return (
+                              <div key={b._id} className="space-y-1">
+                                <div className="text-[9px] text-gray-500">
+                                  {b.createdAt
+                                    ? new Date(b.createdAt).toLocaleTimeString('en-IN', {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        second: '2-digit',
+                                      })
+                                    : 'Ticket'}
+                                </div>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.05"
+                                  min="1000"
+                                  max="200000"
+                                  placeholder="Predicted NIFTY"
+                                  value={predictionDrafts[bidKey] ?? ''}
+                                  onChange={(e) =>
+                                    setPredictionDrafts((p) => ({ ...p, [bidKey]: e.target.value }))
+                                  }
+                                  className="w-full px-2 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-cyan-200 text-xs tabular-nums placeholder:text-gray-600 focus:border-cyan-500/50 focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdatePredictionBid(b._id)}
+                                  disabled={modifyingBidId === b._id}
+                                  className="w-full py-1.5 px-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-cyan-500/30 text-[10px] text-cyan-300 font-medium disabled:opacity-50"
+                                >
+                                  {modifyingBidId === b._id ? 'Saving…' : 'Save prediction'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    )}
+                    {todayBid.status === 'won' && todayBid.prize > 0 && (
+                      <div className="text-green-400 text-sm font-bold mt-1">Won {toTokens(todayBid.prize)} T</div>
+                    )}
+                    {todayBid.status === 'lost' && (
+                      <div className="text-red-400 text-xs mt-1">This entry did not place in the prize ranks.</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {priceLocked && lockedPrice && (
+                <div className="bg-green-900/20 border border-green-500/30 rounded-xl p-3 text-center">
+                  <div className="text-[10px] text-green-400 flex items-center justify-center gap-1 mb-1">
+                    <Lock size={10} /> Nifty Price Locked
+                  </div>
+                  <div className="text-xl font-bold text-green-400">₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                  {lockedAt && (
+                    <div className="text-[10px] text-gray-500 mt-1">
+                      Locked at {new Date(lockedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 text-center space-y-2">
+                <div className="text-[10px] text-gray-400 font-medium">Each purchase · 1 ticket · ₹{oneTicketRs.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                <div className="text-left">
+                  <label htmlFor="nifty-jackpot-predicted" className="block text-[10px] text-gray-500 mb-1 font-medium">
+                    Predicted NIFTY price
+                  </label>
+                  <input
+                    id="nifty-jackpot-predicted"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.05"
+                    min="1000"
+                    max="200000"
+                    placeholder="e.g. 23950.50"
+                    value={predictedPriceInput}
+                    onChange={(e) => setPredictedPriceInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-dark-700 border border-dark-600 text-cyan-200 text-sm tabular-nums placeholder:text-gray-600 focus:border-yellow-500/40 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handlePlaceBid}
+                disabled={placing || oneTicketRs > balance || !gameEnabled}
+                className={`w-full py-3 rounded-xl font-bold text-sm transition-all ${
+                  !placing && oneTicketRs <= balance && gameEnabled
+                    ? 'bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-black'
+                    : 'bg-dark-700 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                {placing ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <RefreshCw size={16} className="animate-spin" /> Placing...
+                  </span>
+                ) : oneTicketRs > balance ? (
+                  'Insufficient balance'
+                ) : !gameEnabled ? (
+                  'Game disabled'
+                ) : (
+                  `Add 1 ticket (₹${oneTicketRs.toLocaleString('en-IN')})`
+                )}
+              </button>
+
+              <div className="bg-dark-800/50 rounded-lg p-2 text-[10px] text-gray-500 text-center">
+                <Zap size={10} className="inline mr-1 text-yellow-400" />
+                Ranking uses your predicted level vs live spot (then vs locked close). Tap again for another ticket (up to daily limit).
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default UserGames;

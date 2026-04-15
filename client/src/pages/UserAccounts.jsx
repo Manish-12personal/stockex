@@ -1,0 +1,1665 @@
+import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
+import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
+import {
+  Wallet, Plus, Minus, RefreshCw, IndianRupee, MoreHorizontal, X, ArrowRight, ArrowLeftRight, Gem, Gamepad2,
+  History,
+  Bitcoin,
+  ClipboardList,
+  Landmark,
+} from 'lucide-react';
+import { GAMES_LEDGER_FILTER_OPTIONS } from '../components/games/GamesWalletGameLedgerPanel.jsx';
+import { formatGamesLedgerWhen } from '../lib/gamesLedgerWhen.js';
+
+/** Same wallet routing as server `WalletService.getWalletFieldFromTrade` — MCX commodity trades only. */
+function isMcxWalletTrade(row) {
+  if (!row || row.isCrypto || row.isForex) return false;
+  if (row.exchange === 'MCX') return true;
+  const s = row.segment;
+  return s === 'MCX' || s === 'MCXFUT' || s === 'MCXOPT' || s === 'COMMODITY';
+}
+
+const UserAccounts = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [walletData, setWalletData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferDirection, setTransferDirection] = useState('toAccount'); // 'toAccount' or 'toWallet'
+  const [showMcxTransferModal, setShowMcxTransferModal] = useState(false);
+  const [mcxTransferDirection, setMcxTransferDirection] = useState('toMcx'); // 'toMcx' or 'fromMcx'
+  const [showGamesTransferModal, setShowGamesTransferModal] = useState(false);
+  const [gamesTransferDirection, setGamesTransferDirection] = useState('toGames'); // 'toGames' or 'fromGames'
+  const [showCryptoTransferModal, setShowCryptoTransferModal] = useState(false);
+  const [cryptoTransferDirection, setCryptoTransferDirection] = useState('toCrypto'); // 'toCrypto' | 'fromCrypto'
+  const [showForexTransferModal, setShowForexTransferModal] = useState(false);
+  const [forexTransferDirection, setForexTransferDirection] = useState('toForex'); // 'toForex' | 'fromForex'
+  const [showGamesLedger, setShowGamesLedger] = useState(false);
+  const [gamesLedger, setGamesLedger] = useState([]);
+  const [gamesLedgerLoading, setGamesLedgerLoading] = useState(false);
+  const [gamesLedgerGameFilter, setGamesLedgerGameFilter] = useState('');
+  const [showMcxOrders, setShowMcxOrders] = useState(false);
+  const [mcxOrders, setMcxOrders] = useState([]);
+  const [mcxOrdersLoading, setMcxOrdersLoading] = useState(false);
+
+  const fetchWallet = useCallback(async () => {
+    if (!user?.token) return;
+    try {
+      const { data } = await axios.get('/api/user/wallet', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setWalletData(data);
+    } catch (error) {
+      console.error('Error fetching wallet:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchWallet();
+  }, [fetchWallet]);
+
+  useEffect(() => {
+    const onSoftRefresh = () => fetchWallet();
+    window.addEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
+    return () => window.removeEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
+  }, [fetchWallet]);
+
+  const opestockexRoom = () => {
+    navigate('/user/trader-room');
+  };
+
+  const openTransfer = (direction) => {
+    setTransferDirection(direction);
+    setShowTransferModal(true);
+  };
+
+  // Main wallet balance (for deposit/withdraw with admin)
+  // API returns data at top level and also in wallet object
+  const mainWalletBalance = walletData?.cashBalance || walletData?.wallet?.cashBalance || walletData?.wallet?.balance || 0;
+  // Trading account balance (used for trading)
+  const tradingAccountBalance = walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0;
+  const usedMargin = walletData?.usedMargin || walletData?.wallet?.usedMargin || walletData?.wallet?.blocked || 0;
+  const availableTradingBalance = tradingAccountBalance - usedMargin;
+  
+
+  // MCX wallet balance (INR for MCX trading)
+  const mcxBalance = walletData?.mcxWallet?.balance || 0;
+  const mcxUsedMargin = walletData?.mcxWallet?.usedMargin || 0;
+  const mcxAvailableBalance = mcxBalance - mcxUsedMargin;
+  const mcxRealizedPnL = walletData?.mcxWallet?.realizedPnL || 0;
+
+  // Games wallet balance (INR for games/fantasy trading)
+  const gamesBalance = walletData?.gamesWallet?.balance || 0;
+  const gamesUsedMargin = walletData?.gamesWallet?.usedMargin || 0;
+  const gamesAvailableBalance = gamesBalance - gamesUsedMargin;
+  const gamesRealizedPnL = walletData?.gamesWallet?.realizedPnL || 0;
+  const gamesTicketValue = walletData?.gamesTicketValue || 300;
+
+  // Crypto wallet: INR notional for spot (quotes from Binance are USDT; server converts at trade time)
+  const cryptoBalance = walletData?.cryptoWallet?.balance || 0;
+  const cryptoRealizedPnL = walletData?.cryptoWallet?.realizedPnL || 0;
+
+  const forexBalance = walletData?.forexWallet?.balance || 0;
+  const forexRealizedPnL = walletData?.forexWallet?.realizedPnL || 0;
+
+  const formatGamesLedgerTickets = (row) => {
+    const gid = row.gameId || '';
+    if (gid === 'transfer_in' || gid === 'transfer_out') return '—';
+    const tv =
+      row.meta && Number(row.meta.tokenValue) > 0 ? Number(row.meta.tokenValue) : gamesTicketValue;
+    if (row.meta != null && row.meta.tickets != null && Number.isFinite(Number(row.meta.tickets))) {
+      return `${Number(row.meta.tickets).toLocaleString('en-IN', { maximumFractionDigits: 2 })} T`;
+    }
+    if (row.entryType === 'debit' && row.amount != null && tv > 0) {
+      const t = parseFloat((Number(row.amount) / tv).toFixed(2));
+      return `${t.toLocaleString('en-IN', { maximumFractionDigits: 2 })} T`;
+    }
+    if (row.entryType === 'credit' && row.meta?.stake != null && tv > 0) {
+      const t = parseFloat((Number(row.meta.stake) / tv).toFixed(2));
+      return `${t.toLocaleString('en-IN', { maximumFractionDigits: 2 })} T`;
+    }
+    return '—';
+  };
+
+  const openMcxTransfer = (direction) => {
+    setMcxTransferDirection(direction);
+    setShowMcxTransferModal(true);
+  };
+
+  const openMcxTrading = () => {
+    navigate('/user/trader-room?mode=mcx');
+  };
+
+  const openMcxOrdersPage = () => {
+    navigate('/user/orders?mode=mcx');
+  };
+
+  const fetchMcxOrders = useCallback(async () => {
+    if (!user?.token) return;
+    setMcxOrdersLoading(true);
+    try {
+      const { data } = await axios.get('/api/trading/orders', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      const list = Array.isArray(data) ? data : [];
+      const mcx = list.filter(isMcxWalletTrade);
+      mcx.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      setMcxOrders(mcx);
+    } catch (error) {
+      console.error('Error fetching MCX orders:', error);
+      setMcxOrders([]);
+    } finally {
+      setMcxOrdersLoading(false);
+    }
+  }, [user?.token]);
+
+  const toggleMcxOrders = () => {
+    setShowMcxOrders((prev) => !prev);
+  };
+
+  const openGamesTransfer = (direction) => {
+    setGamesTransferDirection(direction);
+    setShowGamesTransferModal(true);
+  };
+
+  const openGamesTrading = () => {
+    navigate('/user/games');
+  };
+
+  const openCryptoTrading = () => {
+    navigate('/user/trader-room?mode=crypto');
+  };
+
+  const openCryptoOrders = () => {
+    navigate('/user/orders?mode=crypto');
+  };
+
+  const openCryptoTransfer = (direction) => {
+    setCryptoTransferDirection(direction);
+    setShowCryptoTransferModal(true);
+  };
+
+  const openForexTrading = () => {
+    navigate('/user/trader-room?mode=forex');
+  };
+
+  const openForexOrders = () => {
+    navigate('/user/orders?mode=forex');
+  };
+
+  const openForexTransfer = (direction) => {
+    setForexTransferDirection(direction);
+    setShowForexTransferModal(true);
+  };
+
+  const fetchGamesLedger = useCallback(async () => {
+    if (!user?.token) return;
+    setGamesLedgerLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: '200' });
+      if (gamesLedgerGameFilter) params.set('gameId', gamesLedgerGameFilter);
+      const { data } = await axios.get(`/api/user/games-wallet/ledger?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setGamesLedger(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error fetching games ledger:', error);
+      setGamesLedger([]);
+    } finally {
+      setGamesLedgerLoading(false);
+    }
+  }, [user?.token, gamesLedgerGameFilter]);
+
+  const toggleGamesLedger = () => {
+    setShowGamesLedger((prev) => !prev);
+  };
+
+  useEffect(() => {
+    if (showGamesLedger) fetchGamesLedger();
+  }, [gamesLedgerGameFilter, showGamesLedger, fetchGamesLedger]);
+
+  useEffect(() => {
+    if (showMcxOrders) fetchMcxOrders();
+  }, [showMcxOrders, fetchMcxOrders]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <RefreshCw className="animate-spin text-green-400" size={32} />
+      </div>
+    );
+  }
+
+  
+  return (
+    <div className="p-4 md:p-6 overflow-y-auto h-full">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6">
+        <div className="flex items-center gap-4">
+          <h1 className="text-2xl font-bold">My Accounts</h1>
+          <button onClick={fetchWallet} className="text-gray-400 hover:text-white">
+            <RefreshCw size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* Account Cards: row 1 = Standard / MCX / Games; row 2 = Crypto + Forex */}
+      <div className="flex flex-col gap-4 sm:gap-6">
+        <div className="grid grid-cols-1 min-[520px]:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+        {/* Trading Account */}
+        <div className="bg-dark-800 rounded-xl overflow-hidden">
+          {/* Account Header */}
+          <div className="p-4 border-b border-dark-600">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-dark-700 rounded-lg flex items-center justify-center">
+                  <Wallet size={20} className="text-gray-400" />
+                </div>
+                <div>
+                  <div className="font-semibold">IND-{user?.userId?.slice(-5) || '00000'}</div>
+                  <div className="text-xs text-gray-500">STANDARD</div>
+                </div>
+              </div>
+              <button className="text-gray-400 hover:text-white">
+                <MoreHorizontal size={20} />
+              </button>
+            </div>
+          </div>
+
+          {/* Account Body */}
+          <div className="p-6 bg-gradient-to-br from-dark-900 to-dark-800">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="w-2 h-2 bg-green-400 rounded-full"></span>
+              <span className="text-sm text-green-400">Trading Account</span>
+            </div>
+            
+            <div className="text-4xl font-bold mb-1">
+              ₹{tradingAccountBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-sm text-gray-500">Trading Balance</div>
+            {usedMargin > 0 && (
+              <div className="text-xs text-yellow-400 mt-1">
+                Margin Used: ₹{usedMargin.toLocaleString()} | Available: ₹{availableTradingBalance.toLocaleString()}
+              </div>
+            )}
+          </div>
+
+          {/* Account Actions */}
+          <div className="p-4 flex gap-2">
+            <button 
+              onClick={opestockexRoom}
+              className="flex-1 flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 py-3 rounded-lg font-medium transition"
+            >
+              <IndianRupee size={18} />
+              Trade
+            </button>
+            <button 
+              onClick={() => openTransfer('toAccount')}
+              className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 px-4 py-3 rounded-lg transition"
+              title="Transfer from Wallet to Trading Account"
+            >
+              <Plus size={18} />
+              Deposit
+            </button>
+            <button 
+              onClick={() => openTransfer('toWallet')}
+              className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg transition"
+              title="Transfer from Trading Account to Wallet"
+            >
+              <Minus size={18} />
+              Withdraw
+            </button>
+          </div>
+        </div>
+
+        {/* MCX Account */}
+        <div className="bg-dark-800 rounded-xl overflow-hidden">
+          {/* Account Header */}
+          <div className="p-4 border-b border-dark-600">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-yellow-500 to-amber-600 rounded-lg flex items-center justify-center">
+                  <Gem size={20} className="text-white" />
+                </div>
+                <div>
+                  <div className="font-semibold">MCX-{user?.userId?.slice(-5) || '00000'}</div>
+                  <div className="text-xs text-gray-500">COMMODITY TRADING</div>
+                </div>
+              </div>
+              <button className="text-gray-400 hover:text-white">
+                <MoreHorizontal size={20} />
+              </button>
+            </div>
+          </div>
+
+          {/* Account Body */}
+          <div className="p-6 bg-gradient-to-br from-yellow-900/20 to-dark-800">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="w-2 h-2 bg-yellow-400 rounded-full"></span>
+              <span className="text-sm text-yellow-400">MCX Account</span>
+            </div>
+            
+            <div className="text-4xl font-bold mb-1">
+              ₹{mcxBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-sm text-gray-500">MCX Trading Balance</div>
+            {mcxUsedMargin > 0 && (
+              <div className="text-xs text-yellow-400 mt-1">
+                Margin Used: ₹{mcxUsedMargin.toLocaleString()} | Available: ₹{mcxAvailableBalance.toLocaleString()}
+              </div>
+            )}
+            {mcxRealizedPnL !== 0 && (
+              <div className={`text-xs mt-1 ${mcxRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                P&L: {mcxRealizedPnL >= 0 ? '+' : ''}₹{mcxRealizedPnL.toLocaleString()}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={toggleMcxOrders}
+              className="mt-4 w-full py-2.5 text-sm font-medium text-yellow-200 border border-yellow-500/35 rounded-lg hover:bg-yellow-500/10 flex items-center justify-center gap-2 transition"
+            >
+              <History size={16} />
+              {showMcxOrders ? 'Hide' : 'View'} transaction history
+            </button>
+
+            {showMcxOrders && (
+              <div className="mt-3 rounded-lg border border-dark-600 bg-dark-900/50 overflow-hidden">
+                <div className="flex flex-col gap-2 px-3 py-2 border-b border-dark-600 bg-dark-800/80 sm:flex-row sm:items-center sm:justify-between">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                    MCX orders and positions
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={openMcxOrdersPage}
+                      className="text-[11px] text-yellow-400 hover:text-yellow-300 flex items-center gap-1"
+                    >
+                      <ClipboardList size={12} />
+                      Full orders page
+                    </button>
+                    <button
+                      type="button"
+                      onClick={fetchMcxOrders}
+                      disabled={mcxOrdersLoading}
+                      className="text-[11px] text-yellow-400 hover:text-yellow-300 flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <RefreshCw size={12} className={mcxOrdersLoading ? 'animate-spin' : ''} />
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-72 overflow-y-auto overflow-x-auto">
+                  {mcxOrdersLoading ? (
+                    <div className="p-6 text-center text-gray-500 text-sm">Loading orders…</div>
+                  ) : mcxOrders.length === 0 ? (
+                    <div className="p-6 text-center text-gray-500 text-sm">
+                      No MCX orders yet. Trades placed from commodity trading appear here.
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-[11px] min-w-[520px]">
+                      <thead className="sticky top-0 bg-dark-800 text-gray-500">
+                        <tr>
+                          <th className="px-2 py-2 font-medium whitespace-nowrap">Time</th>
+                          <th className="px-2 py-2 font-medium">Symbol</th>
+                          <th className="px-2 py-2 font-medium">Side</th>
+                          <th className="px-2 py-2 font-medium text-right">Qty</th>
+                          <th className="px-2 py-2 font-medium">Status</th>
+                          <th className="px-2 py-2 font-medium text-right">Entry</th>
+                          <th className="px-2 py-2 font-medium text-right">Exit</th>
+                          <th className="px-2 py-2 font-medium text-right">P/L</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-dark-700">
+                        {mcxOrders.map((row) => {
+                          const t = row.createdAt ? new Date(row.createdAt) : null;
+                          const timeStr = t
+                            ? t.toLocaleString('en-IN', {
+                                day: '2-digit',
+                                month: 'short',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                            : '—';
+                          const pnl =
+                            row.status === 'CLOSED'
+                              ? row.netPnL ?? row.realizedPnL
+                              : null;
+                          return (
+                            <tr key={row._id} className="hover:bg-dark-800/60">
+                              <td className="px-2 py-2 text-gray-400 whitespace-nowrap align-top">{timeStr}</td>
+                              <td className="px-2 py-2 align-top">
+                                <div className="text-gray-200 font-medium">{row.symbol || '—'}</div>
+                                <div className="text-[10px] text-gray-600">
+                                  {[row.productType, row.orderType].filter(Boolean).join(' · ')}
+                                </div>
+                              </td>
+                              <td className="px-2 py-2 align-top">
+                                <span
+                                  className={
+                                    row.side === 'BUY' ? 'text-green-400 font-medium' : 'text-red-400 font-medium'
+                                  }
+                                >
+                                  {row.side || '—'}
+                                </span>
+                              </td>
+                              <td className="px-2 py-2 text-right text-gray-300 align-top whitespace-nowrap tabular-nums">
+                                {row.lots != null && row.lots > 0
+                                  ? `${row.lots} lot${row.lots !== 1 ? 's' : ''}`
+                                  : row.quantity != null
+                                    ? Number(row.quantity).toLocaleString('en-IN')
+                                    : '—'}
+                              </td>
+                              <td className="px-2 py-2 align-top text-gray-300">{row.status || '—'}</td>
+                              <td className="px-2 py-2 text-right text-gray-300 align-top tabular-nums">
+                                {row.entryPrice != null
+                                  ? `₹${Number(row.entryPrice).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                                  : '—'}
+                              </td>
+                              <td className="px-2 py-2 text-right text-gray-300 align-top tabular-nums">
+                                {row.exitPrice != null && row.status === 'CLOSED'
+                                  ? `₹${Number(row.exitPrice).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                                  : '—'}
+                              </td>
+                              <td className="px-2 py-2 text-right align-top tabular-nums">
+                                {pnl != null && Number.isFinite(Number(pnl)) ? (
+                                  <span className={Number(pnl) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                    {Number(pnl) >= 0 ? '+' : ''}₹
+                                    {Number(pnl).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-600">—</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Account Actions */}
+          <div className="p-4 flex gap-2">
+            <button 
+              onClick={openMcxTrading}
+              className="flex-1 flex items-center justify-center gap-2 bg-yellow-600 hover:bg-yellow-700 py-3 rounded-lg font-medium transition"
+            >
+              <Gem size={18} />
+              Trade
+            </button>
+            <button 
+              onClick={() => openMcxTransfer('toMcx')}
+              className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 px-4 py-3 rounded-lg transition"
+              title="Transfer from Main Wallet to MCX Account"
+            >
+              <Plus size={18} />
+              Deposit
+            </button>
+            <button 
+              onClick={() => openMcxTransfer('fromMcx')}
+              className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg transition"
+              title="Transfer from MCX Account to Main Wallet"
+            >
+              <Minus size={18} />
+              Withdraw
+            </button>
+          </div>
+        </div>
+
+        {/* Games Account */}
+        <div className="bg-dark-800 rounded-xl overflow-hidden">
+          {/* Account Header */}
+          <div className="p-4 border-b border-dark-600">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center">
+                  <Gamepad2 size={20} className="text-white" />
+                </div>
+                <div>
+                  <div className="font-semibold">GAMES-{user?.userId?.slice(-5) || '00000'}</div>
+                  <div className="text-xs text-gray-500">FANTASY TRADING</div>
+                </div>
+              </div>
+              <button className="text-gray-400 hover:text-white">
+                <MoreHorizontal size={20} />
+              </button>
+            </div>
+          </div>
+
+          {/* Account Body */}
+          <div className="p-6 bg-gradient-to-br from-purple-900/20 to-dark-800">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="w-2 h-2 bg-purple-400 rounded-full"></span>
+              <span className="text-sm text-purple-400">Games Account</span>
+            </div>
+            
+            <div className="text-4xl font-bold mb-1">
+              ₹{gamesBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-sm text-gray-500">Games Balance</div>
+            {gamesUsedMargin > 0 && (
+              <div className="text-xs text-purple-400 mt-1">
+                In Play: ₹{gamesUsedMargin.toLocaleString()} | Available: ₹{gamesAvailableBalance.toLocaleString()}
+              </div>
+            )}
+            {gamesRealizedPnL !== 0 && (
+              <div className={`text-xs mt-1 ${gamesRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                P&L: {gamesRealizedPnL >= 0 ? '+' : ''}₹{gamesRealizedPnL.toLocaleString()}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={toggleGamesLedger}
+              className="mt-4 w-full py-2.5 text-sm font-medium text-purple-200 border border-purple-500/35 rounded-lg hover:bg-purple-500/10 flex items-center justify-center gap-2 transition"
+            >
+              <History size={16} />
+              {showGamesLedger ? 'Hide' : 'View'} transaction history
+            </button>
+
+            {showGamesLedger && (
+              <div className="mt-3 rounded-lg border border-dark-600 bg-dark-900/50 overflow-hidden">
+                <div className="flex flex-col gap-2 px-3 py-2 border-b border-dark-600 bg-dark-800/80 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col gap-1 min-w-0 flex-1">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Games wallet</span>
+                    <select
+                      value={gamesLedgerGameFilter}
+                      onChange={(e) => setGamesLedgerGameFilter(e.target.value)}
+                      className="text-[11px] bg-dark-700 border border-dark-600 rounded px-2 py-1.5 text-gray-200 max-w-full"
+                    >
+                      {GAMES_LEDGER_FILTER_OPTIONS.map((opt) => (
+                        <option key={opt.value || 'all'} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={fetchGamesLedger}
+                    disabled={gamesLedgerLoading}
+                    className="text-[11px] text-purple-400 hover:text-purple-300 flex items-center gap-1 disabled:opacity-50 shrink-0 self-start sm:self-center"
+                  >
+                    <RefreshCw size={12} className={gamesLedgerLoading ? 'animate-spin' : ''} />
+                    Refresh
+                  </button>
+                </div>
+                <div className="max-h-72 overflow-y-auto">
+                  {gamesLedgerLoading ? (
+                    <div className="p-6 text-center text-gray-500 text-sm">Loading history…</div>
+                  ) : gamesLedger.length === 0 ? (
+                    <div className="p-6 text-center text-gray-500 text-sm">
+                      No entries yet. Bets, wins, and transfers to/from this account appear here.
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="sticky top-0 bg-dark-800 text-gray-500">
+                        <tr>
+                          <th className="px-2 py-2 font-medium" title="When the bet or trade was placed (IST)">
+                            Order time
+                          </th>
+                          <th className="px-2 py-2 font-medium">Game / source</th>
+                          <th className="px-2 py-2 font-medium text-right whitespace-nowrap">Tickets</th>
+                          <th className="px-2 py-2 font-medium text-right">Amount</th>
+                          <th className="px-2 py-2 font-medium text-right">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-dark-700">
+                        {gamesLedger.map((row) => (
+                          <tr key={row._id} className="hover:bg-dark-800/60">
+                            <td className="px-2 py-2 text-gray-400 whitespace-nowrap align-top">
+                              <span>{formatGamesLedgerWhen(row)}</span>
+                              {row.meta?.orderPlacedAt &&
+                                row.createdAt &&
+                                Math.abs(
+                                  new Date(row.meta.orderPlacedAt).getTime() -
+                                    new Date(row.createdAt).getTime()
+                                ) > 60_000 && (
+                                  <div className="text-[9px] text-gray-600 mt-0.5 leading-tight">
+                                    Settled{' '}
+                                    {new Date(row.createdAt).toLocaleString('en-IN', {
+                                      day: '2-digit',
+                                      month: 'short',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}
+                                  </div>
+                                )}
+                            </td>
+                            <td className="px-2 py-2 align-top">
+                              <div className="text-gray-200 font-medium">{row.gameLabel || row.gameId || '—'}</div>
+                              {row.description && (
+                                <div className="text-gray-500 mt-0.5 leading-snug">{row.description}</div>
+                              )}
+                            </td>
+                            <td className="px-2 py-2 text-right align-top whitespace-nowrap text-gray-300 tabular-nums">
+                              {formatGamesLedgerTickets(row)}
+                            </td>
+                            <td className="px-2 py-2 text-right align-top whitespace-nowrap">
+                              <span
+                                className={
+                                  row.entryType === 'credit' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'
+                                }
+                              >
+                                {row.entryType === 'credit' ? '+' : '−'}₹
+                                {(row.amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                              </span>
+                              <div className="text-[10px] text-gray-600 uppercase mt-0.5">{row.entryType}</div>
+                            </td>
+                            <td className="px-2 py-2 text-right text-gray-300 align-top whitespace-nowrap">
+                              ₹
+                              {(row.balanceAfter ?? 0).toLocaleString('en-IN', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Account Actions */}
+          <div className="p-4 flex gap-2">
+            <button 
+              onClick={openGamesTrading}
+              className="flex-1 flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 py-3 rounded-lg font-medium transition"
+            >
+              <Gamepad2 size={18} />
+              Play
+            </button>
+            <button 
+              onClick={() => openGamesTransfer('toGames')}
+              className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 px-4 py-3 rounded-lg transition"
+              title="Transfer from Main Wallet to Games Account"
+            >
+              <Plus size={18} />
+              Deposit
+            </button>
+            <button 
+              onClick={() => openGamesTransfer('fromGames')}
+              className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg transition"
+              title="Transfer from Games Account to Main Wallet"
+            >
+              <Minus size={18} />
+              Withdraw
+            </button>
+          </div>
+        </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+          <div className="bg-dark-800 rounded-xl overflow-hidden w-full min-w-0">
+          <div className="p-4 border-b border-dark-600">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-amber-600 rounded-lg flex items-center justify-center">
+                  <Bitcoin size={20} className="text-white" />
+                </div>
+                <div>
+                  <div className="font-semibold">CRYPTO-{user?.userId?.slice(-5) || '00000'}</div>
+                  <div className="text-xs text-gray-500">CRYPTO TRADING</div>
+                </div>
+              </div>
+              <button type="button" className="text-gray-400 hover:text-white">
+                <MoreHorizontal size={20} />
+              </button>
+            </div>
+          </div>
+
+          <div className="p-6 bg-gradient-to-br from-orange-900/25 to-dark-800">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="w-2 h-2 bg-orange-400 rounded-full" />
+              <span className="text-sm text-orange-400">Crypto Account</span>
+            </div>
+
+            <div className="text-4xl font-bold mb-1">
+              ₹{cryptoBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div className="text-sm text-gray-500">Crypto balance (INR)</div>
+            {cryptoRealizedPnL !== 0 && (
+              <div className={`text-xs mt-1 ${cryptoRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                Realized P/L: {cryptoRealizedPnL >= 0 ? '+' : ''}₹{cryptoRealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={openCryptoOrders}
+              className="mt-4 w-full py-2.5 text-sm font-medium text-orange-200 border border-orange-500/35 rounded-lg hover:bg-orange-500/10 flex items-center justify-center gap-2 transition"
+            >
+              <ClipboardList size={16} />
+              View crypto orders
+            </button>
+
+            <div className="mt-3 text-[11px] text-gray-500 leading-snug">
+              Deposit moves Indian Rupees (₹) from your Main Wallet into this crypto trading wallet (also ₹). Use Trade for Binance spot pairs in the terminal.
+            </div>
+          </div>
+
+          <div className="p-4 flex gap-2">
+            <button
+              type="button"
+              onClick={openCryptoTrading}
+              className="flex-1 flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 py-3 rounded-lg font-medium transition"
+            >
+              <Bitcoin size={18} />
+              Trade
+            </button>
+            <button
+              type="button"
+              onClick={() => openCryptoTransfer('toCrypto')}
+              className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 px-4 py-3 rounded-lg transition"
+              title="Transfer from Main Wallet (₹) to Crypto Account (₹)"
+            >
+              <Plus size={18} />
+              Deposit
+            </button>
+            <button
+              type="button"
+              onClick={() => openCryptoTransfer('fromCrypto')}
+              className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg transition"
+              title="Transfer from Crypto Account (₹) to Main Wallet (₹)"
+            >
+              <Minus size={18} />
+              Withdraw
+            </button>
+          </div>
+        </div>
+
+          <div className="bg-dark-800 rounded-xl overflow-hidden w-full min-w-0">
+            <div className="p-4 border-b border-dark-600">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-br from-cyan-600 to-teal-700 rounded-lg flex items-center justify-center">
+                    <Landmark size={20} className="text-white" />
+                  </div>
+                  <div>
+                    <div className="font-semibold">FOREX-{user?.userId?.slice(-5) || '00000'}</div>
+                    <div className="text-xs text-gray-500">FOREX TRADING</div>
+                  </div>
+                </div>
+                <button type="button" className="text-gray-400 hover:text-white">
+                  <MoreHorizontal size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 bg-gradient-to-br from-cyan-900/25 to-dark-800">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="w-2 h-2 bg-cyan-400 rounded-full" />
+                <span className="text-sm text-cyan-400">Forex Account</span>
+              </div>
+
+              <div className="text-4xl font-bold mb-1">
+                ₹{forexBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-sm text-gray-500">Forex balance (INR)</div>
+              {forexRealizedPnL !== 0 && (
+                <div className={`text-xs mt-1 ${forexRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  Realized P/L: {forexRealizedPnL >= 0 ? '+' : ''}₹{forexRealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={openForexOrders}
+                className="mt-4 w-full py-2.5 text-sm font-medium text-cyan-200 border border-cyan-500/35 rounded-lg hover:bg-cyan-500/10 flex items-center justify-center gap-2 transition"
+              >
+                <ClipboardList size={16} />
+                View forex orders
+              </button>
+
+              <div className="mt-3 text-[11px] text-gray-500 leading-snug">
+                Move Indian Rupees (₹) from your Main Wallet into this forex wallet. Trade major FX pairs in the terminal (USD quotes, INR wallet).
+              </div>
+            </div>
+
+            <div className="p-4 flex gap-2">
+              <button
+                type="button"
+                onClick={openForexTrading}
+                className="flex-1 flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-700 py-3 rounded-lg font-medium transition"
+              >
+                <Landmark size={18} />
+                Trade
+              </button>
+              <button
+                type="button"
+                onClick={() => openForexTransfer('toForex')}
+                className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 px-4 py-3 rounded-lg transition"
+                title="Transfer from Main Wallet (₹) to Forex Account (₹)"
+              >
+                <Plus size={18} />
+                Deposit
+              </button>
+              <button
+                type="button"
+                onClick={() => openForexTransfer('fromForex')}
+                className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg transition"
+                title="Transfer from Forex Account (₹) to Main Wallet (₹)"
+              >
+                <Minus size={18} />
+                Withdraw
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* Account Summary */}
+      <div className="mt-8 bg-dark-800 rounded-xl p-6">
+        <h2 className="text-lg font-semibold mb-4">Account Summary</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8 gap-4 sm:gap-6">
+          <div>
+            <div className="text-sm text-gray-400 mb-1">Main Wallet</div>
+            <div className="text-2xl font-bold text-blue-400">
+              ₹{mainWalletBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-400 mb-1">Trading Account</div>
+            <div className="text-2xl font-bold text-green-400">
+              ₹{tradingAccountBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-400 mb-1">MCX Account</div>
+            <div className="text-2xl font-bold text-yellow-400">
+              ₹{mcxBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-400 mb-1">Games Account</div>
+            <div className="text-2xl font-bold text-purple-400">
+              ₹{gamesBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-400 mb-1">Crypto</div>
+            <div className="text-2xl font-bold text-orange-400">
+              ₹{cryptoBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-400 mb-1">Forex</div>
+            <div className="text-2xl font-bold text-cyan-400">
+              ₹{forexBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-400 mb-1">Total Deposited</div>
+            <div className="text-2xl font-bold">
+              ₹{(walletData?.wallet?.totalDeposited || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-400 mb-1">Total Withdrawn</div>
+            <div className="text-2xl font-bold">
+              ₹{(walletData?.wallet?.totalWithdrawn || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Internal Transfer Modal */}
+      {showTransferModal && (
+        <InternalTransferModal
+          user={user}
+          walletBalance={mainWalletBalance}
+          tradingBalance={availableTradingBalance}
+          direction={transferDirection}
+          onClose={() => setShowTransferModal(false)}
+          onSuccess={() => { fetchWallet(); setShowTransferModal(false); }}
+        />
+      )}
+
+      {/* MCX Transfer Modal */}
+      {showMcxTransferModal && (
+        <McxTransferModal
+          user={user}
+          walletBalance={mainWalletBalance}
+          mcxBalance={mcxAvailableBalance}
+          direction={mcxTransferDirection}
+          onClose={() => setShowMcxTransferModal(false)}
+          onSuccess={() => { fetchWallet(); setShowMcxTransferModal(false); }}
+        />
+      )}
+
+      {/* Games Transfer Modal */}
+      {showGamesTransferModal && (
+        <GamesTransferModal
+          user={user}
+          walletBalance={mainWalletBalance}
+          gamesBalance={gamesAvailableBalance}
+          direction={gamesTransferDirection}
+          onClose={() => setShowGamesTransferModal(false)}
+          onSuccess={() => { fetchWallet(); setShowGamesTransferModal(false); }}
+        />
+      )}
+
+      {showCryptoTransferModal && (
+        <CryptoTransferModal
+          user={user}
+          walletBalance={mainWalletBalance}
+          cryptoBalance={cryptoBalance}
+          direction={cryptoTransferDirection}
+          onClose={() => setShowCryptoTransferModal(false)}
+          onSuccess={() => { fetchWallet(); setShowCryptoTransferModal(false); }}
+        />
+      )}
+
+      {showForexTransferModal && (
+        <ForexTransferModal
+          user={user}
+          walletBalance={mainWalletBalance}
+          forexBalance={forexBalance}
+          direction={forexTransferDirection}
+          onClose={() => setShowForexTransferModal(false)}
+          onSuccess={() => { fetchWallet(); setShowForexTransferModal(false); }}
+        />
+      )}
+    </div>
+  );
+};
+
+// Internal Transfer Modal - Transfer between Wallet and Trading Account
+const InternalTransferModal = ({ user, walletBalance, tradingBalance, direction, onClose, onSuccess }) => {
+  const [amount, setAmount] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const isToAccount = direction === 'toAccount';
+  const sourceBalance = isToAccount ? walletBalance : tradingBalance;
+  const sourceLabel = isToAccount ? 'Main Wallet' : 'Trading Account';
+  const destLabel = isToAccount ? 'Trading Account' : 'Main Wallet';
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(amount);
+    
+    if (!amt || amt <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+    if (amt > sourceBalance) {
+      setError(`Insufficient balance in ${sourceLabel}`);
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await axios.post('/api/user/funds/internal-transfer', {
+        amount: amt,
+        direction: direction // 'toAccount' or 'toWallet'
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      onSuccess();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Transfer failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <ArrowLeftRight size={20} className="text-blue-400" />
+            Internal Transfer
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Transfer Direction Display */}
+        <div className="bg-dark-700 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="text-center flex-1">
+              <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
+              <div className="text-lg font-bold text-green-400">₹{sourceBalance.toLocaleString()}</div>
+            </div>
+            <div className="px-4">
+              <ArrowRight size={24} className="text-blue-400" />
+            </div>
+            <div className="text-center flex-1">
+              <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
+              <div className="text-lg font-bold text-blue-400">
+                ₹{(isToAccount ? tradingBalance : walletBalance).toLocaleString()}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/20 text-red-400 p-3 rounded-lg mb-4 text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="Enter amount to transfer"
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-blue-500 text-lg"
+            />
+          </div>
+
+          {/* Quick Amount Buttons */}
+          <div className="flex gap-2 flex-wrap">
+            {[1000, 5000, 10000, 50000].map(amt => (
+              <button
+                key={amt}
+                type="button"
+                onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(amt, sourceBalance) : amt))}
+                className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
+              >
+                ₹{amt.toLocaleString()}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setAmount(String(Math.max(sourceBalance, 0)))}
+              className="flex-1 min-w-[60px] bg-green-600 hover:bg-green-700 py-2 rounded text-sm font-medium transition"
+            >
+              Max
+            </button>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 py-3 rounded-lg font-medium transition"
+          >
+            {loading ? 'Transferring...' : `Transfer to ${destLabel}`}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// MCX Transfer Modal - Transfer between Main Wallet and MCX Account
+const McxTransferModal = ({ user, walletBalance, mcxBalance, direction, onClose, onSuccess }) => {
+  const [amount, setAmount] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const isToMcx = direction === 'toMcx';
+  const sourceBalance = isToMcx ? walletBalance : mcxBalance;
+  const sourceLabel = isToMcx ? 'Main Wallet' : 'MCX Account';
+  const destLabel = isToMcx ? 'MCX Account' : 'Main Wallet';
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(amount);
+    
+    if (!amt || amt <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+    if (amt > sourceBalance) {
+      setError(`Insufficient balance in ${sourceLabel}`);
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await axios.post('/api/user/funds/mcx-transfer', {
+        amount: amt,
+        direction: direction // 'toMcx' or 'fromMcx'
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      onSuccess();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Transfer failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Gem size={20} className="text-yellow-400" />
+            MCX Transfer
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Transfer Direction Display */}
+        <div className="bg-dark-700 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="text-center flex-1">
+              <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
+              <div className={`text-lg font-bold ${isToMcx ? 'text-blue-400' : 'text-yellow-400'}`}>
+                ₹{sourceBalance.toLocaleString()}
+              </div>
+            </div>
+            <div className="px-4">
+              <ArrowRight size={24} className="text-yellow-400" />
+            </div>
+            <div className="text-center flex-1">
+              <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
+              <div className={`text-lg font-bold ${isToMcx ? 'text-yellow-400' : 'text-blue-400'}`}>
+                ₹{(isToMcx ? mcxBalance : walletBalance).toLocaleString()}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* MCX Info */}
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4 text-sm">
+          <div className="flex items-center gap-2 text-yellow-400">
+            <Gem size={16} />
+            <span>MCX Commodity Trading Account</span>
+          </div>
+          <div className="mt-1 text-gray-300 text-xs">
+            Trade Gold, Silver, Crude Oil, Natural Gas & more
+          </div>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/20 text-red-400 p-3 rounded-lg mb-4 text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="Enter amount to transfer"
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-yellow-500 text-lg"
+            />
+          </div>
+
+          {/* Quick Amount Buttons */}
+          <div className="flex gap-2 flex-wrap">
+            {[1000, 5000, 10000, 50000].map(amt => (
+              <button
+                key={amt}
+                type="button"
+                onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(amt, sourceBalance) : amt))}
+                className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
+              >
+                ₹{amt.toLocaleString()}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setAmount(String(Math.max(sourceBalance, 0)))}
+              className="flex-1 min-w-[60px] bg-yellow-600 hover:bg-yellow-700 py-2 rounded text-sm font-medium transition"
+            >
+              Max
+            </button>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 py-3 rounded-lg font-medium transition"
+          >
+            {loading ? 'Transferring...' : `Transfer to ${destLabel}`}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Games Transfer Modal - Transfer between Main Wallet and Games Account
+const GamesTransferModal = ({ user, walletBalance, gamesBalance, direction, onClose, onSuccess }) => {
+  const [amount, setAmount] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const isToGames = direction === 'toGames';
+  const sourceBalance = isToGames ? walletBalance : gamesBalance;
+  const sourceLabel = isToGames ? 'Main Wallet' : 'Games Account';
+  const destLabel = isToGames ? 'Games Account' : 'Main Wallet';
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(amount);
+    
+    if (!amt || amt <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+    if (amt > sourceBalance) {
+      setError(`Insufficient balance in ${sourceLabel}`);
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await axios.post('/api/user/funds/games-transfer', {
+        amount: amt,
+        direction: direction // 'toGames' or 'fromGames'
+      }, {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      onSuccess();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Transfer failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Gamepad2 size={20} className="text-purple-400" />
+            Games Transfer
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Transfer Direction Display */}
+        <div className="bg-dark-700 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="text-center flex-1">
+              <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
+              <div className={`text-lg font-bold ${isToGames ? 'text-blue-400' : 'text-purple-400'}`}>
+                ₹{sourceBalance.toLocaleString()}
+              </div>
+            </div>
+            <div className="px-4">
+              <ArrowRight size={24} className="text-purple-400" />
+            </div>
+            <div className="text-center flex-1">
+              <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
+              <div className={`text-lg font-bold ${isToGames ? 'text-purple-400' : 'text-blue-400'}`}>
+                ₹{(isToGames ? gamesBalance : walletBalance).toLocaleString()}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Games Info */}
+        <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3 mb-4 text-sm">
+          <div className="flex items-center gap-2 text-purple-400">
+            <Gamepad2 size={16} />
+            <span>Fantasy Trading Account</span>
+          </div>
+          <div className="mt-1 text-gray-300 text-xs">
+            Play fantasy games and win real rewards
+          </div>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/20 text-red-400 p-3 rounded-lg mb-4 text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="Enter amount to transfer"
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-purple-500 text-lg"
+            />
+          </div>
+
+          {/* Quick Amount Buttons */}
+          <div className="flex gap-2 flex-wrap">
+            {[500, 1000, 5000, 10000].map(amt => (
+              <button
+                key={amt}
+                type="button"
+                onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(amt, sourceBalance) : amt))}
+                className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
+              >
+                ₹{amt.toLocaleString()}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setAmount(String(Math.max(sourceBalance, 0)))}
+              className="flex-1 min-w-[60px] bg-purple-600 hover:bg-purple-700 py-2 rounded text-sm font-medium transition"
+            >
+              Max
+            </button>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 py-3 rounded-lg font-medium transition"
+          >
+            {loading ? 'Transferring...' : `Transfer to ${destLabel}`}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Crypto transfer — Main Wallet (INR) ↔ Crypto wallet (INR notional for spot)
+const CryptoTransferModal = ({ user, walletBalance, cryptoBalance, direction, onClose, onSuccess }) => {
+  const [amount, setAmount] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const isToCrypto = direction === 'toCrypto';
+  const sourceBalance = isToCrypto ? walletBalance : cryptoBalance;
+  const sourceLabel = isToCrypto ? 'Main Wallet' : 'Crypto Account';
+  const destLabel = isToCrypto ? 'Crypto Account' : 'Main Wallet';
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(amount);
+
+    if (!amt || amt <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+    if (amt > sourceBalance) {
+      setError(`Insufficient balance in ${sourceLabel}`);
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await axios.post(
+        '/api/user/funds/crypto-transfer',
+        { amount: amt, direction },
+        { headers: { Authorization: `Bearer ${user.token}` } }
+      );
+      onSuccess();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Transfer failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const amtNum = parseFloat(amount);
+  const estimateLine =
+    amtNum > 0 && Number.isFinite(amtNum)
+      ? `₹${amtNum.toLocaleString('en-IN', { maximumFractionDigits: 2 })} will be moved to ${destLabel}`
+      : null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Bitcoin size={20} className="text-orange-400" />
+            Crypto Transfer
+          </h3>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="bg-dark-700 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="text-center flex-1 min-w-0">
+              <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
+              <div className={`text-lg font-bold truncate ${isToCrypto ? 'text-blue-400' : 'text-orange-400'}`}>
+                ₹{sourceBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </div>
+            </div>
+            <div className="px-2 shrink-0">
+              <ArrowRight size={24} className="text-orange-400" />
+            </div>
+            <div className="text-center flex-1 min-w-0">
+              <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
+              <div className={`text-lg font-bold truncate ${isToCrypto ? 'text-orange-400' : 'text-blue-400'}`}>
+                ₹{(isToCrypto ? cryptoBalance : walletBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-3 mb-4 text-sm">
+          <div className="flex items-center gap-2 text-orange-400">
+            <Bitcoin size={16} />
+            <span>Spot crypto (Binance pairs)</span>
+          </div>
+          <div className="mt-1 text-gray-300 text-xs">
+            {isToCrypto
+              ? 'Move Indian Rupees (₹) from your Main Wallet into your crypto trading wallet.'
+              : 'Move Indian Rupees (₹) from your crypto trading wallet back to your Main Wallet.'}
+          </div>
+        </div>
+
+        {error && <div className="bg-red-500/20 text-red-400 p-3 rounded-lg mb-4 text-sm">{error}</div>}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <input
+              type="number"
+              step="1"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="Enter amount in INR"
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-orange-500 text-lg"
+            />
+            {estimateLine && <p className="text-xs text-gray-500 mt-2">{estimateLine}</p>}
+          </div>
+
+          <div className="flex gap-2 flex-wrap">
+            {[1000, 5000, 10000, 50000].map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(q, sourceBalance) : q))}
+                className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
+              >
+                ₹{q.toLocaleString()}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setAmount(String(Math.max(sourceBalance, 0)))}
+              className="flex-1 min-w-[60px] bg-orange-600 hover:bg-orange-700 py-2 rounded text-sm font-medium transition"
+            >
+              Max
+            </button>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-orange-600 hover:bg-orange-700 disabled:opacity-50 py-3 rounded-lg font-medium transition"
+          >
+            {loading ? 'Transferring...' : `Transfer to ${destLabel}`}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Forex transfer — Main Wallet (INR) ↔ Forex wallet (INR)
+const ForexTransferModal = ({ user, walletBalance, forexBalance, direction, onClose, onSuccess }) => {
+  const [amount, setAmount] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const isToForex = direction === 'toForex';
+  const sourceBalance = isToForex ? walletBalance : forexBalance;
+  const sourceLabel = isToForex ? 'Main Wallet' : 'Forex Account';
+  const destLabel = isToForex ? 'Forex Account' : 'Main Wallet';
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(amount);
+
+    if (!amt || amt <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+    if (amt > sourceBalance) {
+      setError(`Insufficient balance in ${sourceLabel}`);
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await axios.post(
+        '/api/user/funds/forex-transfer',
+        { amount: amt, direction },
+        { headers: { Authorization: `Bearer ${user.token}` } }
+      );
+      onSuccess();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Transfer failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const amtNum = parseFloat(amount);
+  const estimateLine =
+    amtNum > 0 && Number.isFinite(amtNum)
+      ? `₹${amtNum.toLocaleString('en-IN', { maximumFractionDigits: 2 })} will be moved to ${destLabel}`
+      : null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Landmark size={20} className="text-cyan-400" />
+            Forex Transfer
+          </h3>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="bg-dark-700 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="text-center flex-1 min-w-0">
+              <div className="text-xs text-gray-400 mb-1">{sourceLabel}</div>
+              <div className={`text-lg font-bold truncate ${isToForex ? 'text-blue-400' : 'text-cyan-400'}`}>
+                ₹{sourceBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </div>
+            </div>
+            <div className="px-2 shrink-0">
+              <ArrowRight size={24} className="text-cyan-400" />
+            </div>
+            <div className="text-center flex-1 min-w-0">
+              <div className="text-xs text-gray-400 mb-1">{destLabel}</div>
+              <div className={`text-lg font-bold truncate ${isToForex ? 'text-cyan-400' : 'text-blue-400'}`}>
+                ₹{(isToForex ? forexBalance : walletBalance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3 mb-4 text-sm">
+          <div className="flex items-center gap-2 text-cyan-400">
+            <Landmark size={16} />
+            <span>Forex spot (major pairs)</span>
+          </div>
+          <div className="mt-1 text-gray-300 text-xs">
+            {isToForex
+              ? 'Move Indian Rupees (₹) from your Main Wallet into your forex trading wallet.'
+              : 'Move Indian Rupees (₹) from your forex trading wallet back to your Main Wallet.'}
+          </div>
+        </div>
+
+        {error && <div className="bg-red-500/20 text-red-400 p-3 rounded-lg mb-4 text-sm">{error}</div>}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Amount (₹)</label>
+            <input
+              type="number"
+              step="1"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="Enter amount in INR"
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-3 focus:outline-none focus:border-cyan-500 text-lg"
+            />
+            {estimateLine && <p className="text-xs text-gray-500 mt-2">{estimateLine}</p>}
+          </div>
+
+          <div className="flex gap-2 flex-wrap">
+            {[1000, 5000, 10000, 50000].map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => setAmount(String(sourceBalance > 0 ? Math.min(q, sourceBalance) : q))}
+                className="flex-1 min-w-[60px] bg-dark-700 hover:bg-dark-600 py-2 rounded text-sm transition"
+              >
+                ₹{q.toLocaleString()}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setAmount(String(Math.max(sourceBalance, 0)))}
+              className="flex-1 min-w-[60px] bg-cyan-600 hover:bg-cyan-700 py-2 rounded text-sm font-medium transition"
+            >
+              Max
+            </button>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 py-3 rounded-lg font-medium transition"
+          >
+            {loading ? 'Transferring...' : `Transfer to ${destLabel}`}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default UserAccounts;
