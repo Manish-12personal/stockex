@@ -344,7 +344,6 @@ const AdminDashboard = () => {
         { path: `${basePath}/admin-fund-requests`, icon: Wallet, label: 'Admin Fund Requests' },
         { path: `${basePath}/broker-change-requests`, icon: RefreshCw, label: 'Transfer Requests' },
         { path: `${basePath}/all-transactions`, icon: FileText, label: 'All Transactions' },
-        { path: `${basePath}/client-wallet`, icon: Coins, label: 'Client Wallet' },
         { path: `${basePath}/market-control`, icon: TrendingUp, label: 'Market Control' },
         { path: `${basePath}/broker-certificates`, icon: Award, label: 'Broker Certificates' },
         { path: `${basePath}/system-settings`, icon: Settings, label: 'Default Settings' },
@@ -558,7 +557,6 @@ const AdminDashboard = () => {
           {isSuperAdmin && <Route path="market-control" element={<MarketControl />} />}
           {isSuperAdmin && <Route path="bank-management" element={<BankManagement />} />}
           {isSuperAdmin && <Route path="all-transactions" element={<AllTransactions />} />}
-          {isSuperAdmin && <Route path="client-wallet" element={<SuperAdminClientWallet />} />}
           {isSuperAdmin && <Route path="broker-certificates" element={<BrokerCertificatesManagement />} />}
           {isSuperAdmin && <Route path="system-settings" element={<SystemDefaultSettings />} />}
           {isSuperAdmin && <Route path="delivery-pledge" element={<DeliveryPledgeManagement />} />}
@@ -12726,6 +12724,12 @@ const ALL_TX_SEGMENTS = [
   { id: 'admin', label: 'Admins', hint: 'ADMIN role', color: 'bg-purple-600' },
   { id: 'broker', label: 'Brokers', hint: 'BROKER role', color: 'bg-indigo-600' },
   { id: 'subbroker', label: 'Sub-brokers', hint: 'SUB_BROKER role', color: 'bg-violet-600' },
+  {
+    id: 'superadmin',
+    label: 'Superadmin',
+    hint: 'All clients — platform-wide',
+    color: 'bg-amber-600',
+  },
 ];
 
 /** `GamesWalletLedger.gameId` for the five games (labels match user-facing names). */
@@ -12770,6 +12774,10 @@ const AllTransactions = () => {
   useEffect(() => {
     if (!admin?.token) return;
     const load = async () => {
+      if (segment === 'superadmin') {
+        setListLoading(false);
+        return;
+      }
       setListLoading(true);
       try {
         if (segment === 'users') {
@@ -12940,22 +12948,33 @@ const AllTransactions = () => {
         <div>
           <h1 className="text-2xl font-bold">All Transactions</h1>
           <p className="text-xs text-gray-500 mt-1">
-            Select someone, then on the right choose Main (trading wallet) or Games (in-app bets, wins, refunds — same
-            as user order history). Under Games, pick a game to filter the list.
+            {segment === 'superadmin' ? (
+              <>
+                Superadmin tab: all client credits and debits in one place (main trading wallet and games wallet).
+                Use filters below the tabs.
+              </>
+            ) : (
+              <>
+                Select someone, then on the right choose Main (trading wallet) or Games (in-app bets, wins, refunds —
+                same as user order history). Under Games, pick a game to filter the list.
+              </>
+            )}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => fetchLedgerForSelection()}
-          disabled={!selected || txLoading}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-dark-600 text-sm disabled:opacity-40"
-        >
-          <RefreshCw size={16} className={txLoading ? 'animate-spin' : ''} />
-          Reload ledger
-        </button>
+        {segment !== 'superadmin' && (
+          <button
+            type="button"
+            onClick={() => fetchLedgerForSelection()}
+            disabled={!selected || txLoading}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-dark-600 text-sm disabled:opacity-40"
+          >
+            <RefreshCw size={16} className={txLoading ? 'animate-spin' : ''} />
+            Reload ledger
+          </button>
+        )}
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-4">
         {ALL_TX_SEGMENTS.map((s) => (
           <button
             key={s.id}
@@ -12973,6 +12992,9 @@ const AllTransactions = () => {
         ))}
       </div>
 
+      {segment === 'superadmin' ? (
+        <SuperAdminClientWallet embedded />
+      ) : (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-5 bg-dark-800 border border-dark-600 rounded-xl flex flex-col min-h-[280px] max-h-[70vh]">
           <div className="p-3 border-b border-dark-600 shrink-0">
@@ -13252,6 +13274,7 @@ const AllTransactions = () => {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 };
@@ -13266,7 +13289,7 @@ const CLIENT_WALLET_REASON_GROUPS = [
 ];
 
 /** Super Admin — all clients’ credits & debits (main trading wallet + optional games ledger). */
-const SuperAdminClientWallet = () => {
+function SuperAdminClientWallet({ embedded = false }) {
   const { admin } = useAuth();
   const [scope, setScope] = useState('main');
   const [txKind, setTxKind] = useState('');
@@ -13381,18 +13404,33 @@ const SuperAdminClientWallet = () => {
   }, [transactions, rowSearch]);
 
   return (
-    <div className="p-4 md:p-6 max-w-[1500px] mx-auto space-y-4">
+    <div className={embedded ? 'space-y-4' : 'p-4 md:p-6 max-w-[1500px] mx-auto space-y-4'}>
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Coins className="text-yellow-400" size={26} />
-            Client Wallet
-          </h1>
-          <p className="text-xs text-gray-500 mt-1 max-w-2xl">
-            All client (user) credits and debits across the platform. Use Main for trading wallet movements (funds,
-            transfers, P&amp;L, games transfers on the main ledger). Use Games for in-app bets, wins, and games-wallet
-            transfers — same sources as user order history.
-          </p>
+          {embedded ? (
+            <>
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Coins className="text-amber-400/90" size={22} />
+                All clients — platform ledger
+              </h2>
+              <p className="text-xs text-gray-500 mt-1 max-w-2xl">
+                Main: every user trading-wallet line. Games: in-app games wallet (bets, wins, transfers) across all
+                users.
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-2xl font-bold flex items-center gap-2">
+                <Coins className="text-yellow-400" size={26} />
+                Client Wallet
+              </h1>
+              <p className="text-xs text-gray-500 mt-1 max-w-2xl">
+                All client (user) credits and debits across the platform. Use Main for trading wallet movements (funds,
+                transfers, PnL, games transfers on the main ledger). Use Games for in-app bets, wins, and games-wallet
+                transfers — same sources as user order history.
+              </p>
+            </>
+          )}
         </div>
         <button
           type="button"
@@ -13671,7 +13709,7 @@ const SuperAdminClientWallet = () => {
       )}
     </div>
   );
-};
+}
 
 // System Default Settings (Super Admin only)
 const SystemDefaultSettings = () => {
