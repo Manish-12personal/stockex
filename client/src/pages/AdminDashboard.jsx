@@ -13536,7 +13536,9 @@ function SuperAdminClientWallet({ embedded = false }) {
               </>
             )}
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div
+            className={`grid grid-cols-1 gap-2 ${txKind === 'CREDIT' || txKind === 'DEBIT' ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}
+          >
             {!txKind ? (
               <>
                 <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
@@ -13554,23 +13556,22 @@ function SuperAdminClientWallet({ embedded = false }) {
                   <div className="text-[10px] text-gray-600">{displaySummary.debitCount ?? 0} lines</div>
                 </div>
               </>
+            ) : txKind === 'DEBIT' ? (
+              <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
+                <div className="text-[10px] text-gray-500 uppercase">Debited to you</div>
+                <div className="text-base font-bold text-red-400 tabular-nums">
+                  −₹{Number(displaySummary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-gray-600">{displaySummary.creditCount ?? 0} lines</div>
+              </div>
             ) : (
-              <>
-                <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
-                  <div className="text-[10px] text-gray-500 uppercase">Debited to you</div>
-                  <div className="text-base font-bold text-red-400 tabular-nums">
-                    −₹{Number(displaySummary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                  </div>
-                  <div className="text-[10px] text-gray-600">{displaySummary.creditCount ?? 0} lines</div>
+              <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
+                <div className="text-[10px] text-gray-500 uppercase">Credited to you</div>
+                <div className="text-base font-bold text-green-400 tabular-nums">
+                  +₹{Number(displaySummary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                 </div>
-                <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
-                  <div className="text-[10px] text-gray-500 uppercase">Credited to you</div>
-                  <div className="text-base font-bold text-green-400 tabular-nums">
-                    +₹{Number(displaySummary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                  </div>
-                  <div className="text-[10px] text-gray-600">{displaySummary.debitCount ?? 0} lines</div>
-                </div>
-              </>
+                <div className="text-[10px] text-gray-600">{displaySummary.debitCount ?? 0} lines</div>
+              </div>
             )}
             <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2">
               <div className="text-[10px] text-gray-500 uppercase">Net (client cr − dr)</div>
