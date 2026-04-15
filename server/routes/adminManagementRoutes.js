@@ -5,6 +5,7 @@ import User from '../models/User.js';
 import BankAccount from '../models/BankAccount.js';
 import FundRequest from '../models/FundRequest.js';
 import WalletLedger from '../models/WalletLedger.js';
+import mongoose from 'mongoose';
 import AdminFundRequest from '../models/AdminFundRequest.js';
 import BrokerChangeRequest from '../models/BrokerChangeRequest.js';
 import Trade from '../models/Trade.js';
@@ -28,7 +29,7 @@ import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.j
 import { closingPriceToDecimalPart } from '../utils/niftyNumberResult.js';
 import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
-import { matchAdminLedgerGameKey, WALLET_LEDGER_GAME_OPTIONS } from '../utils/walletLedgerGameFilter.js';
+import { matchAdminLedgerGameKey } from '../utils/walletLedgerGameFilter.js';
 import {
   sortJackpotBidsByDistanceToReference,
   resolveNiftyJackpotSpotPrice,
@@ -3069,18 +3070,153 @@ router.get('/admins/:id/ledger', protectAdmin, superAdminOnly, async (req, res) 
   }
 });
 
+function escapeRegExpForQuery(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Get all transactions across all admins (Super Admin only)
+// Query: ownerType, type (CREDIT|DEBIT), reason, reasons (comma), reasonGroup (trading|games|funds|adjustments|transfers),
+// adminCode (partial), ownerId (Mongo id), userSearch (username/name → USER ownerIds),
+// referenceType (Trade|Order|…), gameKey (niftyUpDown|… for game-related rows), dateFrom, dateTo (ISO),
+// includeSummary=1 → { transactions, summary }, else legacy array (no includeSummary).
 router.get('/all-transactions', protectAdmin, superAdminOnly, async (req, res) => {
   try {
-    const { limit = 100, ownerType } = req.query;
+    const {
+      limit = 100,
+      ownerType,
+      type,
+      reason,
+      reasons,
+      reasonGroup,
+      adminCode,
+      ownerId,
+      userSearch,
+      referenceType,
+      gameKey,
+      dateFrom,
+      dateTo,
+      includeSummary,
+    } = req.query;
+
     const query = {};
     if (ownerType) query.ownerType = ownerType;
-    
-    const transactions = await WalletLedger.find(query)
+
+    const tUpper = type != null ? String(type).toUpperCase() : '';
+    if (tUpper === 'CREDIT' || tUpper === 'DEBIT') query.type = tUpper;
+
+    if (reason && String(reason).trim()) {
+      query.reason = String(reason).trim();
+    } else if (reasons && String(reasons).trim()) {
+      const rlist = String(reasons)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (rlist.length) query.reason = { $in: rlist };
+    } else if (reasonGroup && String(reasonGroup).trim()) {
+      const g = String(reasonGroup).toLowerCase().trim();
+      const TRADING = ['TRADE_PNL', 'BROKERAGE'];
+      const GAMES = ['GAME_PROFIT', 'GAMES_TRANSFER'];
+      const FUNDS = [
+        'FUND_ADD',
+        'FUND_WITHDRAW',
+        'TRADING_FUND_ADD',
+        'TRADING_FUND_WITHDRAW',
+        'ADMIN_DEPOSIT',
+        'ADMIN_WITHDRAW',
+        'ADMIN_TRANSFER',
+        'REFUND',
+      ];
+      const ADJ = ['ADJUSTMENT', 'BONUS', 'PENALTY'];
+      const XFER = ['CRYPTO_TRANSFER', 'FOREX_TRANSFER', 'MCX_TRANSFER', 'INTERNAL_TRANSFER'];
+      if (g === 'trading') query.reason = { $in: TRADING };
+      else if (g === 'games') query.reason = { $in: GAMES };
+      else if (g === 'funds') query.reason = { $in: FUNDS };
+      else if (g === 'adjustments') query.reason = { $in: ADJ };
+      else if (g === 'transfers') query.reason = { $in: XFER };
+    }
+
+    if (adminCode && String(adminCode).trim()) {
+      query.adminCode = new RegExp(escapeRegExpForQuery(String(adminCode).trim()), 'i');
+    }
+
+    if (ownerId && mongoose.Types.ObjectId.isValid(String(ownerId))) {
+      query.ownerId = new mongoose.Types.ObjectId(String(ownerId));
+    }
+
+    if (userSearch && String(userSearch).trim()) {
+      const uq = new RegExp(escapeRegExpForQuery(String(userSearch).trim()), 'i');
+      const users = await User.find({
+        $or: [{ username: uq }, { fullName: uq }, { email: uq }],
+      })
+        .select('_id')
+        .limit(200)
+        .lean();
+      const ids = users.map((u) => u._id);
+      query.ownerType = 'USER';
+      query.ownerId = ids.length ? { $in: ids } : { $in: [] };
+    }
+
+    if (referenceType && String(referenceType).trim()) {
+      query['reference.type'] = String(referenceType).trim();
+    }
+
+    if (dateFrom || dateTo) {
+      query.createdAt = {};
+      if (dateFrom) query.createdAt.$gte = new Date(String(dateFrom));
+      if (dateTo) query.createdAt.$lte = new Date(String(dateTo));
+    }
+
+    let finalQuery = query;
+    const gk = gameKey != null ? String(gameKey).trim() : '';
+    if (gk && gk !== 'all') {
+      const frag = matchAdminLedgerGameKey(gk);
+      if (frag && Object.keys(frag).length) {
+        finalQuery = Object.keys(query).length ? { $and: [query, frag] } : frag;
+      }
+    }
+
+    const lim = Math.min(Math.max(parseInt(String(limit), 10) || 100, 1), 2000);
+
+    const wantSummary = includeSummary === '1' || includeSummary === 'true';
+    let summary = null;
+    if (wantSummary) {
+      const agg = await WalletLedger.aggregate([
+        { $match: finalQuery },
+        { $group: { _id: '$type', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]);
+      summary = {
+        credits: 0,
+        debits: 0,
+        creditCount: 0,
+        debitCount: 0,
+        net: 0,
+      };
+      for (const row of agg) {
+        if (row._id === 'CREDIT') {
+          summary.credits = row.total || 0;
+          summary.creditCount = row.count || 0;
+        } else if (row._id === 'DEBIT') {
+          summary.debits = row.total || 0;
+          summary.debitCount = row.count || 0;
+        }
+      }
+      summary.net = (summary.credits || 0) - (summary.debits || 0);
+    }
+
+    const transactions = await WalletLedger.find(finalQuery)
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .populate('performedBy', 'username name');
-    
+      .limit(lim)
+      .populate('performedBy', 'username name')
+      .populate({
+        path: 'ownerId',
+        select: 'username fullName name adminCode email',
+        options: { strictPopulate: false },
+      })
+      .lean();
+
+    if (wantSummary) {
+      return res.json({ transactions, summary });
+    }
     res.json(transactions);
   } catch (error) {
     res.status(500).json({ message: error.message });
