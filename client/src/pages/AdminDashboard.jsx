@@ -12719,29 +12719,20 @@ function formatAllTxReference(tx) {
   return id ? `${r.type} ·…${id}` : r.type;
 }
 
-function summarizeLedgerRows(rows) {
-  let credits = 0;
-  let debits = 0;
-  let creditCount = 0;
-  let debitCount = 0;
-  for (const t of rows) {
-    const amt = Number(t.amount) || 0;
-    if (t.type === 'CREDIT') {
-      credits += amt;
-      creditCount += 1;
-    } else if (t.type === 'DEBIT') {
-      debits += amt;
-      debitCount += 1;
-    }
-  }
-  return { credits, debits, creditCount, debitCount, net: credits - debits };
-}
-
 const ALL_TX_SEGMENTS = [
   { id: 'users', label: 'Users', hint: 'Trading wallet ledger', color: 'bg-blue-600' },
   { id: 'admin', label: 'Admins', hint: 'ADMIN role', color: 'bg-purple-600' },
   { id: 'broker', label: 'Brokers', hint: 'BROKER role', color: 'bg-indigo-600' },
   { id: 'subbroker', label: 'Sub-brokers', hint: 'SUB_BROKER role', color: 'bg-violet-600' },
+];
+
+/** `GamesWalletLedger.gameId` for the five games (labels match user-facing names). */
+const ALL_TX_GAMES_WALLET_OPTIONS = [
+  { id: 'updown', label: 'Nifty Up/Down' },
+  { id: 'btcupdown', label: 'BTC Up/Down' },
+  { id: 'niftyNumber', label: 'Nifty Number' },
+  { id: 'niftyBracket', label: 'Nifty Bracket' },
+  { id: 'niftyJackpot', label: 'Nifty Jackpot' },
 ];
 
 // All Transactions (Super Admin only) — pick group → pick person → credits / debits
@@ -12759,13 +12750,10 @@ const AllTransactions = () => {
   const [summary, setSummary] = useState(null);
   const [txLoading, setTxLoading] = useState(false);
   const [rowSearch, setRowSearch] = useState('');
-  /** `USER:id` | `ADMIN:id` — rows with wallet dropdown open */
-  const [expandedRows, setExpandedRows] = useState([]);
-  /** Per-row cached ledger from all-transactions */
-  const [inlineLedgerByKey, setInlineLedgerByKey] = useState({});
-  /** Per-row filter inside dropdown: '' | CREDIT | DEBIT */
-  const [inlineKindByKey, setInlineKindByKey] = useState({});
-  const inlineFetchedRef = useRef(new Set());
+  /** Main trading wallet (`WalletLedger`) vs in-app games balance (`GamesWalletLedger`) — users only */
+  const [walletScope, setWalletScope] = useState('main');
+  /** When wallet is games: filter by `GamesWalletLedger.gameId`; '' = all games + transfers */
+  const [gamesGameId, setGamesGameId] = useState('');
 
   useEffect(() => {
     setSelected(null);
@@ -12773,10 +12761,8 @@ const AllTransactions = () => {
     setSummary(null);
     setTxKind('');
     setRowSearch('');
-    setExpandedRows([]);
-    setInlineLedgerByKey({});
-    setInlineKindByKey({});
-    inlineFetchedRef.current = new Set();
+    setWalletScope('main');
+    setGamesGameId('');
   }, [segment]);
 
   useEffect(() => {
@@ -12843,6 +12829,29 @@ const AllTransactions = () => {
     }
     setTxLoading(true);
     try {
+      const useGamesWallet =
+        selected.ownerType === 'USER' && walletScope === 'games';
+
+      if (useGamesWallet) {
+        const params = new URLSearchParams();
+        params.set('limit', '2000');
+        params.set('includeSummary', '1');
+        params.set('userId', selected.ownerId);
+        if (gamesGameId) params.set('gameId', gamesGameId);
+        if (txKind === 'CREDIT' || txKind === 'DEBIT') params.set('type', txKind);
+        const { data } = await axios.get(`/api/admin/manage/user-games-wallet-ledger?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${admin.token}` },
+        });
+        if (data && Array.isArray(data.transactions)) {
+          setTransactions(data.transactions);
+          setSummary(data.summary || null);
+        } else {
+          setTransactions([]);
+          setSummary(null);
+        }
+        return;
+      }
+
       const params = new URLSearchParams();
       params.set('limit', '2000');
       params.set('includeSummary', '1');
@@ -12867,75 +12876,11 @@ const AllTransactions = () => {
     } finally {
       setTxLoading(false);
     }
-  }, [admin?.token, selected, txKind]);
+  }, [admin?.token, selected, txKind, walletScope, gamesGameId]);
 
   useEffect(() => {
     fetchLedgerForSelection();
   }, [fetchLedgerForSelection]);
-
-  const loadInlineLedger = useCallback(
-    async (rowKey, ownerType, ownerId, force = false) => {
-      if (!admin?.token) return;
-      if (!force && inlineFetchedRef.current.has(rowKey)) return;
-      setInlineLedgerByKey((prev) => ({
-        ...prev,
-        [rowKey]: { status: 'loading', transactions: [], summary: null },
-      }));
-      try {
-        const params = new URLSearchParams();
-        params.set('limit', '2000');
-        params.set('includeSummary', '1');
-        params.set('ownerType', ownerType);
-        params.set('ownerId', ownerId);
-        const { data } = await axios.get(`/api/admin/manage/all-transactions?${params.toString()}`, {
-          headers: { Authorization: `Bearer ${admin.token}` },
-        });
-        const transactions = Array.isArray(data?.transactions) ? data.transactions : [];
-        inlineFetchedRef.current.add(rowKey);
-        setInlineLedgerByKey((prev) => ({
-          ...prev,
-          [rowKey]: {
-            status: 'ok',
-            transactions,
-            summary: data?.summary ?? null,
-          },
-        }));
-      } catch (e) {
-        console.error('AllTransactions inline ledger:', e);
-        setInlineLedgerByKey((prev) => ({
-          ...prev,
-          [rowKey]: {
-            status: 'err',
-            transactions: [],
-            summary: null,
-            error: e.response?.data?.message || e.message || 'Failed to load',
-          },
-        }));
-      }
-    },
-    [admin?.token]
-  );
-
-  const toggleRowExpand = useCallback(
-    (rowKey, ownerType, ownerId) => {
-      setExpandedRows((prev) => {
-        if (prev.includes(rowKey)) {
-          return prev.filter((k) => k !== rowKey);
-        }
-        queueMicrotask(() => loadInlineLedger(rowKey, ownerType, ownerId, false));
-        return [...prev, rowKey];
-      });
-    },
-    [loadInlineLedger]
-  );
-
-  const refreshInlineLedger = useCallback(
-    (rowKey, ownerType, ownerId) => {
-      inlineFetchedRef.current.delete(rowKey);
-      loadInlineLedger(rowKey, ownerType, ownerId, true);
-    },
-    [loadInlineLedger]
-  );
 
   const filteredRows = useMemo(() => {
     if (!rowSearch.trim()) return transactions;
@@ -12946,7 +12891,8 @@ const AllTransactions = () => {
         tx.description?.toLowerCase().includes(q) ||
         tx.adminCode?.toLowerCase().includes(q) ||
         formatAllTxReference(tx).toLowerCase().includes(q) ||
-        (tx.meta?.gameKey && String(tx.meta.gameKey).toLowerCase().includes(q))
+        (tx.meta?.gameKey && String(tx.meta.gameKey).toLowerCase().includes(q)) ||
+        (tx.meta?.gameLabel && String(tx.meta.gameLabel).toLowerCase().includes(q))
       );
     });
   }, [transactions, rowSearch]);
@@ -12954,7 +12900,15 @@ const AllTransactions = () => {
   const gameLabel = (key) =>
     WALLET_LEDGER_GAME_OPTIONS.find((g) => g.key === key)?.label || key || '—';
 
+  const gameColumnLabelForTx = (tx) => {
+    if (tx.meta?.gameLabel) return tx.meta.gameLabel;
+    if (tx.meta?.gameKey) return gameLabel(tx.meta.gameKey);
+    return '—';
+  };
+
   const pickUser = (u) => {
+    setWalletScope('main');
+    setGamesGameId('');
     setSelected({
       ownerType: 'USER',
       ownerId: String(u._id),
@@ -12966,6 +12920,8 @@ const AllTransactions = () => {
   };
 
   const pickStaff = (a) => {
+    setWalletScope('main');
+    setGamesGameId('');
     setSelected({
       ownerType: 'ADMIN',
       ownerId: String(a._id),
@@ -12982,9 +12938,8 @@ const AllTransactions = () => {
         <div>
           <h1 className="text-2xl font-bold">All Transactions</h1>
           <p className="text-xs text-gray-500 mt-1">
-            Expand a row (arrow) to see that person&apos;s full wallet ledger here; click the name to open the large
-            panel. Same data as user game order history: all credits and debits on the main wallet (incl. games
-            transfers, trades, P&amp;L).
+            Select someone, then on the right choose Main (trading wallet) or Games (in-app bets, wins, refunds — same
+            as user order history). Under Games, pick a game to filter the list.
           </p>
         </div>
         <button
@@ -13041,381 +12996,41 @@ const AllTransactions = () => {
                 <RefreshCw className="animate-spin" size={22} />
               </div>
             ) : segment === 'users' ? (
-              filteredUsers.map((u) => {
-                const rowKey = `USER:${u._id}`;
-                const expanded = expandedRows.includes(rowKey);
-                const inline = inlineLedgerByKey[rowKey];
-                const kind = inlineKindByKey[rowKey] ?? '';
-                const baseTx = inline?.transactions ?? [];
-                const rows = kind ? baseTx.filter((t) => t.type === kind) : baseTx;
-                const tinySum = summarizeLedgerRows(rows);
-                return (
-                  <div
-                    key={u._id}
-                    className={`rounded-lg border transition ${
-                      selected?.ownerId === String(u._id) && selected?.ownerType === 'USER'
-                        ? 'bg-blue-900/40 border-blue-500/50'
-                        : 'bg-dark-700/40 border-dark-600 hover:border-dark-500'
-                    }`}
-                  >
-                    <div className="flex gap-1 items-stretch">
-                      <button
-                        type="button"
-                        title={expanded ? 'Hide wallet ledger' : 'Show wallet ledger'}
-                        aria-expanded={expanded}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          toggleRowExpand(rowKey, 'USER', String(u._id));
-                        }}
-                        className="shrink-0 px-2 py-2.5 text-gray-400 hover:text-white border-r border-dark-600/80"
-                      >
-                        {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => pickUser(u)}
-                        className="flex-1 min-w-0 text-left rounded-r-lg px-3 py-2.5"
-                      >
-                        <div className="font-medium text-sm text-white truncate">{u.fullName || u.username}</div>
-                        <div className="text-[11px] text-gray-400 font-mono">@{u.username}</div>
-                        {u.admin?.adminCode && (
-                          <div className="text-[10px] text-purple-300 mt-0.5">Under {u.admin.adminCode}</div>
-                        )}
-                      </button>
-                    </div>
-                    {expanded && (
-                      <div className="border-t border-dark-600 bg-dark-900/40 px-2 py-2 space-y-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-[10px] text-gray-500 uppercase tracking-wide">Wallet ledger</span>
-                          <button
-                            type="button"
-                            onClick={() => refreshInlineLedger(rowKey, 'USER', String(u._id))}
-                            className="p-1 rounded text-gray-400 hover:text-cyan-300 hover:bg-dark-700"
-                            title="Reload"
-                          >
-                            <RefreshCw size={14} className={inline?.status === 'loading' ? 'animate-spin' : ''} />
-                          </button>
-                        </div>
-                        {inline?.status === 'loading' && (
-                          <div className="flex justify-center py-4 text-gray-500">
-                            <RefreshCw className="animate-spin" size={20} />
-                          </div>
-                        )}
-                        {inline?.status === 'err' && (
-                          <p className="text-xs text-red-400">{inline.error}</p>
-                        )}
-                        {inline?.status === 'ok' && (
-                          <>
-                            <div className="flex flex-wrap gap-1">
-                              {[
-                                { id: '', label: 'All' },
-                                { id: 'CREDIT', label: 'Credits' },
-                                { id: 'DEBIT', label: 'Debits' },
-                              ].map((t) => (
-                                <button
-                                  key={t.id || 'all'}
-                                  type="button"
-                                  onClick={() =>
-                                    setInlineKindByKey((prev) => ({ ...prev, [rowKey]: t.id }))
-                                  }
-                                  className={`px-2 py-0.5 rounded text-[10px] font-medium border ${
-                                    (kind || '') === t.id
-                                      ? t.id === 'CREDIT'
-                                        ? 'bg-green-900/50 border-green-500/40 text-green-300'
-                                        : t.id === 'DEBIT'
-                                          ? 'bg-red-900/50 border-red-500/40 text-red-300'
-                                          : 'bg-dark-600 border-yellow-500/30 text-yellow-100'
-                                      : 'bg-dark-800 border-dark-600 text-gray-400'
-                                  }`}
-                                >
-                                  {t.label}
-                                </button>
-                              ))}
-                            </div>
-                            <div className="grid grid-cols-3 gap-1 text-[10px]">
-                              <div className="rounded border border-green-500/20 bg-green-950/20 px-1.5 py-1">
-                                <div className="text-gray-500">Cr</div>
-                                <div className="text-green-400 font-semibold tabular-nums">
-                                  +₹{tinySum.credits.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                </div>
-                                <div className="text-gray-600">{tinySum.creditCount} ln</div>
-                              </div>
-                              <div className="rounded border border-red-500/20 bg-red-950/20 px-1.5 py-1">
-                                <div className="text-gray-500">Dr</div>
-                                <div className="text-red-400 font-semibold tabular-nums">
-                                  −₹{tinySum.debits.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                </div>
-                                <div className="text-gray-600">{tinySum.debitCount} ln</div>
-                              </div>
-                              <div className="rounded border border-cyan-500/20 bg-cyan-950/20 px-1.5 py-1">
-                                <div className="text-gray-500">Net</div>
-                                <div
-                                  className={`font-semibold tabular-nums ${
-                                    tinySum.net >= 0 ? 'text-cyan-300' : 'text-orange-300'
-                                  }`}
-                                >
-                                  {tinySum.net >= 0 ? '+' : ''}₹
-                                  {tinySum.net.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                </div>
-                                <div className="text-gray-600">{rows.length} shown</div>
-                              </div>
-                            </div>
-                            <div className="max-h-[260px] overflow-auto rounded border border-dark-600">
-                              <table className="w-full text-[10px] min-w-[520px]">
-                                <thead className="bg-dark-800 sticky top-0">
-                                  <tr>
-                                    <th className="text-left px-1.5 py-1 text-gray-500">When</th>
-                                    <th className="text-left px-1.5 py-1 text-gray-500">Type</th>
-                                    <th className="text-left px-1.5 py-1 text-gray-500">Reason</th>
-                                    <th className="text-left px-1.5 py-1 text-gray-500">Game</th>
-                                    <th className="text-right px-1.5 py-1 text-gray-500">Amt</th>
-                                    <th className="text-right px-1.5 py-1 text-gray-500">Bal</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {rows.length === 0 ? (
-                                    <tr>
-                                      <td colSpan={6} className="px-2 py-3 text-center text-gray-500">
-                                        No lines for this filter.
-                                      </td>
-                                    </tr>
-                                  ) : (
-                                    rows.map((tx) => (
-                                      <tr key={tx._id} className="border-t border-dark-700/80">
-                                        <td className="px-1.5 py-1 whitespace-nowrap text-gray-400">
-                                          {new Date(tx.createdAt).toLocaleString()}
-                                        </td>
-                                        <td className="px-1.5 py-1">
-                                          <span
-                                            className={
-                                              tx.type === 'CREDIT'
-                                                ? 'text-green-400'
-                                                : 'text-red-400'
-                                            }
-                                          >
-                                            {tx.type === 'CREDIT' ? 'CR' : 'DR'}
-                                          </span>
-                                        </td>
-                                        <td className="px-1.5 py-1 text-gray-300 max-w-[140px]">
-                                          <div className="truncate">{tx.reason || '—'}</div>
-                                          {tx.description && (
-                                            <div className="truncate text-gray-600">{tx.description}</div>
-                                          )}
-                                        </td>
-                                        <td className="px-1.5 py-1 text-cyan-300/80 whitespace-nowrap">
-                                          {tx.meta?.gameKey ? gameLabel(tx.meta.gameKey) : '—'}
-                                        </td>
-                                        <td
-                                          className={`px-1.5 py-1 text-right font-medium whitespace-nowrap ${
-                                            tx.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
-                                          }`}
-                                        >
-                                          {tx.type === 'CREDIT' ? '+' : '−'}₹
-                                          {Number(tx.amount || 0).toLocaleString('en-IN')}
-                                        </td>
-                                        <td className="px-1.5 py-1 text-right text-gray-500 whitespace-nowrap">
-                                          ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
-                                        </td>
-                                      </tr>
-                                    ))
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+              filteredUsers.map((u) => (
+                <button
+                  key={u._id}
+                  type="button"
+                  onClick={() => pickUser(u)}
+                  className={`w-full text-left rounded-lg px-3 py-2.5 border transition ${
+                    selected?.ownerId === String(u._id) && selected?.ownerType === 'USER'
+                      ? 'bg-blue-900/40 border-blue-500/50'
+                      : 'bg-dark-700/40 border-dark-600 hover:border-dark-500'
+                  }`}
+                >
+                  <div className="font-medium text-sm text-white truncate">{u.fullName || u.username}</div>
+                  <div className="text-[11px] text-gray-400 font-mono">@{u.username}</div>
+                  {u.admin?.adminCode && (
+                    <div className="text-[10px] text-purple-300 mt-0.5">Under {u.admin.adminCode}</div>
+                  )}
+                </button>
+              ))
             ) : (
-              filteredStaff.map((a) => {
-                const rowKey = `ADMIN:${a._id}`;
-                const expanded = expandedRows.includes(rowKey);
-                const inline = inlineLedgerByKey[rowKey];
-                const kind = inlineKindByKey[rowKey] ?? '';
-                const baseTx = inline?.transactions ?? [];
-                const rows = kind ? baseTx.filter((t) => t.type === kind) : baseTx;
-                const tinySum = summarizeLedgerRows(rows);
-                return (
-                  <div
-                    key={a._id}
-                    className={`rounded-lg border transition ${
-                      selected?.ownerId === String(a._id) && selected?.ownerType === 'ADMIN'
-                        ? 'bg-purple-900/40 border-purple-500/50'
-                        : 'bg-dark-700/40 border-dark-600 hover:border-dark-500'
-                    }`}
-                  >
-                    <div className="flex gap-1 items-stretch">
-                      <button
-                        type="button"
-                        title={expanded ? 'Hide wallet ledger' : 'Show wallet ledger'}
-                        aria-expanded={expanded}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          toggleRowExpand(rowKey, 'ADMIN', String(a._id));
-                        }}
-                        className="shrink-0 px-2 py-2.5 text-gray-400 hover:text-white border-r border-dark-600/80"
-                      >
-                        {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => pickStaff(a)}
-                        className="flex-1 min-w-0 text-left rounded-r-lg px-3 py-2.5"
-                      >
-                        <div className="font-medium text-sm text-white truncate">{a.name || a.username}</div>
-                        <div className="text-[11px] text-yellow-400 font-mono">{a.adminCode}</div>
-                        <div className="text-[10px] text-gray-500">{a.role}</div>
-                      </button>
-                    </div>
-                    {expanded && (
-                      <div className="border-t border-dark-600 bg-dark-900/40 px-2 py-2 space-y-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-[10px] text-gray-500 uppercase tracking-wide">Wallet ledger</span>
-                          <button
-                            type="button"
-                            onClick={() => refreshInlineLedger(rowKey, 'ADMIN', String(a._id))}
-                            className="p-1 rounded text-gray-400 hover:text-cyan-300 hover:bg-dark-700"
-                            title="Reload"
-                          >
-                            <RefreshCw size={14} className={inline?.status === 'loading' ? 'animate-spin' : ''} />
-                          </button>
-                        </div>
-                        {inline?.status === 'loading' && (
-                          <div className="flex justify-center py-4 text-gray-500">
-                            <RefreshCw className="animate-spin" size={20} />
-                          </div>
-                        )}
-                        {inline?.status === 'err' && (
-                          <p className="text-xs text-red-400">{inline.error}</p>
-                        )}
-                        {inline?.status === 'ok' && (
-                          <>
-                            <div className="flex flex-wrap gap-1">
-                              {[
-                                { id: '', label: 'All' },
-                                { id: 'CREDIT', label: 'Credits' },
-                                { id: 'DEBIT', label: 'Debits' },
-                              ].map((t) => (
-                                <button
-                                  key={t.id || 'all'}
-                                  type="button"
-                                  onClick={() =>
-                                    setInlineKindByKey((prev) => ({ ...prev, [rowKey]: t.id }))
-                                  }
-                                  className={`px-2 py-0.5 rounded text-[10px] font-medium border ${
-                                    (kind || '') === t.id
-                                      ? t.id === 'CREDIT'
-                                        ? 'bg-green-900/50 border-green-500/40 text-green-300'
-                                        : t.id === 'DEBIT'
-                                          ? 'bg-red-900/50 border-red-500/40 text-red-300'
-                                          : 'bg-dark-600 border-yellow-500/30 text-yellow-100'
-                                      : 'bg-dark-800 border-dark-600 text-gray-400'
-                                  }`}
-                                >
-                                  {t.label}
-                                </button>
-                              ))}
-                            </div>
-                            <div className="grid grid-cols-3 gap-1 text-[10px]">
-                              <div className="rounded border border-green-500/20 bg-green-950/20 px-1.5 py-1">
-                                <div className="text-gray-500">Cr</div>
-                                <div className="text-green-400 font-semibold tabular-nums">
-                                  +₹{tinySum.credits.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                </div>
-                                <div className="text-gray-600">{tinySum.creditCount} ln</div>
-                              </div>
-                              <div className="rounded border border-red-500/20 bg-red-950/20 px-1.5 py-1">
-                                <div className="text-gray-500">Dr</div>
-                                <div className="text-red-400 font-semibold tabular-nums">
-                                  −₹{tinySum.debits.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                </div>
-                                <div className="text-gray-600">{tinySum.debitCount} ln</div>
-                              </div>
-                              <div className="rounded border border-cyan-500/20 bg-cyan-950/20 px-1.5 py-1">
-                                <div className="text-gray-500">Net</div>
-                                <div
-                                  className={`font-semibold tabular-nums ${
-                                    tinySum.net >= 0 ? 'text-cyan-300' : 'text-orange-300'
-                                  }`}
-                                >
-                                  {tinySum.net >= 0 ? '+' : ''}₹
-                                  {tinySum.net.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                                </div>
-                                <div className="text-gray-600">{rows.length} shown</div>
-                              </div>
-                            </div>
-                            <div className="max-h-[260px] overflow-auto rounded border border-dark-600">
-                              <table className="w-full text-[10px] min-w-[520px]">
-                                <thead className="bg-dark-800 sticky top-0">
-                                  <tr>
-                                    <th className="text-left px-1.5 py-1 text-gray-500">When</th>
-                                    <th className="text-left px-1.5 py-1 text-gray-500">Type</th>
-                                    <th className="text-left px-1.5 py-1 text-gray-500">Reason</th>
-                                    <th className="text-left px-1.5 py-1 text-gray-500">Game</th>
-                                    <th className="text-right px-1.5 py-1 text-gray-500">Amt</th>
-                                    <th className="text-right px-1.5 py-1 text-gray-500">Bal</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {rows.length === 0 ? (
-                                    <tr>
-                                      <td colSpan={6} className="px-2 py-3 text-center text-gray-500">
-                                        No lines for this filter.
-                                      </td>
-                                    </tr>
-                                  ) : (
-                                    rows.map((tx) => (
-                                      <tr key={tx._id} className="border-t border-dark-700/80">
-                                        <td className="px-1.5 py-1 whitespace-nowrap text-gray-400">
-                                          {new Date(tx.createdAt).toLocaleString()}
-                                        </td>
-                                        <td className="px-1.5 py-1">
-                                          <span
-                                            className={
-                                              tx.type === 'CREDIT'
-                                                ? 'text-green-400'
-                                                : 'text-red-400'
-                                            }
-                                          >
-                                            {tx.type === 'CREDIT' ? 'CR' : 'DR'}
-                                          </span>
-                                        </td>
-                                        <td className="px-1.5 py-1 text-gray-300 max-w-[140px]">
-                                          <div className="truncate">{tx.reason || '—'}</div>
-                                          {tx.description && (
-                                            <div className="truncate text-gray-600">{tx.description}</div>
-                                          )}
-                                        </td>
-                                        <td className="px-1.5 py-1 text-cyan-300/80 whitespace-nowrap">
-                                          {tx.meta?.gameKey ? gameLabel(tx.meta.gameKey) : '—'}
-                                        </td>
-                                        <td
-                                          className={`px-1.5 py-1 text-right font-medium whitespace-nowrap ${
-                                            tx.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
-                                          }`}
-                                        >
-                                          {tx.type === 'CREDIT' ? '+' : '−'}₹
-                                          {Number(tx.amount || 0).toLocaleString('en-IN')}
-                                        </td>
-                                        <td className="px-1.5 py-1 text-right text-gray-500 whitespace-nowrap">
-                                          ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
-                                        </td>
-                                      </tr>
-                                    ))
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+              filteredStaff.map((a) => (
+                <button
+                  key={a._id}
+                  type="button"
+                  onClick={() => pickStaff(a)}
+                  className={`w-full text-left rounded-lg px-3 py-2.5 border transition ${
+                    selected?.ownerId === String(a._id) && selected?.ownerType === 'ADMIN'
+                      ? 'bg-purple-900/40 border-purple-500/50'
+                      : 'bg-dark-700/40 border-dark-600 hover:border-dark-500'
+                  }`}
+                >
+                  <div className="font-medium text-sm text-white truncate">{a.name || a.username}</div>
+                  <div className="text-[11px] text-yellow-400 font-mono">{a.adminCode}</div>
+                  <div className="text-[10px] text-gray-500">{a.role}</div>
+                </button>
+              ))
             )}
             {!listLoading && segment === 'users' && filteredUsers.length === 0 && (
               <p className="text-center text-gray-500 text-sm py-6">No users match.</p>
@@ -13472,6 +13087,46 @@ const AllTransactions = () => {
                     </button>
                   ))}
                 </div>
+                {selected.ownerType === 'USER' ? (
+                  <div className="flex flex-wrap items-end gap-3 mt-4 pt-4 border-t border-dark-600">
+                    <div className="flex flex-col gap-1 min-w-[160px]">
+                      <label className="text-[10px] text-gray-500 uppercase tracking-wide">Wallet</label>
+                      <select
+                        value={walletScope}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setWalletScope(v);
+                          if (v === 'main') setGamesGameId('');
+                        }}
+                        className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-white"
+                      >
+                        <option value="main">Main (trading) wallet</option>
+                        <option value="games">Games wallet</option>
+                      </select>
+                    </div>
+                    {walletScope === 'games' && (
+                      <div className="flex flex-col gap-1 min-w-[180px]">
+                        <label className="text-[10px] text-gray-500 uppercase tracking-wide">Game</label>
+                        <select
+                          value={gamesGameId}
+                          onChange={(e) => setGamesGameId(e.target.value)}
+                          className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-white"
+                        >
+                          <option value="">All games + transfers</option>
+                          {ALL_TX_GAMES_WALLET_OPTIONS.map((g) => (
+                            <option key={g.id} value={g.id}>
+                              {g.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-gray-500 mt-4 pt-4 border-t border-dark-600">
+                    Staff: main wallet ledger only.
+                  </p>
+                )}
               </div>
 
               {summary && (
@@ -13500,7 +13155,11 @@ const AllTransactions = () => {
                       {Number(summary.net || 0) >= 0 ? '+' : ''}₹
                       {Number(summary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                     </div>
-                    <div className="text-[10px] text-gray-600">For current filter (max 2000 rows shown)</div>
+                    <div className="text-[10px] text-gray-600">
+                      {walletScope === 'games' && selected?.ownerType === 'USER'
+                        ? 'Games wallet (max 2000 rows)'
+                        : 'For current filter (max 2000 rows shown)'}
+                    </div>
                   </div>
                 </div>
               )}
@@ -13557,11 +13216,13 @@ const AllTransactions = () => {
                           </td>
                           <td className="px-3 py-2 font-mono text-yellow-400/90 text-[11px]">{tx.adminCode || '—'}</td>
                           <td className="px-3 py-2 text-gray-400 max-w-[200px]">
-                            <div className="truncate text-gray-200 text-[12px]">{tx.reason || '—'}</div>
+                            <div className="truncate text-gray-200 text-[12px]">
+                              {tx.gamesWallet ? 'Games wallet' : tx.reason || '—'}
+                            </div>
                             <div className="truncate text-[10px] text-gray-600">{tx.description || ''}</div>
                           </td>
                           <td className="px-3 py-2 text-[11px] text-cyan-300/90 whitespace-nowrap">
-                            {tx.meta?.gameKey ? gameLabel(tx.meta.gameKey) : '—'}
+                            {gameColumnLabelForTx(tx)}
                           </td>
                           <td className="px-3 py-2 font-mono text-[10px] text-gray-500 whitespace-nowrap">
                             {formatAllTxReference(tx)}

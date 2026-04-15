@@ -5,6 +5,7 @@ import User from '../models/User.js';
 import BankAccount from '../models/BankAccount.js';
 import FundRequest from '../models/FundRequest.js';
 import WalletLedger from '../models/WalletLedger.js';
+import GamesWalletLedger from '../models/GamesWalletLedger.js';
 import mongoose from 'mongoose';
 import AdminFundRequest from '../models/AdminFundRequest.js';
 import BrokerChangeRequest from '../models/BrokerChangeRequest.js';
@@ -3217,6 +3218,83 @@ router.get('/all-transactions', protectAdmin, superAdminOnly, async (req, res) =
     res.json(transactions);
   } catch (error) {
     console.error('all-transactions:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/** Ledger `gameId` values used for the five games (see `GamesWalletLedger` / user games-wallet API). */
+const SUPER_ADMIN_GAMES_LEDGER_GAME_IDS = [
+  'updown',
+  'btcupdown',
+  'niftyNumber',
+  'niftyBracket',
+  'niftyJackpot',
+];
+
+// Super Admin: read a user's in-app games wallet ledger (bets, wins, refunds — same store as user order history)
+router.get('/user-games-wallet-ledger', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const userId = req.query.userId;
+    if (!userId || !mongoose.Types.ObjectId.isValid(String(userId))) {
+      return res.status(400).json({ message: 'Valid userId is required' });
+    }
+    const lim = Math.min(Math.max(parseInt(String(req.query.limit || '2000'), 10) || 2000, 1), 5000);
+    const gameIdRaw = typeof req.query.gameId === 'string' ? req.query.gameId.trim() : '';
+    const tUpper = req.query.type != null ? String(req.query.type).toUpperCase() : '';
+    const wantSummary = req.query.includeSummary === '1' || req.query.includeSummary === 'true';
+
+    const filter = { user: new mongoose.Types.ObjectId(String(userId)) };
+    if (gameIdRaw && SUPER_ADMIN_GAMES_LEDGER_GAME_IDS.includes(gameIdRaw)) {
+      filter.gameId = gameIdRaw;
+    }
+    if (tUpper === 'CREDIT') filter.entryType = 'credit';
+    else if (tUpper === 'DEBIT') filter.entryType = 'debit';
+
+    const rows = await GamesWalletLedger.find(filter).sort({ createdAt: -1 }).limit(lim).lean();
+
+    const transactions = rows.map((row) => ({
+      _id: row._id,
+      createdAt: row.createdAt,
+      type: row.entryType === 'credit' ? 'CREDIT' : 'DEBIT',
+      reason: 'GAMES_WALLET',
+      description: row.description || row.gameLabel || '',
+      amount: row.amount,
+      balanceAfter: row.balanceAfter,
+      adminCode: '',
+      meta: { ...(row.meta && typeof row.meta === 'object' ? row.meta : {}), gameKey: row.gameId, gameLabel: row.gameLabel },
+      reference: { type: 'Manual', id: null },
+      performedBy: null,
+      gamesWallet: true,
+    }));
+
+    let summary = null;
+    if (wantSummary) {
+      const agg = await GamesWalletLedger.aggregate([
+        { $match: filter },
+        { $group: { _id: '$entryType', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]);
+      summary = {
+        credits: 0,
+        debits: 0,
+        creditCount: 0,
+        debitCount: 0,
+        net: 0,
+      };
+      for (const row of agg) {
+        if (row._id === 'credit') {
+          summary.credits = row.total || 0;
+          summary.creditCount = row.count || 0;
+        } else if (row._id === 'debit') {
+          summary.debits = row.total || 0;
+          summary.debitCount = row.count || 0;
+        }
+      }
+      summary.net = (summary.credits || 0) - (summary.debits || 0);
+    }
+
+    return res.json({ transactions, summary });
+  } catch (error) {
+    console.error('user-games-wallet-ledger:', error);
     res.status(500).json({ message: error.message });
   }
 });
