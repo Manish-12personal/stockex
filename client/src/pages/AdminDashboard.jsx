@@ -12719,6 +12719,26 @@ function formatAllTxReference(tx) {
   return id ? `${r.type} ·…${id}` : r.type;
 }
 
+/** Superadmin platform ledger: mirror client line (client CREDIT → your DEBIT; client DEBIT → your CREDIT). */
+function yourAccountFromClientTx(tx) {
+  const amt = Number(tx.amount) || 0;
+  const abs = amt.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  if (tx.type === 'CREDIT') {
+    return {
+      state: 'DEBIT',
+      amountStr: `−₹${abs}`,
+      badge: 'bg-red-500/20 text-red-300',
+      amountCls: 'text-red-400',
+    };
+  }
+  return {
+    state: 'CREDIT',
+    amountStr: `+₹${abs}`,
+    badge: 'bg-green-500/20 text-green-300',
+    amountCls: 'text-green-400',
+  };
+}
+
 const ALL_TX_SEGMENTS = [
   { id: 'users', label: 'Users', hint: 'Trading wallet ledger', color: 'bg-blue-600' },
   { id: 'admin', label: 'Admins', hint: 'ADMIN role', color: 'bg-purple-600' },
@@ -13386,6 +13406,7 @@ function SuperAdminClientWallet({ embedded = false }) {
     if (!rowSearch.trim()) return transactions;
     const q = rowSearch.trim().toLowerCase();
     return transactions.filter((tx) => {
+      const y = yourAccountFromClientTx(tx);
       const blob = [
         tx.reason,
         tx.description,
@@ -13395,6 +13416,8 @@ function SuperAdminClientWallet({ embedded = false }) {
         formatAllTxReference(tx),
         tx.meta?.gameKey,
         tx.meta?.gameLabel,
+        y.state,
+        y.amountStr,
       ]
         .filter(Boolean)
         .join(' ')
@@ -13469,6 +13492,60 @@ function SuperAdminClientWallet({ embedded = false }) {
           <div className="text-[10px] opacity-90 mt-0.5">Bets, wins, refunds (all users)</div>
         </button>
       </div>
+
+      {summary && (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold text-cyan-400/90 uppercase tracking-wide">
+            Where to see credited vs debited totals
+          </div>
+          <p className="text-[11px] text-gray-400">
+            The three boxes below are your answer: <span className="text-green-400/90">total credits</span>,{' '}
+            <span className="text-red-400/90">total debits</span>, and <span className="text-cyan-300/90">net</span>{' '}
+            (credits minus debits) for everything you have filtered (main/games, dates, client search, category, and
+            the All lines / Credits only / Debits only chips).
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
+              <div className="text-[10px] text-gray-500 uppercase">Total credits</div>
+              <div className="text-base font-bold text-green-400 tabular-nums">
+                +₹{Number(summary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[10px] text-gray-600">{summary.creditCount ?? 0} credit lines in this view</div>
+            </div>
+            <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
+              <div className="text-[10px] text-gray-500 uppercase">Total debits</div>
+              <div className="text-base font-bold text-red-400 tabular-nums">
+                −₹{Number(summary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[10px] text-gray-600">{summary.debitCount ?? 0} debit lines in this view</div>
+            </div>
+            <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2">
+              <div className="text-[10px] text-gray-500 uppercase">Net</div>
+              <div
+                className={`text-base font-bold tabular-nums ${
+                  Number(summary.net || 0) >= 0 ? 'text-cyan-300' : 'text-orange-300'
+                }`}
+              >
+                {Number(summary.net || 0) >= 0 ? '+' : ''}₹
+                {Number(summary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[10px] text-gray-600">Up to 1000 rows loaded · narrow dates if needed</div>
+            </div>
+          </div>
+          {(txKind === 'CREDIT' || txKind === 'DEBIT') && (
+            <p className="text-[11px] text-amber-200/90 bg-amber-950/25 border border-amber-500/25 rounded-lg px-3 py-2">
+              You have{' '}
+              <span className="font-semibold text-amber-100">
+                {txKind === 'DEBIT' ? 'Debits only' : 'Credits only'}
+              </span>{' '}
+              selected, so the other side shows{' '}
+              <span className="font-semibold text-amber-100">₹0</span> on purpose — the summary matches that filter. Tap{' '}
+              <span className="font-semibold text-amber-100">All lines</span> to see both total credits and total debits
+              together.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="bg-dark-800 border border-dark-600 rounded-xl p-4 space-y-3">
         <div className="text-xs font-semibold text-yellow-400/90 uppercase tracking-wide">Filters</div>
@@ -13587,37 +13664,6 @@ function SuperAdminClientWallet({ embedded = false }) {
         </div>
       </div>
 
-      {summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
-            <div className="text-[10px] text-gray-500 uppercase">Credits</div>
-            <div className="text-base font-bold text-green-400 tabular-nums">
-              +₹{Number(summary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-            </div>
-            <div className="text-[10px] text-gray-600">{summary.creditCount ?? 0} lines (filtered set)</div>
-          </div>
-          <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
-            <div className="text-[10px] text-gray-500 uppercase">Debits</div>
-            <div className="text-base font-bold text-red-400 tabular-nums">
-              −₹{Number(summary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-            </div>
-            <div className="text-[10px] text-gray-600">{summary.debitCount ?? 0} lines (filtered set)</div>
-          </div>
-          <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2">
-            <div className="text-[10px] text-gray-500 uppercase">Net</div>
-            <div
-              className={`text-base font-bold tabular-nums ${
-                Number(summary.net || 0) >= 0 ? 'text-cyan-300' : 'text-orange-300'
-              }`}
-            >
-              {Number(summary.net || 0) >= 0 ? '+' : ''}₹
-              {Number(summary.net || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-            </div>
-            <div className="text-[10px] text-gray-600">Up to 1000 rows loaded · refine dates to narrow</div>
-          </div>
-        </div>
-      )}
-
       <input
         type="search"
         placeholder="Search in loaded rows…"
@@ -13639,7 +13685,7 @@ function SuperAdminClientWallet({ embedded = false }) {
           <div className="text-[10px] text-gray-500 px-3 py-2 border-b border-dark-600">
             Showing {filteredRows.length} of {transactions.length} loaded
           </div>
-          <table className="w-full text-sm min-w-[900px]">
+          <table className="w-full text-sm min-w-[1020px]">
             <thead className="bg-dark-700">
               <tr>
                 <th className="text-left px-3 py-2 text-gray-400">When</th>
@@ -13650,6 +13696,12 @@ function SuperAdminClientWallet({ embedded = false }) {
                 <th className="text-left px-3 py-2 text-gray-400">Game</th>
                 <th className="text-left px-3 py-2 text-gray-400">Ref</th>
                 <th className="text-left px-3 py-2 text-gray-400">By</th>
+                <th
+                  className="text-right px-3 py-2 text-gray-400"
+                  title="Opposite of client Amount: client credit = your debit (payout); client debit = your credit (inflow). Same rupees."
+                >
+                  Your account
+                </th>
                 <th className="text-right px-3 py-2 text-gray-400">Amount</th>
                 <th className="text-right px-3 py-2 text-gray-400">Balance</th>
               </tr>
@@ -13690,6 +13742,17 @@ function SuperAdminClientWallet({ embedded = false }) {
                   </td>
                   <td className="px-3 py-2 text-[11px] text-gray-500">
                     {tx.performedBy?.name || tx.performedBy?.username || '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right text-[11px] whitespace-nowrap">
+                    {(() => {
+                      const y = yourAccountFromClientTx(tx);
+                      return (
+                        <div className="inline-flex flex-col items-end gap-0.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${y.badge}`}>{y.state}</span>
+                          <span className={`font-semibold tabular-nums ${y.amountCls}`}>{y.amountStr}</span>
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td
                     className={`px-3 py-2 text-right font-medium text-[12px] ${
