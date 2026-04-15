@@ -3203,15 +3203,12 @@ router.get('/all-transactions', protectAdmin, superAdminOnly, async (req, res) =
       summary.net = (summary.credits || 0) - (summary.debits || 0);
     }
 
+    // Note: do not populate `ownerId` — refPath uses ownerType values ADMIN/USER, not model names
+    // `Admin`/`User`, which throws in Mongoose and caused 500 on this route.
     const transactions = await WalletLedger.find(finalQuery)
       .sort({ createdAt: -1 })
       .limit(lim)
       .populate('performedBy', 'username name')
-      .populate({
-        path: 'ownerId',
-        select: 'username fullName name adminCode email',
-        options: { strictPopulate: false },
-      })
       .lean();
 
     if (wantSummary) {
@@ -3219,6 +3216,7 @@ router.get('/all-transactions', protectAdmin, superAdminOnly, async (req, res) =
     }
     res.json(transactions);
   } catch (error) {
+    console.error('all-transactions:', error);
     res.status(500).json({ message: error.message });
   }
 });
