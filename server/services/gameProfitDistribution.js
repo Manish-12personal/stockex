@@ -226,9 +226,18 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
 
   try {
     if (fundFromBtcPool) {
+      const poolMeta =
+        ledgerGameId && userId
+          ? {
+              poolDebitKind: 'GAME_WIN_BROKERAGE_POOL_DEBIT',
+              gameKey: ledgerGameId,
+              relatedUserId: userId,
+            }
+          : null;
       const poolOut = await debitBtcUpDownSuperAdminPool(
         T,
-        `${gameName} — release win brokerage for hierarchy / user split (−₹${T.toFixed(2)})`
+        `${gameName} — release win brokerage for hierarchy / user split (−₹${T.toFixed(2)})`,
+        poolMeta
       );
       if (!poolOut.ok) {
         console.error(`[WinBrokerage] Super Admin pool could not fund brokerage split (₹${T.toFixed(2)})`);
@@ -538,9 +547,15 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
   }
 
   try {
+    const poolMeta = {
+      poolDebitKind: 'JACKPOT_GROSS_HIERARCHY_POOL_DEBIT',
+      ...(gameKey ? { gameKey } : {}),
+      ...(userId ? { relatedUserId: userId } : {}),
+    };
     const poolOut = await debitBtcUpDownSuperAdminPool(
       T,
-      `${gameLabel} — gross prize hierarchy share (−₹${T.toFixed(2)})`
+      `${gameLabel} — gross prize hierarchy share (−₹${T.toFixed(2)})`,
+      poolMeta
     );
     if (!poolOut.ok) {
       console.error(`[${logTag}] Super Admin pool debit failed (₹${T.toFixed(2)})`);

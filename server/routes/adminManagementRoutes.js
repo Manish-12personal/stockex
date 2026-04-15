@@ -3231,6 +3231,17 @@ const SUPER_ADMIN_GAMES_LEDGER_GAME_IDS = [
   'niftyJackpot',
 ];
 
+/** Description prefix before " — …" for pool debits when `meta.gameKey` is missing (legacy rows). */
+const GAMES_LEDGER_GAME_ID_TO_DESC_PREFIX = {
+  updown: 'Nifty Up/Down',
+  btcupdown: 'BTC Up/Down',
+  niftyNumber: 'Nifty Number',
+  niftyBracket: 'Nifty Bracket',
+  niftyJackpot: 'Nifty Jackpot',
+};
+
+const GAMES_POOL_DEBIT_KINDS = ['JACKPOT_GROSS_HIERARCHY_POOL_DEBIT', 'GAME_WIN_BROKERAGE_POOL_DEBIT'];
+
 // Super Admin: read a user's in-app games wallet ledger (bets, wins, refunds — same store as user order history)
 router.get('/user-games-wallet-ledger', protectAdmin, superAdminOnly, async (req, res) => {
   try {
@@ -3303,6 +3314,8 @@ router.get('/user-games-wallet-ledger', protectAdmin, superAdminOnly, async (req
  * Super Admin: platform-wide client (USER) wallet activity — easy audit of credits/debits.
  * scope=main → WalletLedger ownerType USER only (same filters spirit as /all-transactions).
  * scope=games → GamesWalletLedger across all users (bets, wins, transfers between main↔games).
+ * Super Admin perspective also merges Super Admin main-wallet pool debits that fund gross-prize hierarchy /
+ * win-brokerage splits (same settlement as games, previously invisible in this feed).
  * perspective: defaults to superadmin for this route — `type` means effect on you (DEBIT = debited to you /
  *   client CREDIT + games credit); CREDIT = credited to you / client DEBIT + games debit. Pass perspective=client
  *   only if you need raw client ledger type filtering.
@@ -3339,6 +3352,8 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
         else if (tUpper === 'DEBIT') filter.entryType = 'debit';
       }
 
+      /** When set, restrict games + pool rows to these user ids (from client search). */
+      let restrictUserIds = null;
       if (userSearch && String(userSearch).trim()) {
         const uq = new RegExp(escapeRegExpForQuery(String(userSearch).trim()), 'i');
         const users = await User.find({
@@ -3349,6 +3364,7 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
           .lean();
         const ids = users.map((u) => u._id);
         filter.user = ids.length ? { $in: ids } : { $in: [] };
+        restrictUserIds = ids;
       }
 
       if (dateFrom || dateTo) {
@@ -3386,6 +3402,97 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
       const userIds = [...new Set(rows.map((r) => String(r.user)))].filter((id) =>
         mongoose.Types.ObjectId.isValid(id)
       );
+
+      let poolRows = [];
+      if (perspectiveSuper && tUpper !== 'CREDIT') {
+        const sa = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' }).select('_id').lean();
+        if (sa) {
+          if (restrictUserIds !== null && !restrictUserIds.length) {
+            poolRows = [];
+          } else {
+            const poolBaseOr = [
+              { 'meta.poolDebitKind': { $in: GAMES_POOL_DEBIT_KINDS } },
+              {
+                description: {
+                  $regex: /(gross prize hierarchy share|release win brokerage for hierarchy)/i,
+                },
+              },
+            ];
+            const poolFilter = {
+              ownerType: 'ADMIN',
+              ownerId: sa._id,
+              type: 'DEBIT',
+              reason: 'ADJUSTMENT',
+              $and: [{ $or: poolBaseOr }],
+            };
+            if (gameIdRaw && SUPER_ADMIN_GAMES_LEDGER_GAME_IDS.includes(gameIdRaw)) {
+              const prefix = GAMES_LEDGER_GAME_ID_TO_DESC_PREFIX[gameIdRaw];
+              const gameOr = [{ 'meta.gameKey': gameIdRaw }];
+              if (prefix) {
+                gameOr.push({
+                  description: new RegExp(`^${escapeRegExpForQuery(prefix)}\\s*—`, 'i'),
+                });
+              }
+              poolFilter.$and.push({ $or: gameOr });
+            }
+            if (restrictUserIds !== null) {
+              poolFilter.$and.push({ 'meta.relatedUserId': { $in: restrictUserIds } });
+            }
+            if (dateFrom || dateTo) {
+              poolFilter.createdAt = { ...filter.createdAt };
+            }
+            poolRows = await WalletLedger.find(poolFilter).sort({ createdAt: -1 }).limit(lim).lean();
+          }
+        }
+      }
+
+      let poolMapped = [];
+      if (perspectiveSuper && poolRows.length) {
+        const relIds = [
+          ...new Set(
+            poolRows
+              .map((r) => r.meta?.relatedUserId)
+              .filter(Boolean)
+              .map((id) => String(id))
+          ),
+        ].filter((id) => mongoose.Types.ObjectId.isValid(id));
+        const relOid = relIds.map((id) => new mongoose.Types.ObjectId(id));
+        const relUsers =
+          relOid.length > 0
+            ? await User.find({ _id: { $in: relOid } }).select('username fullName adminCode').lean()
+            : [];
+        const relMap = new Map(relUsers.map((u) => [String(u._id), u]));
+
+        poolMapped = poolRows.map((row) => {
+          const relKey = row.meta?.relatedUserId ? String(row.meta.relatedUserId) : '';
+          const u = relKey ? relMap.get(relKey) : null;
+          const gk = row.meta?.gameKey && typeof row.meta.gameKey === 'string' ? row.meta.gameKey : '';
+          const gameLabelFromKey = gk ? GAMES_LEDGER_GAME_ID_TO_DESC_PREFIX[gk] || gk : '';
+          return {
+            _id: row._id,
+            feedMergeKey: `sa-pool-${String(row._id)}`,
+            createdAt: row.createdAt,
+            type: 'DEBIT',
+            reason: 'HOUSE_POOL',
+            description: row.description || '',
+            amount: row.amount,
+            balanceAfter: row.balanceAfter,
+            adminCode: u?.adminCode || '',
+            ownerId: row.meta?.relatedUserId || null,
+            ownerUsername: u?.username || '',
+            ownerFullName: u?.fullName || '',
+            meta: {
+              ...(row.meta && typeof row.meta === 'object' ? row.meta : {}),
+              ...(gameLabelFromKey ? { gameLabel: gameLabelFromKey } : {}),
+            },
+            reference: { type: 'Manual', id: null },
+            performedBy: null,
+            gamesWallet: false,
+            saPoolDebit: true,
+          };
+        });
+      }
+
       const oidList = userIds.map((id) => new mongoose.Types.ObjectId(id));
       const users =
         oidList.length > 0
@@ -3395,7 +3502,7 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
           : [];
       const uMap = new Map(users.map((u) => [String(u._id), u]));
 
-      const transactions = rows.map((row) => {
+      const transactionsGames = rows.map((row) => {
         const u = uMap.get(String(row.user));
         return {
           _id: row._id,
@@ -3419,6 +3526,12 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
           gamesWallet: true,
         };
       });
+
+      const transactions = perspectiveSuper
+        ? [...transactionsGames, ...poolMapped]
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+            .slice(0, lim)
+        : transactionsGames;
 
       return res.json({ transactions, summary, scope: 'games' });
     }

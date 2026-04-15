@@ -2,10 +2,10 @@ import Admin from '../models/Admin.js';
 import WalletLedger from '../models/WalletLedger.js';
 
 /**
- * BTC Up/Down: stakes credit the active Super Admin wallet on bet.
- * On win: SA is debited once for gross payouts to winners, then again for brokerage T when
- * distributeWinBrokerage(..., fundFromBtcPool: true) runs (two separate debits per settlement path).
- * Nifty Up/Down does not use this pool.
+ * BTC Up/Down and pooled games (e.g. Nifty Jackpot): stakes credit the active Super Admin wallet on bet.
+ * On win: SA is debited once for gross payouts to winners, then again for brokerage / gross-hierarchy T when
+ * distributeWinBrokerage(..., fundFromBtcPool: true) or creditNiftyJackpotGrossHierarchyFromPool runs
+ * (separate debits per settlement path). Nifty Up/Down does not use this pool.
  */
 
 export async function findActiveSuperAdmin() {
@@ -51,7 +51,7 @@ export async function creditBtcUpDownSuperAdminPool(amount, description) {
  * so the pool would often block settlement if we required balance >= amount. Negative SA
  * balance means the house needs a top-up; users must still be credited.
  */
-export async function debitBtcUpDownSuperAdminPool(amount, description) {
+export async function debitBtcUpDownSuperAdminPool(amount, description, ledgerMeta = null) {
   const amt = Number(amount);
   if (!Number.isFinite(amt) || amt <= 0) return { ok: true, skipped: true };
 
@@ -72,6 +72,9 @@ export async function debitBtcUpDownSuperAdminPool(amount, description) {
     );
   }
 
+  const meta =
+    ledgerMeta && typeof ledgerMeta === 'object' && !Array.isArray(ledgerMeta) ? { ...ledgerMeta } : {};
+
   await WalletLedger.create({
     ownerType: 'ADMIN',
     ownerId: updated._id,
@@ -81,6 +84,7 @@ export async function debitBtcUpDownSuperAdminPool(amount, description) {
     amount: amt,
     balanceAfter: bal,
     description: description || 'BTC Up/Down — payout from Super Admin pool (win)',
+    ...(Object.keys(meta).length ? { meta } : {}),
   });
 
   return { ok: true, skipped: false };

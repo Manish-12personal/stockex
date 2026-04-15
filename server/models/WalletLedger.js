@@ -99,6 +99,9 @@ const walletLedgerSchema = new mongoose.Schema({
     profitKind: { type: String },
     /** GameSettings key (e.g. niftyUpDown) for admin ledger game filter */
     gameKey: { type: String },
+    /** Super Admin pool debit tagging (games client feed / audit) */
+    poolDebitKind: { type: String },
+    relatedUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
 }, { timestamps: true });
 

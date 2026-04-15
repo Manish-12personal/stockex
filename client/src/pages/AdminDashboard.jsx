@@ -12723,6 +12723,23 @@ function formatAllTxReference(tx) {
 function yourAccountFromClientTx(tx) {
   const amt = Number(tx.amount) || 0;
   const abs = amt.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  /** Merged games feed: Super Admin pool debit row (main wallet) — already “your” DEBIT/CREDIT, do not flip. */
+  if (tx.saPoolDebit) {
+    if (tx.type === 'DEBIT') {
+      return {
+        state: 'DEBIT',
+        amountStr: `−₹${abs}`,
+        badge: 'bg-red-500/20 text-red-300',
+        amountCls: 'text-red-400',
+      };
+    }
+    return {
+      state: 'CREDIT',
+      amountStr: `+₹${abs}`,
+      badge: 'bg-green-500/20 text-green-300',
+      amountCls: 'text-green-400',
+    };
+  }
   if (tx.type === 'CREDIT') {
     return {
       state: 'DEBIT',
@@ -13402,21 +13419,28 @@ function SuperAdminClientWallet({ embedded = false }) {
 
   const displaySummary = useMemo(() => {
     if (!txKind) return summary;
-    let credits = 0;
-    let debits = 0;
-    let creditCount = 0;
-    let debitCount = 0;
+    let toHouse = 0;
+    let fromHouse = 0;
+    let toHouseCnt = 0;
+    let fromHouseCnt = 0;
     for (const tx of rowsMatchingYourWalletChip) {
       const a = Number(tx.amount) || 0;
-      if (tx.type === 'CREDIT') {
-        credits += a;
-        creditCount += 1;
+      const y = yourAccountFromClientTx(tx);
+      if (y.state === 'CREDIT') {
+        toHouse += a;
+        toHouseCnt += 1;
       } else {
-        debits += a;
-        debitCount += 1;
+        fromHouse += a;
+        fromHouseCnt += 1;
       }
     }
-    return { credits, debits, creditCount, debitCount, net: credits - debits };
+    return {
+      credits: toHouse,
+      debits: fromHouse,
+      creditCount: toHouseCnt,
+      debitCount: fromHouseCnt,
+      net: toHouse - fromHouse,
+    };
   }, [summary, txKind, rowsMatchingYourWalletChip]);
 
   const filteredRows = useMemo(() => {
@@ -13560,17 +13584,17 @@ function SuperAdminClientWallet({ embedded = false }) {
               <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2">
                 <div className="text-[10px] text-gray-500 uppercase">Debited to you</div>
                 <div className="text-base font-bold text-red-400 tabular-nums">
-                  −₹{Number(displaySummary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  −₹{Number(displaySummary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                 </div>
-                <div className="text-[10px] text-gray-600">{displaySummary.creditCount ?? 0} lines</div>
+                <div className="text-[10px] text-gray-600">{displaySummary.debitCount ?? 0} lines</div>
               </div>
             ) : (
               <div className="rounded-lg border border-green-500/25 bg-green-950/15 px-3 py-2">
                 <div className="text-[10px] text-gray-500 uppercase">Credited to you</div>
                 <div className="text-base font-bold text-green-400 tabular-nums">
-                  +₹{Number(displaySummary.debits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  +₹{Number(displaySummary.credits || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                 </div>
-                <div className="text-[10px] text-gray-600">{displaySummary.debitCount ?? 0} lines</div>
+                <div className="text-[10px] text-gray-600">{displaySummary.creditCount ?? 0} lines</div>
               </div>
             )}
             <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/15 px-3 py-2">
@@ -13767,7 +13791,7 @@ function SuperAdminClientWallet({ embedded = false }) {
             </thead>
             <tbody>
               {filteredRows.map((tx) => (
-                <tr key={tx._id} className="border-t border-dark-600 hover:bg-dark-700/40">
+                <tr key={tx.feedMergeKey || tx._id} className="border-t border-dark-600 hover:bg-dark-700/40">
                   <td className="px-3 py-2 whitespace-nowrap text-[11px]">
                     {new Date(tx.createdAt).toLocaleString()}
                   </td>
@@ -13780,7 +13804,11 @@ function SuperAdminClientWallet({ embedded = false }) {
                   <td className="px-3 py-2 font-mono text-yellow-400/90 text-[11px]">{tx.adminCode || '—'}</td>
                   <td className="px-3 py-2 text-gray-400 max-w-[200px]">
                     <div className="truncate text-gray-200 text-[12px]">
-                      {tx.gamesWallet ? 'Games wallet' : tx.reason || '—'}
+                      {tx.gamesWallet
+                        ? 'Games wallet'
+                        : tx.saPoolDebit
+                          ? 'House pool (SA main wallet)'
+                          : tx.reason || '—'}
                     </div>
                     <div className="truncate text-[10px] text-gray-600">{tx.description || ''}</div>
                   </td>
@@ -13804,7 +13832,14 @@ function SuperAdminClientWallet({ embedded = false }) {
                       );
                     })()}
                   </td>
-                  <td className="px-3 py-2 text-right text-[11px] text-gray-400">
+                  <td
+                    className="px-3 py-2 text-right text-[11px] text-gray-400"
+                    title={
+                      tx.saPoolDebit
+                        ? 'Super Admin main wallet balance after this pool debit (not games-wallet balance)'
+                        : undefined
+                    }
+                  >
                     ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
                   </td>
                 </tr>
