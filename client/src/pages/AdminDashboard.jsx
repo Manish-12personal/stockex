@@ -3860,6 +3860,39 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                           </div>
                         </div>
 
+                        {/* Super Admin Brokerage & Incentive - Only for MCX segments */}
+                        {['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
+                          <>
+                            <h4 className="text-xs font-semibold text-yellow-400 mb-2">Super Admin Brokerage & Incentive</h4>
+                            <div className="grid grid-cols-2 gap-3 mb-4">
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin (₹)</label>
+                                <input type="number" value={s.superAdminIncentive || 0} onChange={e => handleSegDefChange(expandedSeg, 'superAdminIncentive', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <p className="text-[10px] text-gray-600 mt-1">Incentive/rebate per lot/quantity by Super Admin</p>
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (₹)</label>
+                                <input type="number" value={s.superAdminBrokerageCharge || 0} onChange={e => handleSegDefChange(expandedSeg, 'superAdminBrokerageCharge', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per lot/quantity by Super Admin</p>
+                              </div>
+                            </div>
+
+                            <h4 className="text-xs font-semibold text-orange-400 mb-2">Super Admin Brokerage & Incentive (in Crores)</h4>
+                            <div className="grid grid-cols-2 gap-3 mb-4">
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin (in Crores)</label>
+                                <input type="number" value={s.superAdminIncentiveInCrore || 0} onChange={e => handleSegDefChange(expandedSeg, 'superAdminIncentiveInCrore', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <p className="text-[10px] text-gray-600 mt-1">Incentive/rebate per crore turnover by Super Admin</p>
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (in Crores)</label>
+                                <input type="number" value={s.superAdminBrokerageChargeInCrore || 0} onChange={e => handleSegDefChange(expandedSeg, 'superAdminBrokerageChargeInCrore', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per crore turnover by Super Admin</p>
+                              </div>
+                            </div>
+                          </>
+                        )}
+
                         {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
                           <div className="mb-4">
                             <h4 className="text-xs font-semibold text-orange-300 mb-2">Client spread (Binance crypto)</h4>
@@ -14635,36 +14668,36 @@ const SystemDefaultSettings = () => {
                         <h4 className="text-sm font-semibold text-yellow-400 mb-3">Super Admin Brokerage & Incentive</h4>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
                           <div>
-                            <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (₹)</label>
-                            <input type="number" value={s.superAdminBrokerageCharge || 0}
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'superAdminBrokerageCharge', parseFloat(e.target.value) || 0)}
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                            <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per lot/quantity by Super Admin</p>
-                          </div>
-                          <div>
                             <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin (₹)</label>
                             <input type="number" value={s.superAdminIncentive || 0}
                               onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'superAdminIncentive', parseFloat(e.target.value) || 0)}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                             <p className="text-[10px] text-gray-600 mt-1">Incentive/rebate per lot/quantity by Super Admin</p>
                           </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (₹)</label>
+                            <input type="number" value={s.superAdminBrokerageCharge || 0}
+                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'superAdminBrokerageCharge', parseFloat(e.target.value) || 0)}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                            <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per lot/quantity by Super Admin</p>
+                          </div>
                         </div>
 
                         <h4 className="text-sm font-semibold text-orange-400 mb-3">Super Admin Brokerage & Incentive (in Crores)</h4>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (in Crores)</label>
-                            <input type="number" value={s.superAdminBrokerageChargeInCrore || 0}
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'superAdminBrokerageChargeInCrore', parseFloat(e.target.value) || 0)}
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                            <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per crore turnover by Super Admin</p>
-                          </div>
                           <div>
                             <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin (in Crores)</label>
                             <input type="number" value={s.superAdminIncentiveInCrore || 0}
                               onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'superAdminIncentiveInCrore', parseFloat(e.target.value) || 0)}
                               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                             <p className="text-[10px] text-gray-600 mt-1">Incentive/rebate per crore turnover by Super Admin</p>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (in Crores)</label>
+                            <input type="number" value={s.superAdminBrokerageChargeInCrore || 0}
+                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'superAdminBrokerageChargeInCrore', parseFloat(e.target.value) || 0)}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                            <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per crore turnover by Super Admin</p>
                           </div>
                         </div>
                       </>
