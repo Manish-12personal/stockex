@@ -2058,23 +2058,11 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                                         activeSegment === 'BSE-FUT' || activeSegment === 'BSE-OPT' ||
                                         activeSegment === 'MCXFUT' || activeSegment === 'MCXOPT';
                           
-                          // Try to get expiry from field or extract from symbol
+                          // Use backend expiry only. Symbol text like BANKNIFTY26APR... can encode year+month,
+                          // and parsing it as day+month causes wrong labels such as "26 APR" instead of "28 APR".
                           let expiryDisplay = null;
                           if (inst.expiry) {
                             expiryDisplay = new Date(inst.expiry).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-                          } else {
-                            // Extract expiry from symbol like "GODREJCP26APR25FUT" or "NIFTY24MAR25FUT"
-                            const symbol = inst.tradingSymbol || inst.symbol || '';
-                            let expiryMatch = symbol.match(/(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})/i);
-                            if (expiryMatch) {
-                              expiryDisplay = `${expiryMatch[1]} ${expiryMatch[2].toUpperCase()}`;
-                            } else {
-                              // Pattern 2: Just "26APR" without year
-                              expiryMatch = symbol.match(/(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)/i);
-                              if (expiryMatch) {
-                                expiryDisplay = `${expiryMatch[1]} ${expiryMatch[2].toUpperCase()}`;
-                              }
-                            }
                           }
                           
                           // If in F&O segment but no expiry found, show "F&O" badge
