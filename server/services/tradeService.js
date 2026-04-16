@@ -27,13 +27,16 @@ class TradeService {
   // NOTE: quantity here is the RAW quantity (e.g. number of shares/units, NOT multiplied by lotSize)
   // notionalValue = price × quantity × lotSize
   // If caller passes totalQuantity (already includes lotSize), pass lotSize=1
-  static calculateMargin(price, quantity, lotSize, leverage, productType) {
-    const notionalValue = price * quantity * lotSize;
-    
+  // For MCX trades, lotSize is always 1 since we use quantity-based trading
+  static calculateMargin(price, quantity, lotSize, leverage, productType, isMcx = false) {
+    // For MCX, lotSize is always 1 (quantity-based trading)
+    const effectiveLotSize = isMcx ? 1 : lotSize;
+    const notionalValue = price * quantity * effectiveLotSize;
+
     if (productType === 'CNC') {
       return notionalValue; // Full amount for delivery
     }
-    
+
     return notionalValue / leverage;
   }
   
@@ -682,13 +685,13 @@ class TradeService {
         requiredMargin = fixedMarginPerLot * lots;
       } else {
         // Pass lotSize=1 since tradeData.quantity is already totalQuantity (lots * lotSize)
-        requiredMargin = this.calculateMargin(marginPrice, tradeData.quantity, 1, leverage, tradeData.productType);
+        requiredMargin = this.calculateMargin(marginPrice, tradeData.quantity, 1, leverage, tradeData.productType, isMcx);
       }
     } else {
       // Pass lotSize=1 since tradeData.quantity is already totalQuantity (lots * lotSize)
-      requiredMargin = this.calculateMargin(marginPrice, tradeData.quantity, 1, leverage, tradeData.productType);
+      requiredMargin = this.calculateMargin(marginPrice, tradeData.quantity, 1, leverage, tradeData.productType, isMcx);
     }
-    
+
     // 11. Validate margin - pass segment and exchange for MCX wallet check
     const isMcx = this.isMcxTrade(tradeData.segment, tradeData.exchange);
     await this.validateMargin(userId, requiredMargin, tradeData.segment, tradeData.exchange);

@@ -230,34 +230,38 @@ const systemSettingsSchema = new mongoose.Schema({
       intradayLeverage: { type: Number, default: 8 },
       carryForwardLeverage: { type: Number, default: 4 },
       marginRequired: { type: Number, default: 12 },
-      lotSize: { type: Number, default: 100 },
-      intradayMaxLots: { type: Number, default: 50 },
-      intradayBreakupLots: { type: Number, default: 5 },
-      carryForwardMaxLots: { type: Number, default: 25 },
-      carryForwardBreakupLots: { type: Number, default: 3 },
-      brokeragePerLot: { type: Number, default: 25 },
+      // Quantity-based settings (no lots for MCX)
+      intradayMaxQuantity: { type: Number, default: 5000 },
+      intradayBreakupQuantity: { type: Number, default: 500 },
+      carryForwardMaxQuantity: { type: Number, default: 2500 },
+      carryForwardBreakupQuantity: { type: Number, default: 250 },
+      minQuantity: { type: Number, default: 1 },
+      orderQuantity: { type: Number, default: 100 },
+      // Brokerage settings
+      brokeragePerQuantity: { type: Number, default: 0.25 },
       brokeragePerCrore: { type: Number, default: 120 },
-      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
-      commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
-      maxExchangeLots: { type: Number, default: 200 },
-      maxLots: { type: Number, default: 50 },
-      minLots: { type: Number, default: 1 },
-      orderLots: { type: Number, default: 10 },
+      commissionType: { type: String, enum: ['PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_QUANTITY' },
+      commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: 'INR' },
+      maxExchangeQuantity: { type: Number, default: 10000 },
+      // Brokerage charge by Super Admin (the brokerage that Super Admin charges)
+      superAdminBrokerageCharge: { type: Number, default: 25 },
+      // Incentive given by Super Admin (the incentive/rebate that Super Admin provides)
+      superAdminIncentive: { type: Number, default: 0 },
       optionBuy: {
         allowed: { type: Boolean, default: true },
-        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
-        commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
+        commissionType: { type: String, enum: ['PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_QUANTITY' },
+        commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: 'INR' },
         commission: { type: Number, default: 25 },
         strikeSelection: { type: Number, default: 50 },
-        maxExchangeLots: { type: Number, default: 200 }
+        maxExchangeQuantity: { type: Number, default: 10000 }
       },
       optionSell: {
         allowed: { type: Boolean, default: true },
-        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
-        commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
+        commissionType: { type: String, enum: ['PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_QUANTITY' },
+        commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: 'INR' },
         commission: { type: Number, default: 25 },
         strikeSelection: { type: Number, default: 50 },
-        maxExchangeLots: { type: Number, default: 200 }
+        maxExchangeQuantity: { type: Number, default: 10000 }
       }
     },
     CRYPTO: {

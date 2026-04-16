@@ -7617,9 +7617,10 @@ const BuySellModal = ({
 
   // Determine segment type
   const isFnO = instrument?.segment === 'FNO' || instrument?.instrumentType === 'OPTIONS' || instrument?.instrumentType === 'FUTURES';
-  const isMCX = instrument?.segment === 'MCX' || instrument?.exchange === 'MCX' || instrument?.displaySegment === 'MCX' || 
+  const isMCX = instrument?.segment === 'MCX' || instrument?.exchange === 'MCX' || instrument?.displaySegment === 'MCX' ||
                 instrument?.segment === 'MCXFUT' || instrument?.segment === 'MCXOPT';
-  const isLotBased = isFnO || isMCX;
+  // MCX uses quantity-based trading (no lots), only F&O uses lots
+  const isLotBased = isFnO;
 
   // Determine which wallet to use based on instrument type
   const getWalletData = () => {
@@ -7653,10 +7654,15 @@ const BuySellModal = ({
   const activeWallet = getWalletData();
 
   // Always use lotSize from DB (no hardcoded fallbacks)
-  const lotSize = isUsdSpot ? 1 : (instrument?.lotSize || 1);
+  // For MCX, lotSize is not used (quantity-based trading)
+  const lotSize = isUsdSpot ? 1 : (isMCX ? 1 : (instrument?.lotSize || 1));
 
   // For crypto: quantity is in units (BTC, ETH, etc.)
-  const totalQuantity = isUsdSpot ? parseFloat(quantity || 0.01) : (isLotBased ? parseFloat(quantity || 1) * lotSize : parseFloat(quantity || 1));
+  // For MCX: quantity is direct (no lot multiplication)
+  // For F&O: quantity = lots * lotSize
+  const totalQuantity = isUsdSpot
+    ? parseFloat(quantity || 0.01)
+    : (isMCX ? parseFloat(quantity || 1) : (isLotBased ? parseFloat(quantity || 1) * lotSize : parseFloat(quantity || 1)));
   const orderValue = ltp * totalQuantity;
   
   // Calculate margin required with leverage (fallback before margin-preview returns)
@@ -8104,7 +8110,7 @@ const BuySellModal = ({
 
           {/* Footer Info */}
           <div className="px-3 pb-4 text-center text-xs text-gray-500">
-            <div>{quantity} lots @ {ltp?.toLocaleString()}</div>
+            <div>{quantity} {isLotBased ? 'lots' : 'quantity'} @ {ltp?.toLocaleString()}</div>
           </div>
         </div>
       </div>
