@@ -120,6 +120,11 @@ const MarketWatch = ({ user, onSelectInstrument, onQuickTrade }) => {
                       <span className="text-xs text-gray-500 px-1 py-0.5 bg-dark-600 rounded">
                         {inst.exchange}
                       </span>
+                      {inst.expiry && (
+                        <span className="text-xs text-blue-400 px-1 py-0.5 bg-blue-500/20 rounded">
+                          {new Date(inst.expiry).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-gray-500 truncate">{inst.name}</div>
                   </div>
