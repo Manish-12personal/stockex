@@ -21,7 +21,7 @@ const MarketWatch = ({ user, onSelectInstrument, onQuickTrade }) => {
   const fetchInstruments = async () => {
     try {
       const { data } = await axios.get('/api/instruments/public');
-      setInstruments(data);
+      setInstruments(data.instruments || []);
     } catch (error) {
       console.error('Error fetching instruments:', error);
     } finally {
