@@ -532,12 +532,14 @@ router.get('/market-data', async (req, res) => {
             zerodhaToken: zerodhaToken,
             exchange: key.split(':')[0],
             ltp: quote.last_price,
+            bid: quote.depth?.buy?.[0]?.price || quote.last_price,
+            ask: quote.depth?.sell?.[0]?.price || quote.last_price,
             open: quote.ohlc?.open,
             high: quote.ohlc?.high,
             low: quote.ohlc?.low,
             close: quote.ohlc?.close,
             change: quote.net_change,
-            changePercent: quote.net_change && quote.ohlc?.close ? 
+            changePercent: quote.net_change && quote.ohlc?.close ?
               ((quote.net_change / quote.ohlc.close) * 100).toFixed(2) : 0,
             volume: quote.volume,
             lastUpdated: new Date()
