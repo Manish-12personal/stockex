@@ -74,7 +74,7 @@ export default {
       },
       animation: {
         'slide-up': 'slideUp 0.3s ease-out',
-        marquee: 'marquee 50s linear infinite',
+        marquee: 'marquee 100s linear infinite',
       },
       keyframes: {
         slideUp: {
