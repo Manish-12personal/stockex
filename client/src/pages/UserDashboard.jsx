@@ -7620,7 +7620,7 @@ const BuySellModal = ({
   const isMCX = instrument?.segment === 'MCX' || instrument?.exchange === 'MCX' || instrument?.displaySegment === 'MCX' ||
                 instrument?.segment === 'MCXFUT' || instrument?.segment === 'MCXOPT';
   // MCX uses quantity-based trading (no lots), only F&O uses lots
-  const isLotBased = isFnO;
+  const isLotBased = isFnO && !isMCX;
 
   // Determine which wallet to use based on instrument type
   const getWalletData = () => {
