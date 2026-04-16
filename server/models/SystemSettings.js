@@ -247,6 +247,9 @@ const systemSettingsSchema = new mongoose.Schema({
       superAdminBrokerageCharge: { type: Number, default: 25 },
       // Incentive given by Super Admin (the incentive/rebate that Super Admin provides)
       superAdminIncentive: { type: Number, default: 0 },
+      // Super Admin settings in crores
+      superAdminBrokerageChargeInCrore: { type: Number, default: 0 },
+      superAdminIncentiveInCrore: { type: Number, default: 0 },
       optionBuy: {
         allowed: { type: Boolean, default: true },
         commissionType: { type: String, enum: ['PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_QUANTITY' },
