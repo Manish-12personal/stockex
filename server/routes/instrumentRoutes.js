@@ -934,11 +934,11 @@ router.post('/admin/seed-defaults', protectAdmin, superAdminOnly, async (req, re
 // Seed F&O instruments with current expiry
 router.post('/admin/seed-fno', protectAdmin, superAdminOnly, async (req, res) => {
   try {
-    // Calculate current and next month expiry (last Thursday of month)
-    const getLastThursday = (year, month) => {
+    // Calculate current and next month expiry (last Tuesday of month)
+    const getLastTuesday = (year, month) => {
       const lastDay = new Date(year, month + 1, 0);
       const dayOfWeek = lastDay.getDay();
-      const diff = (dayOfWeek >= 4) ? (dayOfWeek - 4) : (dayOfWeek + 3);
+      const diff = (dayOfWeek >= 2) ? (dayOfWeek - 2) : (dayOfWeek + 5);
       return new Date(year, month + 1, -diff);
     };
     
@@ -946,19 +946,19 @@ router.post('/admin/seed-fno', protectAdmin, superAdminOnly, async (req, res) =>
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
     
-    // Get weekly expiry (next Thursday)
-    const getNextThursday = () => {
+    // Get weekly expiry (next Tuesday)
+    const getNextTuesday = () => {
       const today = new Date();
       const dayOfWeek = today.getDay();
-      const daysUntilThursday = (4 - dayOfWeek + 7) % 7 || 7;
-      const nextThurs = new Date(today);
-      nextThurs.setDate(today.getDate() + daysUntilThursday);
-      return nextThurs;
+      const daysUntilTuesday = (2 - dayOfWeek + 7) % 7 || 7;
+      const nextTue = new Date(today);
+      nextTue.setDate(today.getDate() + daysUntilTuesday);
+      return nextTue;
     };
-    
-    const weeklyExpiry = getNextThursday();
-    const monthlyExpiry = getLastThursday(currentYear, currentMonth);
-    const nextMonthExpiry = getLastThursday(currentYear, currentMonth + 1);
+
+    const weeklyExpiry = getNextTuesday();
+    const monthlyExpiry = getLastTuesday(currentYear, currentMonth);
+    const nextMonthExpiry = getLastTuesday(currentYear, currentMonth + 1);
     
     // Use weekly expiry if monthly has passed
     const currentExpiry = monthlyExpiry > now ? monthlyExpiry : weeklyExpiry;
@@ -1202,17 +1202,17 @@ router.post('/admin/sync-fno-tokens', protectAdmin, superAdminOnly, async (req, 
       return res.status(400).json({ message: 'Angel One not connected. Please login first.' });
     }
     
-    // Current expiry - find next Thursday
-    const getNextThursday = () => {
+    // Current expiry - find next Tuesday
+    const getNextTuesday = () => {
       const today = new Date();
       const dayOfWeek = today.getDay();
-      const daysUntilThursday = (4 - dayOfWeek + 7) % 7 || 7;
-      const nextThurs = new Date(today);
-      nextThurs.setDate(today.getDate() + daysUntilThursday);
-      return nextThurs;
+      const daysUntilTuesday = (2 - dayOfWeek + 7) % 7 || 7;
+      const nextTue = new Date(today);
+      nextTue.setDate(today.getDate() + daysUntilTuesday);
+      return nextTue;
     };
-    
-    const expiry = getNextThursday();
+
+    const expiry = getNextTuesday();
     const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
     const expiryStr = `${expiry.getDate()}${months[expiry.getMonth()]}${expiry.getFullYear().toString().slice(-2)}`;
     
