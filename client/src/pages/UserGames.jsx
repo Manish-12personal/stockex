@@ -4025,59 +4025,6 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
 
           {/* LEFT COLUMN - Game Info + Today's Bet Status */}
           <div className="lg:w-[260px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
-            {/* Today's official Nifty Number result after admin declare-result */}
-            <div
-              className={`mb-3 rounded-xl p-3 border ${
-                dailyResult?.declared
-                  ? 'bg-emerald-950/40 border-emerald-500/45'
-                  : 'bg-amber-950/20 border-amber-600/35'
-              }`}
-            >
-              {dailyResult?.declared ? (
-                <>
-                  <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wide text-center">
-                    Aaj ka result (clearing)
-                  </div>
-                  <div className="text-3xl font-black text-white mt-1 text-center tabular-nums">
-                    .{String(dailyResult.resultNumber).padStart(2, '0')}
-                  </div>
-                  <p className="text-[10px] text-gray-400 text-center mt-1 leading-snug">
-                    NIFTY ka last paisa (decimal) — isi se jeet/haar
-                  </p>
-                  {dailyResult.closingPrice != null && Number.isFinite(Number(dailyResult.closingPrice)) && (
-                    <div className="text-xs text-cyan-300 text-center mt-1 font-semibold tabular-nums">
-                      Band bhav ₹{Number(dailyResult.closingPrice).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                  )}
-                  {dailyResult.resultDeclaredAt && (
-                    <div className="text-[9px] text-gray-500 text-center mt-1">
-                      Declare: {new Date(dailyResult.resultDeclaredAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
-                    </div>
-                  )}
-                  {todayBets.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-emerald-500/25 text-[11px] text-center text-gray-300">
-                      Aapke aaj ke entries:{' '}
-                      <span className="text-green-400 font-bold">{todayBets.filter((b) => b.status === 'won').length} jeet</span>
-                      <span className="text-gray-500"> · </span>
-                      <span className="text-red-400 font-bold">{todayBets.filter((b) => b.status === 'lost').length} haar</span>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="text-[10px] font-semibold text-amber-300 flex items-center justify-center gap-1">
-                    <AlertCircle size={12} className="shrink-0" />
-                    Result abhi pending
-                  </div>
-                  <p className="text-[11px] text-gray-400 mt-2 leading-relaxed text-center">
-                    Clearing ke baad yahan <span className="text-white font-semibold">jeetne wala number (.XX)</span> dikhega. Policy:{' '}
-                    <span className="text-cyan-300 font-medium">{resultTimeDisplay} IST</span> ke aas-paas admin result declare karte hain — tab har line par{' '}
-                    <span className="text-green-400">WIN</span> / <span className="text-red-400">LOSS</span> dikhega.
-                  </p>
-                </>
-              )}
-            </div>
-
             {/* Today's Bets Status */}
             {loadingBet ? (
               <div className="flex items-center justify-center py-6">
@@ -4389,14 +4336,25 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                     <div className="text-2xl sm:text-3xl text-center">
                       {displayPrice != null ? (
                         <span className="font-bold tracking-tight text-white">
-                          ₹{displayPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {(() => {
+                            const priceStr = displayPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                            const dotIndex = priceStr.lastIndexOf('.');
+                            if (dotIndex === -1) {
+                              return `₹${priceStr}`;
+                            }
+                            return (
+                              <>
+                                ₹{priceStr.slice(0, dotIndex)}
+                                <span className="text-red-500 text-3xl sm:text-4xl font-bold ml-1">
+                                  {priceStr.slice(dotIndex)}
+                                </span>
+                              </>
+                            );
+                          })()}
                         </span>
                       ) : (
                         <span className="text-gray-500">—</span>
                       )}
-                    </div>
-                    <div className={`text-sm font-medium mt-1 text-center ${priceChange ? (priceChange.change >= 0 ? 'text-green-400' : 'text-red-400') : 'text-gray-500'}`}>
-                      {priceChange ? `${priceChange.change >= 0 ? '+' : ''}₹${priceChange.change} (${priceChange.percent}%)` : '—'}
                     </div>
                   </div>
 
