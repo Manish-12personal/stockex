@@ -3014,6 +3014,107 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       ? `${currSymbol}${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : '—';
 
+  // LTP History component to show last 1 hour (4 windows) of LTP values
+  const LTPHistoryPanel = () => {
+    const ltpHistory = useMemo(() => {
+      const history = [];
+      const currentWin = windowInfo.windowNumber;
+      
+      // Get last 4 windows (1 hour = 4 x 15min windows)
+      for (let i = 3; i >= 0; i--) {
+        const winNum = currentWin - i - 1;
+        if (winNum <= 0) continue;
+        
+        // Try to get data from pending windows first
+        const pendingWindow = pendingWindows.find(pw => pw.windowNumber === winNum);
+        // Try to get data from game results
+        const gameResult = pickLatestGameResultForWindow(gameResults, winNum);
+        
+        let ltp = null;
+        let time = null;
+        let source = 'unknown';
+        
+        if (gameResult && gameResult.closePrice) {
+          ltp = Number(gameResult.closePrice);
+          time = gameResult.resultTime || gameResult.createdAt;
+          source = 'result';
+        } else if (pendingWindow && pendingWindow.windowEndLTP) {
+          ltp = pendingWindow.windowEndLTP;
+          time = pendingWindow.ltpTime;
+          source = 'pending';
+        }
+        
+        if (ltp && ltp > 0) {
+          history.push({
+            windowNumber: winNum,
+            ltp: ltp,
+            time: time,
+            source: source
+          });
+        }
+      }
+      
+      return history;
+    }, [windowInfo.windowNumber, pendingWindows, gameResults]);
+
+    if (ltpHistory.length === 0) {
+      return (
+        <div className="bg-dark-800 rounded-xl p-4 border border-dark-600 mb-3">
+          <h3 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-1.5">
+            <Clock size={12} className="text-blue-400" />
+            Last 1 Hour LTPs
+          </h3>
+          <p className="text-gray-500 text-sm text-center py-3">
+            No LTP data available yet
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-dark-800 rounded-xl p-4 border border-dark-600 mb-3">
+        <h3 className="text-xs font-bold text-gray-400 mb-3 flex items-center gap-1.5">
+          <Clock size={12} className="text-blue-400" />
+          Last 1 Hour LTPs ({ltpHistory.length} windows)
+        </h3>
+        <div className="space-y-2">
+          {ltpHistory.map((item, index) => (
+            <div 
+              key={item.windowNumber}
+              className="flex items-center justify-between p-2 bg-dark-700/50 rounded-lg border border-dark-600"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">W#{item.windowNumber}</span>
+                {index === 0 && (
+                  <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">
+                    Latest
+                  </span>
+                )}
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-bold text-cyan-400 font-mono">
+                  {isBTC ? '$' : '₹'}{item.ltp.toLocaleString(undefined, { 
+                    minimumFractionDigits: 2, 
+                    maximumFractionDigits: 2 
+                  })}
+                </div>
+                {item.time && (
+                  <div className="text-[10px] text-gray-500">
+                    {typeof item.time === 'string' ? item.time : new Date(item.time).toLocaleTimeString('en-IN', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      timeZone: 'Asia/Kolkata'
+                    })} IST
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const WindowResultTracker = () => {
     if (prevWindowNumber == null) {
       return (
@@ -3317,6 +3418,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           {/* LEFT COLUMN - Trading Window Status */}
           <div className="lg:w-[240px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
             <WindowStatusBadge />
+            <LTPHistoryPanel />
             <WindowResultTracker />
 
             {/* Game Info Card */}
