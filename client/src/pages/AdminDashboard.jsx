@@ -1765,8 +1765,20 @@ const AdminManagement = () => {
                     </div>
                   </div>
                   <div className="text-center">
-                    <div className="text-xs text-gray-400">Brokerage</div>
-                    <div className="text-lg font-bold">₹{adm.charges?.brokerage || 20}</div>
+                    <div className="text-xs text-gray-400">Auto Square</div>
+                    <div className="text-lg font-bold text-orange-400">{adm.defaultSettings?.autosquare || 0}%</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-400">Max Lot</div>
+                    <div className="text-lg font-bold text-cyan-400">{adm.defaultSettings?.quantitySettings?.maxLotQuantity || adm.defaultSettings?.lotSettings?.maxLotSize || 0}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-400">Min Lot</div>
+                    <div className="text-lg font-bold text-cyan-400">{adm.defaultSettings?.lotSettings?.minLotSize || 1}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-400">Breakup Qty</div>
+                    <div className="text-lg font-bold text-cyan-400">{adm.defaultSettings?.quantitySettings?.breakupQuantity || 0}</div>
                   </div>
                   {adm.restrictMode?.enabled && (
                     <div className="text-center">
