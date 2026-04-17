@@ -1591,6 +1591,7 @@ const GameLivePricePanel = ({
   priceLines = [],
   onFallbackPrice,
   onDemoPriceActive,
+  onSessionClearingUpdate,
   /** Nifty only: show scrollable LTP + IST time log under the chart (e.g. Nifty Bracket). */
   niftyLtpTape = false,
 }) => {
@@ -1601,6 +1602,8 @@ const GameLivePricePanel = ({
   const onFallbackPriceRef = useRef(onFallbackPrice);
   onFallbackPriceRef.current = onFallbackPrice;
   const onDemoPriceActiveRef = useRef(onDemoPriceActive);
+  const onSessionClearingUpdateRef = useRef(onSessionClearingUpdate);
+  onSessionClearingUpdateRef.current = onSessionClearingUpdate;
   onDemoPriceActiveRef.current = onDemoPriceActive;
   const livePriceRef = useRef(null);
   const historicalDataRef = useRef([]);
@@ -1878,8 +1881,10 @@ const GameLivePricePanel = ({
         }
         if (data.sessionClearing != null && Number.isFinite(Number(data.sessionClearing))) {
           setSessionClearing(Number(data.sessionClearing));
+          onSessionClearingUpdateRef.current?.(Number(data.sessionClearing));
         } else {
           setSessionClearing(null);
+          onSessionClearingUpdateRef.current?.(null);
         }
         pushLive(price, ch, {
           open: data.open,
