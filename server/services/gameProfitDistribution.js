@@ -61,9 +61,9 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
 
     // Start with user's direct admin
     if (user.admin) {
-      currentAdmin = await Admin.findById(user.admin);
+      currentAdmin = await Admin.findById(user.admin).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
     } else if (user.adminCode) {
-      currentAdmin = await Admin.findOne({ adminCode: user.adminCode, status: 'ACTIVE' });
+      currentAdmin = await Admin.findOne({ adminCode: user.adminCode, status: 'ACTIVE' }).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
     }
 
     while (currentAdmin) {
@@ -76,7 +76,7 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
         break;
       }
 
-      currentAdmin = await Admin.findById(currentAdmin.parentId);
+      currentAdmin = await Admin.findById(currentAdmin.parentId).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
     }
 
     // If no hierarchy found, nothing to distribute
@@ -264,14 +264,14 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
     const hierarchyChain = [];
     let currentAdmin = null;
     if (user.admin) {
-      currentAdmin = await Admin.findById(user.admin);
+      currentAdmin = await Admin.findById(user.admin).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
     } else if (user.adminCode) {
-      currentAdmin = await Admin.findOne({ adminCode: user.adminCode, status: 'ACTIVE' });
+      currentAdmin = await Admin.findOne({ adminCode: user.adminCode, status: 'ACTIVE' }).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
     }
     while (currentAdmin) {
       hierarchyChain.push({ admin: currentAdmin, role: currentAdmin.role });
       if (currentAdmin.role === 'SUPER_ADMIN' || !currentAdmin.parentId) break;
-      currentAdmin = await Admin.findById(currentAdmin.parentId);
+      currentAdmin = await Admin.findById(currentAdmin.parentId).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
     }
 
     const hasSubBroker = hierarchyChain.some((h) => h.role === 'SUB_BROKER');
@@ -364,6 +364,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
       if (creditedRolesWinBrk.has(role)) continue;
       creditedRolesWinBrk.add(role);
       if (!adminReceivesHierarchyBrokerage(admin)) {
+        console.log(`[WinBrokerage] Admin ${admin.username || admin.adminCode} (${role}) brokerage diverted to SuperAdmin: receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}, amount=₹${shareAmount.toFixed(2)}`);
         divertedWinBrokerageToSuperAdmin += shareAmount;
         continue;
       }
@@ -477,14 +478,14 @@ export async function computeNiftyJackpotGrossHierarchyBreakdown(user, grossPriz
   const hierarchyChain = [];
   let currentAdmin = null;
   if (user.admin) {
-    currentAdmin = await Admin.findById(user.admin);
+    currentAdmin = await Admin.findById(user.admin).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
   } else if (user.adminCode) {
-    currentAdmin = await Admin.findOne({ adminCode: user.adminCode, status: 'ACTIVE' });
+    currentAdmin = await Admin.findOne({ adminCode: user.adminCode, status: 'ACTIVE' }).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
   }
   while (currentAdmin) {
     hierarchyChain.push({ admin: currentAdmin, role: currentAdmin.role });
     if (currentAdmin.role === 'SUPER_ADMIN' || !currentAdmin.parentId) break;
-    currentAdmin = await Admin.findById(currentAdmin.parentId);
+    currentAdmin = await Admin.findById(currentAdmin.parentId).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
   }
 
   const hasSubBroker = hierarchyChain.some((h) => h.role === 'SUB_BROKER');
