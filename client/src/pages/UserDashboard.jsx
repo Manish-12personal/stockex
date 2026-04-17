@@ -4290,7 +4290,6 @@ const TradingPanel = ({
             
             <label className="block text-xs text-gray-400 mb-2">
               {inputMode === 'quantity' ? 'Quantity' : (isFnO ? 'Lots' : 'Quantity')} 
-              {isFnO && inputMode === 'lots' && <span className="text-yellow-400">(1 Lot = {lotSize} qty)</span>}
               {inputMode === 'quantity' && <span className="text-blue-400">(Direct quantity)</span>}
             </label>
             <div className="flex items-center gap-2">
@@ -4310,7 +4309,7 @@ const TradingPanel = ({
                 className="w-10 h-10 bg-dark-600 hover:bg-dark-500 rounded text-xl font-bold"
               >+</button>
             </div>
-            {isFnO && (
+            {isFnO && inputMode === 'quantity' && (
               <div className="flex justify-between text-xs mt-2">
                 <span className="text-gray-500">Total Qty: <span className="text-white font-medium">{totalQuantity}</span></span>
                 <span className="text-gray-500">Value: <span className="text-white">{priceSymbol}{(totalQuantity * parseFloat(price || 0)).toLocaleString()}</span></span>
