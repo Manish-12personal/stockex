@@ -8209,7 +8209,7 @@ const BuySellModal = ({
             }`}
           >
             <div className="text-xs opacity-70">Bid Price</div>
-            <div className="text-xl">₹{liveBid?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) || '--'}</div>
+            <div className="text-xl">₹{liveBid != null && !isNaN(liveBid) ? liveBid.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
             <div className="text-sm">SELL</div>
           </button>
           <button
@@ -8221,7 +8221,7 @@ const BuySellModal = ({
             }`}
           >
             <div className="text-xs opacity-70">Ask Price</div>
-            <div className="text-xl">₹{liveAsk?.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) || '--'}</div>
+            <div className="text-xl">₹{liveAsk != null && !isNaN(liveAsk) ? liveAsk.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '--'}</div>
             <div className="text-sm">BUY</div>
           </button>
         </div>
