@@ -3605,13 +3605,13 @@ const TradingPanel = ({
   const livePrice = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(instrument?.ltp) || 0)
     : (liveData.ltp || instrument?.ltp || 0);
-  // Use instrument lastBid/lastAsk for instant display, then marketData, then fallback to ltp
+  // Use marketData first, then instrument's lastBid/lastAsk as fallback (last closing prices)
   const liveBid = isUsdSpot
-    ? (instrument?.lastBid || Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0)
-    : (instrument?.lastBid || liveData.bid || liveData.ltp || instrument?.lastBid || instrument?.ltp || 0);
+    ? (Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0)
+    : (liveData.bid || liveData.ltp || instrument?.lastBid || instrument?.ltp || 0);
   const liveAsk = isUsdSpot
-    ? (instrument?.lastAsk || Number(liveData.ask) || livePrice || Number(instrument?.ltp) || 0)
-    : (instrument?.lastAsk || liveData.ask || liveData.ltp || instrument?.lastAsk || instrument?.ltp || 0);
+    ? (Number(liveData.ask) || livePrice || Number(instrument?.ltp) || 0)
+    : (liveData.ask || liveData.ltp || instrument?.lastAsk || instrument?.ltp || 0);
   
   const cryptoUnitPrice = livePrice > 0 ? livePrice : 0;
   const cryptoUnitNotionalInr =
@@ -7630,13 +7630,13 @@ const BuySellModal = ({
   const ltp = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(effectiveInstrument?.ltp) || 0)
     : (liveData.ltp || effectiveInstrument?.ltp || 0);
-  // Use instrument lastBid/lastAsk for instant display, then marketData, then fallback to ltp
+  // Use marketData first, then effectiveInstrument's lastBid/lastAsk as fallback (last closing prices)
   const liveBid = isUsdSpot 
-    ? (instrument?.lastBid || Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0) 
-    : (instrument?.lastBid || liveData.bid || liveData.ltp || effectiveInstrument?.lastBid || effectiveInstrument?.ltp || 0);
+    ? (Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0) 
+    : (liveData.bid || liveData.ltp || effectiveInstrument?.lastBid || effectiveInstrument?.ltp || 0);
   const liveAsk = isUsdSpot 
-    ? (instrument?.lastAsk || Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0) 
-    : (instrument?.lastAsk || liveData.ask || liveData.ltp || effectiveInstrument?.lastAsk || effectiveInstrument?.ltp || 0);
+    ? (Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0) 
+    : (liveData.ask || liveData.ltp || effectiveInstrument?.lastAsk || effectiveInstrument?.ltp || 0);
 
   const feedRow = effectiveInstrument?.token ? marketData[effectiveInstrument.token] : null;
   const ltpFromLiveFeed = !!(
