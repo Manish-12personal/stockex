@@ -284,20 +284,31 @@ const updateInstrumentLastPrice = async (token, tickData) => {
     if (INDEX_TOKEN_KITE_TO_LEGACY[nTok]) {
       tokenVariants.push(...INDEX_TOKEN_KITE_TO_LEGACY[nTok]);
     }
+
+    const updateFields = {
+      lastPrice: tickData.ltp,
+      ltp: tickData.ltp,
+      open: tickData.open,
+      high: tickData.high,
+      low: tickData.low,
+      close: tickData.close,
+      change: tickData.change,
+      changePercent: tickData.changePercent,
+      lastUpdated: new Date(),
+    };
+
+    // Update lastBid and lastAsk if available
+    if (tickData.bid && tickData.bid > 0) {
+      updateFields.lastBid = tickData.bid;
+    }
+    if (tickData.ask && tickData.ask > 0) {
+      updateFields.lastAsk = tickData.ask;
+    }
+
     await Instrument.updateMany(
       { token: { $in: tokenVariants } },
       {
-        $set: {
-          lastPrice: tickData.ltp,
-          ltp: tickData.ltp,
-          open: tickData.open,
-          high: tickData.high,
-          low: tickData.low,
-          close: tickData.close,
-          change: tickData.change,
-          changePercent: tickData.changePercent,
-          lastUpdated: new Date(),
-        },
+        $set: updateFields,
       },
       { upsert: false }
     );

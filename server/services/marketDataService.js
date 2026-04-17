@@ -100,23 +100,23 @@ class MarketDataService {
       // Exchange timestamp: 8 bytes
       // LTP: 8 bytes
       // ... more fields based on mode
-      
+
       if (buffer.length < 51) return null;
-      
+
       const subscriptionMode = buffer.readUInt8(0);
       const exchangeType = buffer.readUInt8(1);
       const token = buffer.slice(2, 27).toString().replace(/\0/g, '').trim();
       const sequenceNumber = buffer.readBigInt64LE(27);
       const exchangeTimestamp = buffer.readBigInt64LE(35);
       const ltp = buffer.readBigInt64LE(43) / 100; // Price in paise
-      
+
       let result = {
         token,
         exchangeType,
         ltp,
         timestamp: new Date(Number(exchangeTimestamp))
       };
-      
+
       // Extended data for full mode (mode 3)
       if (subscriptionMode === 3 && buffer.length >= 123) {
         result.open = buffer.readBigInt64LE(83) / 100;
@@ -124,8 +124,16 @@ class MarketDataService {
         result.low = buffer.readBigInt64LE(99) / 100;
         result.close = buffer.readBigInt64LE(107) / 100;
         result.volume = Number(buffer.readBigInt64LE(115));
+
+        // Bid and ask prices (if available in extended mode)
+        // Angel One may provide bid/ask in mode 3 at specific offsets
+        // Based on Angel One documentation, bid/ask may be at offsets 123 and 131
+        if (buffer.length >= 147) {
+          result.bid = buffer.readBigInt64LE(123) / 100;
+          result.ask = buffer.readBigInt64LE(131) / 100;
+        }
       }
-      
+
       return result;
     } catch (error) {
       console.error('Error parsing binary data:', error);
@@ -142,7 +150,9 @@ class MarketDataService {
         high: priceData.high || 0,
         low: priceData.low || 0,
         close: priceData.close || 0,
-        volume: priceData.volume || 0
+        volume: priceData.volume || 0,
+        bid: priceData.bid,
+        ask: priceData.ask
       });
     } catch (error) {
       // Silently fail for price updates
