@@ -2871,7 +2871,10 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
     password: '', 
     pin: '',
     role: allowedRoles[0] || 'ADMIN',
-    parentAdminId: '' // For assigning broker/sub-broker under specific parent
+    parentAdminId: '', // For assigning broker/sub-broker under specific parent
+    autosquare: 0, // Auto square position at percentage loss
+    breakupQuantity: 0, // Breakup quantity per order
+    maxLotQuantity: 0 // Max lot quantity per order
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -3075,6 +3078,52 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
             required
             pattern="[0-9]{4,6}"
           />
+          
+          {/* Trading Limits */}
+          <div className="bg-dark-700/50 rounded-lg p-4 border border-dark-600">
+            <h4 className="text-sm font-semibold text-cyan-400 mb-3">Trading Limits</h4>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Auto Square (%)</label>
+                <input 
+                  type="number" 
+                  step="0.1" 
+                  min="0" 
+                  max="100" 
+                  placeholder="0 = disabled"
+                  value={formData.autosquare || 0} 
+                  onChange={e => setFormData({...formData, autosquare: parseFloat(e.target.value) || 0})} 
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" 
+                />
+                <p className="text-xs text-gray-500 mt-1">Auto square position at percentage loss</p>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
+                <input 
+                  type="number" 
+                  min="0" 
+                  placeholder="0 = no limit"
+                  value={formData.breakupQuantity || 0} 
+                  onChange={e => setFormData({...formData, breakupQuantity: parseInt(e.target.value) || 0})} 
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" 
+                />
+                <p className="text-xs text-gray-500 mt-1">Maximum quantity per single order</p>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Max Lot Quantity (Per Order)</label>
+                <input 
+                  type="number" 
+                  min="0" 
+                  placeholder="0 = no limit"
+                  value={formData.maxLotQuantity || 0} 
+                  onChange={e => setFormData({...formData, maxLotQuantity: parseInt(e.target.value) || 0})} 
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" 
+                />
+                <p className="text-xs text-gray-500 mt-1">Maximum lots per single order</p>
+              </div>
+            </div>
+          </div>
+          
           <div className="flex gap-3">
             <button type="button" onClick={onClose} className="flex-1 bg-dark-600 py-2 rounded">Cancel</button>
             <button type="submit" disabled={loading} className={`flex-1 ${getRoleBadgeColor(formData.role)} py-2 rounded`}>
@@ -3415,8 +3464,10 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
     quantitySettings: {
       maxQuantity: targetAdmin.defaultSettings?.quantitySettings?.maxQuantity ?? 50000,
       breakupQuantity: targetAdmin.defaultSettings?.quantitySettings?.breakupQuantity ?? 5000,
+      maxLotQuantity: targetAdmin.defaultSettings?.quantitySettings?.maxLotQuantity ?? 0,
       maxBid: targetAdmin.defaultSettings?.quantitySettings?.maxBid ?? 0
-    }
+    },
+    autosquare: targetAdmin.defaultSettings?.autosquare ?? 0
   });
   const [permissions, setPermissions] = useState({
     canChangeBrokerage: targetAdmin.permissions?.canChangeBrokerage ?? false,
@@ -3701,19 +3752,33 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
               {/* Quantity Settings */}
               <div className="bg-dark-700/50 rounded-lg p-4">
                 <h3 className="text-sm font-semibold text-cyan-400 mb-3 flex items-center gap-2"><BarChart3 size={16} /> Quantity Settings</h3>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Max Quantity (Total Limit)</label>
+                    <label className="block text-xs text-gray-400 mb-1">Max Quantity (Total)</label>
                     <input type="number" value={adminSettings.quantitySettings.maxQuantity} onChange={e => updateField('quantitySettings', 'maxQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
+                    <label className="block text-xs text-gray-400 mb-1">Breakup Qty (Per Order)</label>
                     <input type="number" value={adminSettings.quantitySettings.breakupQuantity} onChange={e => updateField('quantitySettings', 'breakupQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Max Lot Qty (Per Order)</label>
+                    <input type="number" value={adminSettings.quantitySettings.maxLotQuantity} onChange={e => updateField('quantitySettings', 'maxLotQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
                     <input type="number" value={adminSettings.quantitySettings.maxBid} onChange={e => updateField('quantitySettings', 'maxBid', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                   </div>
+                </div>
+              </div>
+
+              {/* Auto Square Settings */}
+              <div className="bg-dark-700/50 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-orange-400 mb-3 flex items-center gap-2"><Zap size={16} /> Auto Square</h3>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Auto Square at Loss (%)</label>
+                  <input type="number" step="0.1" min="0" max="100" value={adminSettings.autosquare} onChange={e => setAdminSettings({...adminSettings, autosquare: parseFloat(e.target.value) || 0})} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  <p className="text-xs text-gray-500 mt-1">Auto square position when loss reaches this percentage (0 = disabled)</p>
                 </div>
               </div>
 

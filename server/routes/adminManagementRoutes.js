@@ -191,7 +191,7 @@ router.get('/admins', protectAdmin, async (req, res) => {
 // SUPER_ADMIN can optionally specify parentAdminId to create broker under a specific admin
 router.post('/admins', protectAdmin, async (req, res) => {
   try {
-    const { username, name, email, phone, password, pin, charges, role: requestedRole, parentAdminId } = req.body;
+    const { username, name, email, phone, password, pin, charges, role: requestedRole, parentAdminId, autosquare, breakupQuantity, maxLotQuantity } = req.body;
     
     // Determine the role to create
     const allowedChildRoles = getAllowedChildRoles(req.admin.role);
@@ -322,7 +322,13 @@ router.post('/admins', protectAdmin, async (req, res) => {
       leverage: {
         intraday: roleDefaults.leverage?.intraday ?? 1,
         carryForward: roleDefaults.leverage?.carryForward ?? 1
-      }
+      },
+      quantitySettings: {
+        maxQuantity: roleDefaults.quantitySettings?.maxQuantity ?? 50000,
+        breakupQuantity: breakupQuantity ?? roleDefaults.quantitySettings?.breakupQuantity ?? 5000,
+        maxLotQuantity: maxLotQuantity ?? roleDefaults.quantitySettings?.maxLotQuantity ?? 0
+      },
+      autosquare: autosquare ?? roleDefaults.autosquare ?? 0
     };
     
     // Apply default permissions from system
@@ -761,6 +767,10 @@ router.put('/admins/:id/default-settings', protectAdmin, async (req, res) => {
         ...childAdmin.defaultSettings.quantitySettings,
         ...defaultSettings.quantitySettings
       };
+    }
+    
+    if (typeof defaultSettings.autosquare === 'number') {
+      childAdmin.defaultSettings.autosquare = defaultSettings.autosquare;
     }
     
     await childAdmin.save();

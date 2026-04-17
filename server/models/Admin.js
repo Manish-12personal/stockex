@@ -464,8 +464,10 @@ const adminSchema = new mongoose.Schema({
     },
     quantitySettings: {
       maxQuantity: { type: Number, default: 50000 },
-      breakupQuantity: { type: Number, default: 5000 }
-    }
+      breakupQuantity: { type: Number, default: 5000 },
+      maxLotQuantity: { type: Number, default: 0 }
+    },
+    autosquare: { type: Number, default: 0 } // Auto square at percentage loss (0 = disabled)
   },
   
   // Delivery Pledge Settings - Admin can override system defaults
