@@ -4395,21 +4395,6 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                         <span className="text-gray-500">—</span>
                       )}
                     </div>
-                    {sessionClearing != null && Number.isFinite(sessionClearing) && (
-                      <div className="rounded-lg bg-cyan-950/40 border border-cyan-600/30 px-3 py-2">
-                        <div className="text-[10px] text-cyan-400/90 uppercase tracking-wide mb-0.5">
-                          LTP · Kite Connect last_price (IST)
-                        </div>
-                        <div className="text-lg sm:text-xl">
-                          <span className="font-bold tabular-nums tracking-tight text-cyan-300">
-                            ₹{Number(sessionClearing).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                        <p className="text-[9px] text-gray-500 mt-1 leading-snug">
-                          Same source as Kite 15m chart final candle &quot;C&quot; for today — can differ from LTP after close.
-                        </p>
-                      </div>
-                    )}
                     <div className={`text-sm font-medium mt-1 text-center ${priceChange ? (priceChange.change >= 0 ? 'text-green-400' : 'text-red-400') : 'text-gray-500'}`}>
                       {priceChange ? `${priceChange.change >= 0 ? '+' : ''}₹${priceChange.change} (${priceChange.percent}%)` : '—'}
                     </div>
