@@ -21848,7 +21848,8 @@ const AllUsersManagement = () => {
                                     segment: selectedScriptSegment,
                                     settingType: 'LOT',
                                     lotSettings: { maxLots: segmentDefaults.maxLots || 50, minLots: segmentDefaults.minLots || 1, perOrderLots: segmentDefaults.orderLots || 10 },
-                                    quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100 },
+                                    quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100, breakupQuantity: 0, maxLotQuantity: 0 },
+                                    autosquare: 0,
                                     fixedMargin: { intradayFuture: 0, carryFuture: 0, optionBuyIntraday: 0, optionBuyCarry: 0, optionSellIntraday: 0, optionSellCarry: 0 },
                                     brokerage: { type: segmentDefaults.commissionType || 'PER_LOT', value: segmentDefaults.commissionLot || 0 },
                                     spread: { buy: 0, sell: 0 },
@@ -21883,7 +21884,7 @@ const AllUsersManagement = () => {
                                       segment: selectedScriptSegment,
                                       settingType: 'LOT',
                                       lotSettings: { maxLots: segmentDefaults.maxLots || 50, minLots: segmentDefaults.minLots || 1, perOrderLots: segmentDefaults.orderLots || 10 },
-                                      quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100 },
+                                      quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100, breakupQuantity: 0, maxLotQuantity: 0 },
                                       fixedMargin: { intradayFuture: 0, carryFuture: 0, optionBuyIntraday: 0, optionBuyCarry: 0, optionSellIntraday: 0, optionSellCarry: 0 },
                                       brokerage: { type: segmentDefaults.commissionType || 'PER_LOT', value: segmentDefaults.commissionLot || 0 },
                                       spread: { buy: 0, sell: 0 },
@@ -22071,6 +22072,63 @@ const AllUsersManagement = () => {
                                   [selectedScript]: {
                                     ...prev.scriptSettings[selectedScript],
                                     quantitySettings: { ...prev.scriptSettings[selectedScript]?.quantitySettings, perOrderQuantity: Number(e.target.value) }
+                                  }
+                                }
+                              }))}
+                              className="w-full bg-dark-600 border border-dark-500 rounded px-2 py-1 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500">Breakup Qty</label>
+                            <input
+                              type="number"
+                              value={editFormData.scriptSettings[selectedScript]?.quantitySettings?.breakupQuantity || 0}
+                              onChange={(e) => setEditFormData(prev => ({
+                                ...prev,
+                                scriptSettings: {
+                                  ...prev.scriptSettings,
+                                  [selectedScript]: {
+                                    ...prev.scriptSettings[selectedScript],
+                                    quantitySettings: { ...prev.scriptSettings[selectedScript]?.quantitySettings, breakupQuantity: Number(e.target.value) }
+                                  }
+                                }
+                              }))}
+                              className="w-full bg-dark-600 border border-dark-500 rounded px-2 py-1 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500">Max Lot Qty</label>
+                            <input
+                              type="number"
+                              value={editFormData.scriptSettings[selectedScript]?.quantitySettings?.maxLotQuantity || 0}
+                              onChange={(e) => setEditFormData(prev => ({
+                                ...prev,
+                                scriptSettings: {
+                                  ...prev.scriptSettings,
+                                  [selectedScript]: {
+                                    ...prev.scriptSettings[selectedScript],
+                                    quantitySettings: { ...prev.scriptSettings[selectedScript]?.quantitySettings, maxLotQuantity: Number(e.target.value) }
+                                  }
+                                }
+                              }))}
+                              className="w-full bg-dark-600 border border-dark-500 rounded px-2 py-1 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500">Auto Square (%)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              min="0"
+                              max="100"
+                              value={editFormData.scriptSettings[selectedScript]?.autosquare || 0}
+                              onChange={(e) => setEditFormData(prev => ({
+                                ...prev,
+                                scriptSettings: {
+                                  ...prev.scriptSettings,
+                                  [selectedScript]: {
+                                    ...prev.scriptSettings[selectedScript],
+                                    autosquare: parseFloat(e.target.value) || 0
                                   }
                                 }
                               }))}
@@ -24155,7 +24213,8 @@ const UserManagement = () => {
                                 segment: selectedScriptSegment,
                                 settingType: 'LOT',
                                 lotSettings: { maxLots: segmentDefaults.maxLots || 50, minLots: segmentDefaults.minLots || 1, perOrderLots: segmentDefaults.orderLots || 10 },
-                                quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100 },
+                                quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100, breakupQuantity: 0, maxLotQuantity: 0 },
+                                autosquare: 0,
                                 fixedMargin: { intradayFuture: 0, carryFuture: 0, optionBuyIntraday: 0, optionBuyCarry: 0, optionSellIntraday: 0, optionSellCarry: 0 },
                                 brokerage: { type: segmentDefaults.commissionType || 'PER_LOT', value: segmentDefaults.commissionLot || 0 },
                                 spread: { buy: 0, sell: 0 },
@@ -24225,7 +24284,8 @@ const UserManagement = () => {
                                     segment: selectedScriptSegment,
                                     settingType: 'LOT',
                                     lotSettings: { maxLots: segmentDefaults.maxLots || 50, minLots: segmentDefaults.minLots || 1, perOrderLots: segmentDefaults.orderLots || 10 },
-                                    quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100 },
+                                    quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100, breakupQuantity: 0, maxLotQuantity: 0 },
+                                    autosquare: 0,
                                     fixedMargin: { intradayFuture: 0, carryFuture: 0, optionBuyIntraday: 0, optionBuyCarry: 0, optionSellIntraday: 0, optionSellCarry: 0 },
                                     brokerage: { type: segmentDefaults.commissionType || 'PER_LOT', value: segmentDefaults.commissionLot || 0 },
                                     spread: { buy: 0, sell: 0 },
@@ -24257,7 +24317,7 @@ const UserManagement = () => {
                                       segment: selectedScriptSegment,
                                       settingType: 'LOT',
                                       lotSettings: { maxLots: segmentDefaults.maxLots || 50, minLots: segmentDefaults.minLots || 1, perOrderLots: segmentDefaults.orderLots || 10 },
-                                      quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100 },
+                                      quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100, breakupQuantity: 0, maxLotQuantity: 0 },
                                       fixedMargin: { intradayFuture: 0, carryFuture: 0, optionBuyIntraday: 0, optionBuyCarry: 0, optionSellIntraday: 0, optionSellCarry: 0 },
                                       brokerage: { type: segmentDefaults.commissionType || 'PER_LOT', value: segmentDefaults.commissionLot || 0 },
                                       spread: { buy: 0, sell: 0 },
@@ -24445,6 +24505,63 @@ const UserManagement = () => {
                                   [selectedScript]: {
                                     ...prev.scriptSettings[selectedScript],
                                     quantitySettings: { ...prev.scriptSettings[selectedScript]?.quantitySettings, perOrderQuantity: Number(e.target.value) }
+                                  }
+                                }
+                              }))}
+                              className="w-full bg-dark-600 border border-dark-500 rounded px-2 py-1 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500">Breakup Qty</label>
+                            <input
+                              type="number"
+                              value={editFormData.scriptSettings[selectedScript]?.quantitySettings?.breakupQuantity || 0}
+                              onChange={(e) => setEditFormData(prev => ({
+                                ...prev,
+                                scriptSettings: {
+                                  ...prev.scriptSettings,
+                                  [selectedScript]: {
+                                    ...prev.scriptSettings[selectedScript],
+                                    quantitySettings: { ...prev.scriptSettings[selectedScript]?.quantitySettings, breakupQuantity: Number(e.target.value) }
+                                  }
+                                }
+                              }))}
+                              className="w-full bg-dark-600 border border-dark-500 rounded px-2 py-1 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500">Max Lot Qty</label>
+                            <input
+                              type="number"
+                              value={editFormData.scriptSettings[selectedScript]?.quantitySettings?.maxLotQuantity || 0}
+                              onChange={(e) => setEditFormData(prev => ({
+                                ...prev,
+                                scriptSettings: {
+                                  ...prev.scriptSettings,
+                                  [selectedScript]: {
+                                    ...prev.scriptSettings[selectedScript],
+                                    quantitySettings: { ...prev.scriptSettings[selectedScript]?.quantitySettings, maxLotQuantity: Number(e.target.value) }
+                                  }
+                                }
+                              }))}
+                              className="w-full bg-dark-600 border border-dark-500 rounded px-2 py-1 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500">Auto Square (%)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              min="0"
+                              max="100"
+                              value={editFormData.scriptSettings[selectedScript]?.autosquare || 0}
+                              onChange={(e) => setEditFormData(prev => ({
+                                ...prev,
+                                scriptSettings: {
+                                  ...prev.scriptSettings,
+                                  [selectedScript]: {
+                                    ...prev.scriptSettings[selectedScript],
+                                    autosquare: parseFloat(e.target.value) || 0
                                   }
                                 }
                               }))}
