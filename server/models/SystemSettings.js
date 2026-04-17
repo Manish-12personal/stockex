@@ -32,8 +32,10 @@ const systemSettingsSchema = new mongoose.Schema({
     },
     quantitySettings: {
       maxQuantity: { type: Number, default: 50000 }, // Overall max quantity limit (total exposure)
-      breakupQuantity: { type: Number, default: 5000 } // Breakup quantity per single order
+      breakupQuantity: { type: Number, default: 5000 }, // Breakup quantity per single order
+      maxLotQuantity: { type: Number, default: 0 } // Maximum lots per single order (0 = no limit)
     },
+    autosquare: { type: Number, default: 0 }, // Auto square at loss percentage (0 = disabled)
     // Permissions - whether Admin can change these settings
     permissions: {
       canChangeBrokerage: { type: Boolean, default: true },
@@ -67,8 +69,10 @@ const systemSettingsSchema = new mongoose.Schema({
     },
     quantitySettings: {
       maxQuantity: { type: Number, default: 25000 },
-      breakupQuantity: { type: Number, default: 2500 }
+      breakupQuantity: { type: Number, default: 2500 },
+      maxLotQuantity: { type: Number, default: 0 }
     },
+    autosquare: { type: Number, default: 0 },
     // Permissions - whether Broker can change these settings
     permissions: {
       canChangeBrokerage: { type: Boolean, default: false },
@@ -102,8 +106,10 @@ const systemSettingsSchema = new mongoose.Schema({
     },
     quantitySettings: {
       maxQuantity: { type: Number, default: 10000 },
-      breakupQuantity: { type: Number, default: 1000 }
+      breakupQuantity: { type: Number, default: 1000 },
+      maxLotQuantity: { type: Number, default: 0 }
     },
+    autosquare: { type: Number, default: 0 },
     // Permissions - whether SubBroker can change these settings
     permissions: {
       canChangeBrokerage: { type: Boolean, default: false },

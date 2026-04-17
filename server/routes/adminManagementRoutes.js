@@ -5280,6 +5280,12 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
       if (adminDefaults.lotSettings) {
         settings.adminDefaults.lotSettings = { ...settings.adminDefaults.lotSettings, ...adminDefaults.lotSettings };
       }
+      if (adminDefaults.quantitySettings) {
+        settings.adminDefaults.quantitySettings = { ...settings.adminDefaults.quantitySettings, ...adminDefaults.quantitySettings };
+      }
+      if (typeof adminDefaults.autosquare === 'number') {
+        settings.adminDefaults.autosquare = adminDefaults.autosquare;
+      }
       if (adminDefaults.permissions) {
         settings.adminDefaults.permissions = { ...settings.adminDefaults.permissions, ...adminDefaults.permissions };
       }
@@ -5299,6 +5305,12 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
       if (brokerDefaults.lotSettings) {
         settings.brokerDefaults.lotSettings = { ...settings.brokerDefaults.lotSettings, ...brokerDefaults.lotSettings };
       }
+      if (brokerDefaults.quantitySettings) {
+        settings.brokerDefaults.quantitySettings = { ...settings.brokerDefaults.quantitySettings, ...brokerDefaults.quantitySettings };
+      }
+      if (typeof brokerDefaults.autosquare === 'number') {
+        settings.brokerDefaults.autosquare = brokerDefaults.autosquare;
+      }
       if (brokerDefaults.permissions) {
         settings.brokerDefaults.permissions = { ...settings.brokerDefaults.permissions, ...brokerDefaults.permissions };
       }
@@ -5317,6 +5329,12 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
       }
       if (subBrokerDefaults.lotSettings) {
         settings.subBrokerDefaults.lotSettings = { ...settings.subBrokerDefaults.lotSettings, ...subBrokerDefaults.lotSettings };
+      }
+      if (subBrokerDefaults.quantitySettings) {
+        settings.subBrokerDefaults.quantitySettings = { ...settings.subBrokerDefaults.quantitySettings, ...subBrokerDefaults.quantitySettings };
+      }
+      if (typeof subBrokerDefaults.autosquare === 'number') {
+        settings.subBrokerDefaults.autosquare = subBrokerDefaults.autosquare;
       }
       if (subBrokerDefaults.permissions) {
         settings.subBrokerDefaults.permissions = { ...settings.subBrokerDefaults.permissions, ...subBrokerDefaults.permissions };

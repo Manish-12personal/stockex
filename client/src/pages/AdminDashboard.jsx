@@ -14065,7 +14065,8 @@ const SystemDefaultSettings = () => {
       leverage: { intraday: 10, carryForward: 5 },
       charges: { depositFee: 0, withdrawalFee: 0, tradingFee: 0 },
       lotSettings: { maxLotSize: 100, minLotSize: 1 },
-      quantitySettings: { maxQuantity: 50000, breakupQuantity: 5000 },
+      quantitySettings: { maxQuantity: 50000, breakupQuantity: 5000, maxLotQuantity: 0 },
+      autosquare: 0,
       permissions: { canChangeBrokerage: true, canChangeCharges: true, canChangeLeverage: true, canChangeLotSettings: true, canChangeTradingSettings: true, canChangeQuantitySettings: true }
     },
     brokerDefaults: {
@@ -14073,7 +14074,8 @@ const SystemDefaultSettings = () => {
       leverage: { intraday: 8, carryForward: 4 },
       charges: { depositFee: 0, withdrawalFee: 0, tradingFee: 0 },
       lotSettings: { maxLotSize: 50, minLotSize: 1 },
-      quantitySettings: { maxQuantity: 25000, breakupQuantity: 2500 },
+      quantitySettings: { maxQuantity: 25000, breakupQuantity: 2500, maxLotQuantity: 0 },
+      autosquare: 0,
       permissions: { canChangeBrokerage: false, canChangeCharges: false, canChangeLeverage: false, canChangeLotSettings: false, canChangeTradingSettings: false, canChangeQuantitySettings: false }
     },
     subBrokerDefaults: {
@@ -14081,7 +14083,8 @@ const SystemDefaultSettings = () => {
       leverage: { intraday: 5, carryForward: 3 },
       charges: { depositFee: 0, withdrawalFee: 0, tradingFee: 0 },
       lotSettings: { maxLotSize: 25, minLotSize: 1 },
-      quantitySettings: { maxQuantity: 10000, breakupQuantity: 1000 },
+      quantitySettings: { maxQuantity: 10000, breakupQuantity: 1000, maxLotQuantity: 0 },
+      autosquare: 0,
       permissions: { canChangeBrokerage: false, canChangeCharges: false, canChangeLeverage: false, canChangeLotSettings: false, canChangeTradingSettings: false, canChangeQuantitySettings: false }
     },
     userDefaults: {
@@ -14213,16 +14216,29 @@ const SystemDefaultSettings = () => {
 
   const updateRoleSettings = (role, category, field, value) => {
     const roleKey = role === 'ADMIN' ? 'adminDefaults' : role === 'BROKER' ? 'brokerDefaults' : role === 'SUB_BROKER' ? 'subBrokerDefaults' : 'userDefaults';
-    setSettings(prev => ({
-      ...prev,
-      [roleKey]: {
-        ...prev[roleKey],
-        [category]: {
-          ...prev[roleKey][category],
-          [field]: value
-        }
+    setSettings(prev => {
+      if (category === null) {
+        // Top-level field (e.g., autosquare)
+        return {
+          ...prev,
+          [roleKey]: {
+            ...prev[roleKey],
+            [field]: value
+          }
+        };
       }
-    }));
+      // Nested field (e.g., quantitySettings.maxQuantity)
+      return {
+        ...prev,
+        [roleKey]: {
+          ...prev[roleKey],
+          [category]: {
+            ...prev[roleKey][category],
+            [field]: value
+          }
+        }
+      };
+    });
   };
 
   const getCurrentRoleSettings = () => {
@@ -14503,6 +14519,37 @@ const SystemDefaultSettings = () => {
               />
               <p className="text-xs text-gray-500 mt-1">Maximum quantity allowed per single order</p>
             </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Max Lot Quantity (Per Order)</label>
+              <input
+                type="number"
+                value={roleSettings?.quantitySettings?.maxLotQuantity || 0}
+                onChange={e => updateRoleSettings(activeTab, 'quantitySettings', 'maxLotQuantity', parseInt(e.target.value) || 0)}
+                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+              />
+              <p className="text-xs text-gray-500 mt-1">Maximum lots allowed per single order (0 = no limit)</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Auto Square Settings */}
+        <div className="bg-dark-800 rounded-lg p-6">
+          <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+            <Zap size={20} className="text-orange-400" />
+            Auto Square
+          </h3>
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Auto Square at Loss (%)</label>
+            <input
+              type="number"
+              step="0.1"
+              min="0"
+              max="100"
+              value={roleSettings?.autosquare || 0}
+              onChange={e => updateRoleSettings(activeTab, 'autosquare', null, parseFloat(e.target.value) || 0)}
+              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+            />
+            <p className="text-xs text-gray-500 mt-1">Auto square position when loss reaches this percentage (0 = disabled)</p>
           </div>
         </div>
       </div>
