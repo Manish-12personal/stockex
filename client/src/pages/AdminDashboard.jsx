@@ -7781,7 +7781,7 @@ const InstrumentManagement = () => {
   const [instruments, setInstruments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState({ segment: '', category: '', enabled: '', optionType: '' });
+  const [filter, setFilter] = useState({ segment: '', category: '', enabled: '', optionType: '', expiryDate: '' });
   const [seeding, setSeeding] = useState(false);
   const [marketData, setMarketData] = useState({});
   const [zerodhaStatus, setZerodhaStatus] = useState({ connected: false });
@@ -7837,6 +7837,7 @@ const InstrumentManagement = () => {
       }
       if (filter.category) url += `category=${filter.category}&`;
       if (filter.enabled) url += `enabled=${filter.enabled}&`;
+      if (filter.expiryDate) url += `expiryDate=${filter.expiryDate}&`;
       if (search) url += `search=${search}&`;
       url += `page=${pagination.page}&limit=${pagination.limit}`;
       
@@ -7979,6 +7980,21 @@ const InstrumentManagement = () => {
     }
   };
 
+  const handleCheckExpired = async () => {
+    setSeeding(true);
+    try {
+      const { data } = await axios.post('/api/instruments/admin/check-expired', {}, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert(`${data.message}\n\nProcessed: ${data.processed} instruments\nDisabled: ${data.disabled} expired instruments with active trades`);
+      fetchInstruments();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error checking expired instruments');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const handleSearch = (e) => {
     e.preventDefault();
     fetchInstruments();
@@ -8042,6 +8058,9 @@ const InstrumentManagement = () => {
           <button type="button" onClick={handleSeedCryptoDerivatives} disabled={seeding} className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm">
             {seeding ? '...' : 'Seed Crypto F&O'}
           </button>
+          <button type="button" onClick={handleCheckExpired} disabled={seeding} className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm">
+            {seeding ? '...' : 'Check Expired'}
+          </button>
         </div>
       </div>
 
@@ -8055,7 +8074,7 @@ const InstrumentManagement = () => {
 
       {/* Filters */}
       <div className="bg-dark-800 rounded-lg p-4 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
           <form onSubmit={handleSearch} className="md:col-span-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
@@ -8113,6 +8132,16 @@ const InstrumentManagement = () => {
             <option value="PE">Puts (PE)</option>
             <option value="FUT">Futures</option>
           </select>
+          <div className="flex flex-col">
+            <label className="text-xs text-gray-400 mb-1">Expiry up to:</label>
+            <input
+              type="date"
+              value={filter.expiryDate}
+              onChange={e => setFilter({ ...filter, expiryDate: e.target.value })}
+              className="bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+              title="Show instruments expiring up to this date"
+            />
+          </div>
         </div>
       </div>
 

@@ -13,6 +13,7 @@ import {
   upsertSyntheticCryptoOptionsInstruments
 } from '../utils/ensureCryptoDerivatives.js';
 import { sanitizeInstrumentTradingDefaultsCommission } from '../middleware/commissionValidation.js';
+import { manualCheckExpiredInstruments } from '../services/instrumentExpiryService.js';
 import {
   forcedCloseInstrumentsByIds,
   forcedOpenInstrumentsByIds
@@ -478,7 +479,7 @@ router.get('/user', protectUser, async (req, res) => {
 // Get all instruments (admin view)
 router.get('/admin', protectAdmin, async (req, res) => {
   try {
-    let { segment, category, search, enabled, optionType, displaySegment } = req.query;
+    let { segment, category, search, enabled, optionType, displaySegment, expiryDate } = req.query;
     // UI historically sent segment=FOREXFUT; DB filter is on displaySegment
     if (!displaySegment && (segment === 'FOREXFUT' || segment === 'FOREXOPT')) {
       displaySegment = segment;
@@ -526,6 +527,16 @@ router.get('/admin', protectAdmin, async (req, res) => {
         { symbol: { $regex: search, $options: 'i' } },
         { name: { $regex: search, $options: 'i' } }
       ];
+    }
+    
+    // Filter by expiry date - show instruments expiring up to the selected date
+    if (expiryDate) {
+      const filterDate = new Date(expiryDate);
+      if (!isNaN(filterDate.getTime())) {
+        // Set to end of day to include instruments expiring on the selected date
+        filterDate.setHours(23, 59, 59, 999);
+        query.expiry = { $lte: filterDate };
+      }
     }
 
     if (displaySegment === 'CRYPTOFUT' || displaySegment === 'CRYPTOOPT') {
@@ -2033,6 +2044,20 @@ router.post('/watchlist/sync', protectUser, async (req, res) => {
     res.json({ message: 'Watchlist synced successfully' });
   } catch (error) {
     console.error('Error syncing watchlist:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Manual check for expired instruments (Super Admin only)
+router.post('/admin/check-expired', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const result = await manualCheckExpiredInstruments();
+    res.json({
+      message: `Processed ${result.processed} expired instruments, disabled ${result.disabled}`,
+      ...result
+    });
+  } catch (error) {
+    console.error('Error checking expired instruments:', error);
     res.status(500).json({ message: error.message });
   }
 });

@@ -32,6 +32,7 @@ import MarketState from './models/MarketState.js';
 import TradingService from './services/tradingService.js';
 import { runGamesAutoSettlementTick } from './services/gamesAutoSettlement.js';
 import { runInstrumentAvailabilityTicks } from './services/instrumentAvailabilityJobs.js';
+import { startInstrumentExpiryMonitoring } from './services/instrumentExpiryService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -176,6 +177,8 @@ const PORT = process.env.PORT || 5001;
     // Run only after DB is ready (avoids Mongoose buffer timeout on startup)
     cleanupExpiredDemoAccounts();
     runGamesAutoSettlementTick().catch((e) => console.warn('[gamesAutoSettlement]', e?.message || e));
+    // Start instrument expiry monitoring
+    startInstrumentExpiryMonitoring();
     // Bracket / Up-Down / Jackpot / Nifty Number auto-credits. Off if GAMES_AUTO_SETTLEMENT=false
     setInterval(() => {
       runGamesAutoSettlementTick().catch((e) => console.warn('[gamesAutoSettlement]', e?.message || e));

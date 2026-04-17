@@ -268,7 +268,11 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
     } else if (user.adminCode) {
       currentAdmin = await Admin.findOne({ adminCode: user.adminCode, status: 'ACTIVE' }).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
     }
+    
+    console.log(`[WinBrokerage] Building hierarchy for user ${user.userId || user._id}, totalBrokerage: ₹${totalBrokerage}`);
+    
     while (currentAdmin) {
+      console.log(`[WinBrokerage] Adding to hierarchy: ${currentAdmin.username || currentAdmin.adminCode} (${currentAdmin.role}) - receivesHierarchyBrokerage: ${currentAdmin.receivesHierarchyBrokerage}, status: ${currentAdmin.status}`);
       hierarchyChain.push({ admin: currentAdmin, role: currentAdmin.role });
       if (currentAdmin.role === 'SUPER_ADMIN' || !currentAdmin.parentId) break;
       currentAdmin = await Admin.findById(currentAdmin.parentId).select('+receivesHierarchyBrokerage +status +role +parentId +wallet +stats +adminCode +username');
@@ -358,16 +362,32 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
     const creditedRolesWinBrk = new Set();
     let superAdminCreditedInChain = false;
     let divertedWinBrokerageToSuperAdmin = 0;
+    
+    console.log(`[WinBrokerage] Distribution breakdown: SUB_BROKER=₹${distributions.SUB_BROKER || 0}, BROKER=₹${distributions.BROKER || 0}, ADMIN=₹${distributions.ADMIN || 0}, SUPER_ADMIN=₹${distributions.SUPER_ADMIN || 0}`);
+    
     for (const { admin, role } of hierarchyChain) {
       const shareAmount = distributions[role] || 0;
-      if (shareAmount <= 0) continue;
-      if (creditedRolesWinBrk.has(role)) continue;
+      console.log(`[WinBrokerage] Processing ${admin.username || admin.adminCode} (${role}): shareAmount=₹${shareAmount}, receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}`);
+      
+      if (shareAmount <= 0) {
+        console.log(`[WinBrokerage] Skipping ${admin.username || admin.adminCode} - no share amount`);
+        continue;
+      }
+      if (creditedRolesWinBrk.has(role)) {
+        console.log(`[WinBrokerage] Skipping ${admin.username || admin.adminCode} - role ${role} already credited`);
+        continue;
+      }
       creditedRolesWinBrk.add(role);
-      if (!adminReceivesHierarchyBrokerage(admin)) {
+      
+      const isEligible = adminReceivesHierarchyBrokerage(admin);
+      console.log(`[WinBrokerage] Eligibility check for ${admin.username || admin.adminCode}: ${isEligible}`);
+      
+      if (!isEligible) {
         console.log(`[WinBrokerage] Admin ${admin.username || admin.adminCode} (${role}) brokerage diverted to SuperAdmin: receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}, amount=₹${shareAmount.toFixed(2)}`);
         divertedWinBrokerageToSuperAdmin += shareAmount;
         continue;
       }
+      console.log(`[WinBrokerage] CREDITING ${admin.username || admin.adminCode} (${role}): ₹${shareAmount.toFixed(2)}`);
       admin.wallet.balance = (admin.wallet.balance || 0) + shareAmount;
       admin.stats.totalBrokerage = (admin.stats.totalBrokerage || 0) + shareAmount;
       await admin.save();
@@ -601,11 +621,26 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
 
     const creditedGrossRoles = new Set();
     let superAdminCreditedInChain = false;
+    let divertedGrossHierarchyToSuperAdmin = 0;
+    
+    console.log(`[${logTag}] Processing gross hierarchy for ${hierarchyChain.length} admins, total: ₹${T}`);
+    
     for (const { admin, role } of hierarchyChain) {
       const shareAmount = distributions[role] || 0;
+      console.log(`[${logTag}] Processing ${admin.username || admin.adminCode} (${role}): shareAmount=₹${shareAmount}, receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}`);
+      
       if (shareAmount <= 0) continue;
       if (creditedGrossRoles.has(role)) continue;
       creditedGrossRoles.add(role);
+      
+      // Check if admin is eligible to receive brokerage
+      if (!adminReceivesHierarchyBrokerage(admin)) {
+        console.log(`[${logTag}] Admin ${admin.username || admin.adminCode} (${role}) gross hierarchy diverted to SuperAdmin: receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}, amount=₹${shareAmount.toFixed(2)}`);
+        divertedGrossHierarchyToSuperAdmin += shareAmount;
+        continue;
+      }
+      
+      console.log(`[${logTag}] CREDITING ${admin.username || admin.adminCode} (${role}): ₹${shareAmount.toFixed(2)}`);
       admin.wallet.balance = (admin.wallet.balance || 0) + shareAmount;
       admin.stats.totalBrokerage = (admin.stats.totalBrokerage || 0) + shareAmount;
       await admin.save();
@@ -631,12 +666,14 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
       if (role === 'SUPER_ADMIN') superAdminCreditedInChain = true;
     }
 
-    const remainderSa = breakdown.saAmt || 0;
-    if (remainderSa > 0 && !superAdminCreditedInChain) {
+    // Handle diverted brokerage and remainder to Super Admin
+    const totalSuperAdminAmount = (breakdown.saAmt || 0) + divertedGrossHierarchyToSuperAdmin;
+    if (totalSuperAdminAmount > 0 && !superAdminCreditedInChain) {
       const saDoc = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' });
       if (saDoc) {
-        saDoc.wallet.balance = (saDoc.wallet.balance || 0) + remainderSa;
-        saDoc.stats.totalBrokerage = (saDoc.stats.totalBrokerage || 0) + remainderSa;
+        console.log(`[${logTag}] CREDITING Super Admin: ₹${totalSuperAdminAmount.toFixed(2)} (remainder: ₹${breakdown.saAmt || 0}, diverted: ₹${divertedGrossHierarchyToSuperAdmin})`);
+        saDoc.wallet.balance = (saDoc.wallet.balance || 0) + totalSuperAdminAmount;
+        saDoc.stats.totalBrokerage = (saDoc.stats.totalBrokerage || 0) + totalSuperAdminAmount;
         await saDoc.save();
         await WalletLedger.create({
           ownerType: 'ADMIN',
@@ -644,17 +681,19 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
           adminCode: saDoc.adminCode,
           type: 'CREDIT',
           reason: 'GAME_PROFIT',
-          amount: remainderSa,
+          amount: totalSuperAdminAmount,
           balanceAfter: saDoc.wallet.balance,
-          description: `${gameLabel} gross prize fee — Super Admin remainder (₹${remainderSa.toFixed(2)})`,
+          description: divertedGrossHierarchyToSuperAdmin > 0 
+            ? `${gameLabel} gross prize fee — Super Admin (₹${(breakdown.saAmt || 0).toFixed(2)} remainder + ₹${divertedGrossHierarchyToSuperAdmin.toFixed(2)} diverted from disabled admins)`
+            : `${gameLabel} gross prize fee — Super Admin remainder (₹${totalSuperAdminAmount.toFixed(2)})`,
           meta: gameProfitLedgerMeta(
-            remainderSa,
+            totalSuperAdminAmount,
             Number(breakdown.grossPrize) || 0,
             'JACKPOT_GROSS_FEE',
             gameKey
           ),
         });
-        totalDistributed += remainderSa;
+        totalDistributed += totalSuperAdminAmount;
       }
     }
 
