@@ -1,6 +1,5 @@
 import Instrument from '../models/Instrument.js';
 import Trade from '../models/Trade.js';
-import Order from '../models/Order.js';
 import cron from 'node-cron';
 
 /**
@@ -41,13 +40,7 @@ export async function checkAndDisableExpiredInstruments() {
         status: { $in: ['open', 'pending'] }
       });
 
-      // Check if there are any pending orders for this instrument
-      const pendingOrders = await Order.countDocuments({
-        instrumentToken: instrument._id,
-        status: { $in: ['pending', 'partially_filled'] }
-      });
-
-      if (activeTrades > 0 || pendingOrders > 0) {
+      if (activeTrades > 0) {
         // Disable the instrument to remove it from bid/ask
         await Instrument.findByIdAndUpdate(instrument._id, {
           isEnabled: false,
@@ -56,7 +49,7 @@ export async function checkAndDisableExpiredInstruments() {
           adminScheduledReopenAt: null
         });
 
-        console.log(`[InstrumentExpiry] Disabled expired instrument: ${instrument.symbol} (expired: ${instrument.expiry}) - had ${activeTrades} active trades and ${pendingOrders} pending orders`);
+        console.log(`[InstrumentExpiry] Disabled expired instrument: ${instrument.symbol} (expired: ${instrument.expiry}) - had ${activeTrades} active trades`);
         disabledCount++;
       }
     }
