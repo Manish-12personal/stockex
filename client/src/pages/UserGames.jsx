@@ -53,6 +53,26 @@ function ledgerGameIdFromUi(uiId) {
   return m[uiId] || uiId;
 }
 
+/** INR only — integer in `className` colour, paise (.xx) in red */
+function renderInrRedPaise(amount, className) {
+  if (amount == null || !Number.isFinite(Number(amount))) {
+    return <span className="text-gray-500">—</span>;
+  }
+  const s = Number(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const dot = s.lastIndexOf('.');
+  if (dot === -1) {
+    return (
+      <span className={`font-bold tabular-nums tracking-tight ${className}`}>₹{s}</span>
+    );
+  }
+  return (
+    <span className={`font-bold tabular-nums tracking-tight ${className}`}>
+      ₹{s.slice(0, dot)}
+      <span className="text-red-500">{s.slice(dot)}</span>
+    </span>
+  );
+}
+
 function formatCompactCount(n) {
   const x = Number(n);
   if (!Number.isFinite(x) || x < 0) return '0';
