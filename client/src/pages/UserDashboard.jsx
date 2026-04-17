@@ -4087,7 +4087,7 @@ const TradingPanel = ({
           }`}
         >
           <div className="text-xs opacity-70">{isUsdSpot ? 'Bid (₹)' : 'Bid'}</div>
-          <div className="text-lg">{priceSymbol}{(isUsdSpot ? cryptoBidInr : liveBid)?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '--'}</div>
+          <div className="text-lg">{priceSymbol}{(isUsdSpot ? cryptoBidInr : liveBid) != null && !isNaN(isUsdSpot ? cryptoBidInr : liveBid) ? (isUsdSpot ? cryptoBidInr : liveBid).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
           <div className="text-xs">SELL</div>
         </button>
         <button
@@ -4097,7 +4097,7 @@ const TradingPanel = ({
           }`}
         >
           <div className="text-xs opacity-70">{isUsdSpot ? 'Ask (₹)' : 'Ask'}</div>
-          <div className="text-lg">{priceSymbol}{(isUsdSpot ? cryptoAskInr : liveAsk)?.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '--'}</div>
+          <div className="text-lg">{priceSymbol}{(isUsdSpot ? cryptoAskInr : liveAsk) != null && !isNaN(isUsdSpot ? cryptoAskInr : liveAsk) ? (isUsdSpot ? cryptoAskInr : liveAsk).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
           <div className="text-xs">BUY</div>
         </button>
       </div>
@@ -7952,7 +7952,7 @@ const BuySellModal = ({
               }`}
             >
               <div className="text-[10px] uppercase tracking-wide opacity-70">SELL @ Bid (₹)</div>
-              <div className="text-xl font-mono">₹{(bidInr ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              <div className="text-xl font-mono">₹{(bidInr != null && !isNaN(bidInr) ? bidInr : 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             </button>
             <button
               onClick={() => setOrderType('buy')}
@@ -7963,7 +7963,7 @@ const BuySellModal = ({
               }`}
             >
               <div className="text-[10px] uppercase tracking-wide opacity-70">BUY @ Ask (₹)</div>
-              <div className="text-xl font-mono">₹{(askInr ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              <div className="text-xl font-mono">₹{(askInr != null && !isNaN(askInr) ? askInr : 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             </button>
           </div>
 
