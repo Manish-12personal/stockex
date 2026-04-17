@@ -4463,6 +4463,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [demoPriceActive, setDemoPriceActive] = useState(false);
   const [lockedDisplayPrice, setLockedDisplayPrice] = useState(null);
   const [timerTick, setTimerTick] = useState(0); // For live countdown
+  const [sessionClearing, setSessionClearing] = useState(null);
   const resolveCheckRef = useRef(null);
 
   const fetchActiveTrades = useCallback(async () => {
@@ -4931,6 +4932,13 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 if (p != null && Number.isFinite(p) && p > 0) setCurrentPrice(p);
               }}
               onDemoPriceActive={setDemoPriceActive}
+              onSessionClearingUpdate={(clearing) => {
+                if (clearing != null && Number.isFinite(Number(clearing))) {
+                  setSessionClearing(Number(clearing));
+                } else {
+                  setSessionClearing(null);
+                }
+              }}
             />
           </div>
 
@@ -4995,7 +5003,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                         {lockedDisplayPrice ? `${lockedDisplayPrice === upperTarget ? 'BUY TARGET (Locked)' : 'LTP'}` : 'NIFTY 50 LTP'}
                       </div>
                       <div className="text-lg sm:text-xl">
-                        {renderInrRedPaise(lockedDisplayPrice || currentPrice, 'text-lg sm:text-xl text-cyan-300')}
+                        {renderInrRedPaise(lockedDisplayPrice || sessionClearing || currentPrice, 'text-lg sm:text-xl text-cyan-300')}
                       </div>
                       <div className="text-[10px] text-gray-500 mt-1">
                         {lockedDisplayPrice ? `Target locked for result at 3:30 PM` : `Bracket: ±${bracketGap} points`}
