@@ -3987,14 +3987,6 @@ const TradingPanel = ({
                   Exp: {instrument.expiry}
                 </span>
               )}
-              {/* Circuit Indicator */}
-              {circuitStatus && (
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold animate-pulse ${
-                  circuitStatus === 'UPPER' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                }`}>
-                  {circuitStatus} CIRCUIT
-                </span>
-              )}
             </div>
           </div>
           {!isUsdSpot && (
