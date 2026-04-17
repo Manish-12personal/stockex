@@ -3065,24 +3065,54 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           const currentWindow = history[i];
           const nextWindow = history[i + 1];
           
-          // If current window is the result of previous window, they should match
-          // Check if times are very close (within same minute) and adjust if needed
-          if (currentWindow.time && nextWindow.time) {
-            const currentTime = new Date(currentWindow.time);
-            const nextTime = new Date(nextWindow.time);
-            const timeDiff = Math.abs(currentTime.getTime() - nextTime.getTime());
-            
-            // If times are within 1 minute and prices don't match, use the official result
-            if (timeDiff < 60000 && Math.abs(currentWindow.ltp - nextWindow.ltp) > 0.01) {
-              // If current window has official source, update next window to match
-              if (currentWindow.source === 'official' && nextWindow.source !== 'official') {
-                nextWindow.ltp = currentWindow.ltp;
-                nextWindow.source = 'corrected';
+          // Check if these windows should have matching prices (consecutive windows)
+          if (nextWindow.windowNumber === currentWindow.windowNumber + 1) {
+            // Extract time components for comparison
+            const getCurrentTimeStr = (timeData) => {
+              if (!timeData) return null;
+              
+              if (typeof timeData === 'string') {
+                if (timeData.includes('PM') || timeData.includes('AM')) {
+                  // Extract just the time part (e.g., "8:15:00 PM" from "8:15:00 PM IST")
+                  return timeData.split(' IST')[0].trim();
+                } else if (timeData.includes('T')) {
+                  const date = new Date(timeData);
+                  return date.toLocaleTimeString('en-IN', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true,
+                    timeZone: 'Asia/Kolkata'
+                  });
+                }
+              } else {
+                const date = new Date(timeData);
+                return date.toLocaleTimeString('en-IN', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                  hour12: true,
+                  timeZone: 'Asia/Kolkata'
+                });
               }
-              // If next window has official source, update current window to match
-              else if (nextWindow.source === 'official' && currentWindow.source !== 'official') {
-                currentWindow.ltp = nextWindow.ltp;
-                currentWindow.source = 'corrected';
+              return null;
+            };
+            
+            const currentTimeStr = getCurrentTimeStr(currentWindow.time);
+            const nextTimeStr = getCurrentTimeStr(nextWindow.time);
+            
+            // If times match exactly (same hour:minute:second), prices should match
+            if (currentTimeStr && nextTimeStr && currentTimeStr === nextTimeStr) {
+              // Current window result should equal next window LTP
+              if (Math.abs(currentWindow.ltp - nextWindow.ltp) > 0.01) {
+                // Prioritize official game result over pending data
+                if (currentWindow.source === 'official' || currentWindow.source === 'result') {
+                  nextWindow.ltp = currentWindow.ltp;
+                  nextWindow.source = 'corrected';
+                } else if (nextWindow.source === 'official' || nextWindow.source === 'result') {
+                  currentWindow.ltp = nextWindow.ltp;
+                  currentWindow.source = 'corrected';
+                }
               }
             }
           }
