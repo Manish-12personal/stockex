@@ -3100,11 +3100,42 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 </div>
                 {item.time && (
                   <div className="text-[10px] text-gray-500">
-                    {typeof item.time === 'string' ? item.time : new Date(item.time).toLocaleTimeString('en-IN', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      timeZone: 'Asia/Kolkata'
-                    })} IST
+                    {(() => {
+                      // Handle different time formats consistently
+                      let timeStr = '';
+                      
+                      if (typeof item.time === 'string') {
+                        // Check if it's already in IST format like "7:45:00 PM IST"
+                        if (item.time.includes('PM') || item.time.includes('AM')) {
+                          timeStr = item.time;
+                        } else if (item.time.includes('T')) {
+                          // ISO string format - convert to IST
+                          const date = new Date(item.time);
+                          timeStr = date.toLocaleTimeString('en-IN', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                            hour12: true,
+                            timeZone: 'Asia/Kolkata'
+                          }) + ' IST';
+                        } else {
+                          // Other string format
+                          timeStr = item.time + ' IST';
+                        }
+                      } else {
+                        // Date object
+                        const date = new Date(item.time);
+                        timeStr = date.toLocaleTimeString('en-IN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                          hour12: true,
+                          timeZone: 'Asia/Kolkata'
+                        }) + ' IST';
+                      }
+                      
+                      return timeStr;
+                    })()}
                   </div>
                 )}
               </div>
