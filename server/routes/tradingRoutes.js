@@ -245,6 +245,15 @@ router.post('/margin-preview', protect, async (req, res) => {
     const maxLots = scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots || 50;
     const minLots = scriptSettings?.lotSettings?.minLots || segmentSettings?.minLots || 1;
     
+    // Get breakup quantity and max bid limits
+    const instrumentBreakupQuantity = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.breakupQuantity;
+    const segmentBreakupQuantity = segmentSettings?.quantitySettings?.breakupQuantity;
+    const breakupQuantity = instrumentBreakupQuantity || segmentBreakupQuantity || 0;
+    
+    const instrumentMaxBid = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.maxBid;
+    const segmentMaxBid = segmentSettings?.quantitySettings?.maxBid;
+    const maxBid = instrumentMaxBid || segmentMaxBid || 0;
+    
     // Check if lots exceed limit
     const lotsValid = lots >= minLots && lots <= maxLots;
     
@@ -274,7 +283,9 @@ router.post('/margin-preview', protect, async (req, res) => {
       lotsError: !lotsValid ? `Lots must be between ${minLots} and ${maxLots}` : null,
       shortfall: totalRequired > availableBalance ? totalRequired - availableBalance : 0,
       exposureIntraday: segmentSettingsForMargin?.exposureIntraday || null,
-      exposureCarryForward: segmentSettingsForMargin?.exposureCarryForward || null
+      exposureCarryForward: segmentSettingsForMargin?.exposureCarryForward || null,
+      breakupQuantity: breakupQuantity > 0 ? breakupQuantity : null,
+      maxBid: maxBid > 0 ? maxBid : null
     });
   } catch (error) {
     res.status(400).json({ message: error.message });

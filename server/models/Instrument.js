@@ -297,6 +297,12 @@ const instrumentSchema = new mongoose.Schema({
       minLots: { type: Number, default: null },
       perOrderLots: { type: Number, default: null },
     },
+    quantitySettings: {
+      // Breakup quantity - maximum quantity per single order
+      breakupQuantity: { type: Number, default: null }, // null = use admin setting
+      // Max bid - maximum number of orders allowed
+      maxBid: { type: Number, default: null } // null = use admin setting
+    },
     spread: {
       buy: { type: Number, default: null },
       sell: { type: Number, default: null },

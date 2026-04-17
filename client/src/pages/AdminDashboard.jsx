@@ -3414,7 +3414,8 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
     },
     quantitySettings: {
       maxQuantity: targetAdmin.defaultSettings?.quantitySettings?.maxQuantity ?? 50000,
-      breakupQuantity: targetAdmin.defaultSettings?.quantitySettings?.breakupQuantity ?? 5000
+      breakupQuantity: targetAdmin.defaultSettings?.quantitySettings?.breakupQuantity ?? 5000,
+      maxBid: targetAdmin.defaultSettings?.quantitySettings?.maxBid ?? 0
     }
   });
   const [permissions, setPermissions] = useState({
@@ -3528,10 +3529,17 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
   };
 
   const handleSegDefChange = (seg, field, value) => {
-    setSegDefs(prev => ({
-      ...prev,
-      [seg]: { ...prev[seg], [field]: value }
-    }));
+    setSegDefs(prev => {
+      const segData = { ...prev[seg] };
+      if (field.includes('.')) {
+        // Handle nested paths like 'quantitySettings.breakupQuantity'
+        const [parent, child] = field.split('.');
+        segData[parent] = { ...segData[parent], [child]: value };
+      } else {
+        segData[field] = value;
+      }
+      return { ...prev, [seg]: segData };
+    });
   };
 
   const handleScriptDefChange = (scriptKey, category, field, value) => {
@@ -3693,7 +3701,7 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
               {/* Quantity Settings */}
               <div className="bg-dark-700/50 rounded-lg p-4">
                 <h3 className="text-sm font-semibold text-cyan-400 mb-3 flex items-center gap-2"><BarChart3 size={16} /> Quantity Settings</h3>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Max Quantity (Total Limit)</label>
                     <input type="number" value={adminSettings.quantitySettings.maxQuantity} onChange={e => updateField('quantitySettings', 'maxQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
@@ -3701,6 +3709,10 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                   <div>
                     <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
                     <input type="number" value={adminSettings.quantitySettings.breakupQuantity} onChange={e => updateField('quantitySettings', 'breakupQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
+                    <input type="number" value={adminSettings.quantitySettings.maxBid} onChange={e => updateField('quantitySettings', 'maxBid', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                   </div>
                 </div>
               </div>
@@ -3805,6 +3817,18 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                               <div>
                                 <label className="block text-xs text-gray-400 mb-1">Order Lots</label>
                                 <input type="number" value={s.orderLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'orderLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                              </div>
+                            </div>
+                            {/* Quantity Settings */}
+                            <h4 className="text-xs font-semibold text-cyan-400 mb-2">Quantity Settings</h4>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
+                                <input type="number" value={s.quantitySettings?.breakupQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.breakupQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
+                                <input type="number" value={s.quantitySettings?.maxBid || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxBid', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                               </div>
                             </div>
                           </>
@@ -4042,7 +4066,7 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                           ...prev,
                           [scriptSearch.trim()]: prev[scriptSearch.trim()] || {
                             lotSettings: { maxLots: 50, minLots: 1, perOrderLots: 10 },
-                            quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100 },
+                            quantitySettings: { maxQuantity: 1000, minQuantity: 1, perOrderQuantity: 100, maxBid: 0 },
                             fixedMargin: { intradayFuture: 0, carryFuture: 0, optionBuyIntraday: 0, optionBuyCarry: 0, optionSellIntraday: 0, optionSellCarry: 0 },
                             brokerage: { intradayFuture: 0, carryFuture: 0, optionBuyIntraday: 0, optionBuyCarry: 0, optionSellIntraday: 0, optionSellCarry: 0 },
                             spread: { buy: 0, sell: 0 },
@@ -4102,7 +4126,7 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                           <div>
                             <h4 className="text-xs font-semibold text-blue-400 mb-2">Quantity Settings</h4>
                             <div className="space-y-2">
-                              {[['maxQuantity', 'Max Quantity'], ['minQuantity', 'Min Quantity'], ['perOrderQuantity', 'Per Order Qty']].map(([f, l]) => (
+                              {[['maxQuantity', 'Max Quantity'], ['minQuantity', 'Min Quantity'], ['perOrderQuantity', 'Per Order Qty'], ['maxBid', 'Max Bid (Orders Limit)']].map(([f, l]) => (
                                 <div key={f}>
                                   <label className="block text-xs text-gray-400 mb-1">{l}</label>
                                   <input type="number" value={sc.quantitySettings?.[f] || 0} onChange={e => handleScriptDefChange(selectedScript, 'quantitySettings', f, parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-1.5 text-sm" />

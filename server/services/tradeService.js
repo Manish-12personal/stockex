@@ -630,6 +630,34 @@ class TradeService {
       throw new Error(`Maximum ${maxLots} lots allowed for ${tradeData.symbol}`);
     }
     
+    // Validate breakup quantity and max bid limits
+    const instrumentBreakupQuantity = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.breakupQuantity;
+    const segmentBreakupQuantity = segmentSettings.quantitySettings?.breakupQuantity;
+    const breakupQuantity = instrumentBreakupQuantity || segmentBreakupQuantity || 0;
+    
+    const instrumentMaxBid = instrumentDoc?.tradingDefaults?.enabled && instrumentDoc.tradingDefaults.quantitySettings?.maxBid;
+    const segmentMaxBid = segmentSettings.quantitySettings?.maxBid;
+    const maxBid = instrumentMaxBid || segmentMaxBid || 0;
+    
+    // Check breakup quantity limit (per single order)
+    if (breakupQuantity > 0 && tradeData.quantity > breakupQuantity) {
+      throw new Error(`Maximum ${breakupQuantity} quantity allowed per order for ${tradeData.symbol}`);
+    }
+    
+    // Check max bid limit (total number of orders)
+    if (maxBid > 0) {
+      const Trade = (await import('../models/Trade.js')).default;
+      const existingOrdersCount = await Trade.countDocuments({
+        user: userId,
+        symbol: tradeData.symbol,
+        status: 'OPEN'
+      });
+      
+      if (existingOrdersCount >= maxBid) {
+        throw new Error(`Maximum ${maxBid} orders allowed for ${tradeData.symbol}. You have ${existingOrdersCount} open orders.`);
+      }
+    }
+    
     // 8. Calculate spread from user settings (script + optional crypto USD spot segment markup)
     const spreadScript = this.calculateUserSpread(scriptSettings, tradeData.side);
     const spreadSegUsd =

@@ -4070,6 +4070,23 @@ const TradingPanel = ({
               <span className="text-white ml-2">{marginPreview?.minLots || 1} - {marginPreview?.maxLots || 'Unlimited'} lots per order</span>
             </div>
           )}
+          {/* Breakup Quantity and Max Bid Limits */}
+          {(marginPreview?.breakupQuantity || marginPreview?.maxBid) && (
+            <div className="bg-orange-900/20 border border-orange-500/30 rounded p-2 text-xs space-y-1">
+              {marginPreview?.breakupQuantity && (
+                <div>
+                  <span className="text-orange-400">📊 Breakup Quantity:</span>
+                  <span className="text-white ml-2">{marginPreview.breakupQuantity} qty per order max</span>
+                </div>
+              )}
+              {marginPreview?.maxBid && (
+                <div>
+                  <span className="text-orange-400">🎯 Max Bid:</span>
+                  <span className="text-white ml-2">{marginPreview.maxBid} orders max</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

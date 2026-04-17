@@ -540,7 +540,11 @@ const adminSchema = new mongoose.Schema({
       quantitySettings: {
         maxQuantity: { type: Number, default: 1000 },
         minQuantity: { type: Number, default: 1 },
-        perOrderQuantity: { type: Number, default: 100 }
+        perOrderQuantity: { type: Number, default: 100 },
+        // Breakup quantity - maximum quantity per single order
+        breakupQuantity: { type: Number, default: 0 }, // 0 = no limit
+        // Max bid - maximum number of orders allowed
+        maxBid: { type: Number, default: 0 } // 0 = no limit
       },
       fixedMargin: {
         intradayFuture: { type: Number, default: 0 },
