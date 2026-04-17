@@ -7599,20 +7599,45 @@ const BuySellModal = ({
   const [stopLoss, setStopLoss] = useState('');
   const [inputMode, setInputMode] = useState('inr'); // 'inr' notional vs coin 'units'
   const [activeOrderTab, setActiveOrderTab] = useState('market'); // 'market' or 'pending'
+  const [freshInstrument, setFreshInstrument] = useState(null);
 
   const isForex = isForexInstrument(instrument);
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.segment === 'CRYPTO' || instrument?.exchange === 'BINANCE');
   const isUsdSpot = isUsdSpotInstrument(instrument);
 
-  const cryptoQuoteModal = isUsdSpot ? getCryptoMarketQuote(marketData, instrument) : null;
-  const liveData = isUsdSpot ? (cryptoQuoteModal || {}) : (marketData[instrument?.token] || {});
-  const ltp = isUsdSpot
-    ? (Number(liveData.ltp) || Number(liveData.close) || Number(instrument?.ltp) || 0)
-    : (liveData.ltp || instrument?.ltp || 0);
-  const liveBid = isUsdSpot ? (Number(liveData.bid) || ltp || Number(instrument?.ltp) || 0) : (liveData.bid || ltp);
-  const liveAsk = isUsdSpot ? (Number(liveData.ask) || ltp || Number(instrument?.ltp) || 0) : (liveData.ask || ltp);
+  // Fetch fresh instrument data with lastBid/lastAsk when modal opens
+  useEffect(() => {
+    const fetchFreshInstrument = async () => {
+      if (!instrument?.token && !instrument?.symbol) return;
+      try {
+        const params = new URLSearchParams();
+        if (instrument.token) params.append('token', instrument.token);
+        if (instrument.symbol) params.append('symbol', instrument.symbol);
+        if (instrument.exchange) params.append('exchange', instrument.exchange);
+        
+        const { data } = await axios.get(`/api/instruments/public?${params.toString()}`);
+        if (data?.instruments && data.instruments.length > 0) {
+          setFreshInstrument(data.instruments[0]);
+        }
+      } catch (err) {
+        console.error('Error fetching fresh instrument data:', err);
+      }
+    };
+    fetchFreshInstrument();
+  }, [instrument?.token, instrument?.symbol, instrument?.exchange]);
 
-  const feedRow = instrument?.token ? marketData[instrument.token] : null;
+  // Use fresh instrument data if available, otherwise use the prop
+  const effectiveInstrument = freshInstrument || instrument;
+
+  const cryptoQuoteModal = isUsdSpot ? getCryptoMarketQuote(marketData, effectiveInstrument) : null;
+  const liveData = isUsdSpot ? (cryptoQuoteModal || {}) : (marketData[effectiveInstrument?.token] || {});
+  const ltp = isUsdSpot
+    ? (Number(liveData.ltp) || Number(liveData.close) || Number(effectiveInstrument?.ltp) || 0)
+    : (liveData.ltp || effectiveInstrument?.ltp || 0);
+  const liveBid = isUsdSpot ? (Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0) : (liveData.bid || liveData.ltp || effectiveInstrument?.lastBid || effectiveInstrument?.ltp || 0);
+  const liveAsk = isUsdSpot ? (Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0) : (liveData.ask || liveData.ltp || effectiveInstrument?.lastAsk || effectiveInstrument?.ltp || 0);
+
+  const feedRow = effectiveInstrument?.token ? marketData[effectiveInstrument.token] : null;
   const ltpFromLiveFeed = !!(
     feedRow &&
     (feedRow.ltp != null ||
@@ -7622,9 +7647,9 @@ const BuySellModal = ({
   );
 
   // Determine segment type
-  const isFnO = instrument?.segment === 'FNO' || instrument?.instrumentType === 'OPTIONS' || instrument?.instrumentType === 'FUTURES';
-  const isMCX = instrument?.segment === 'MCX' || instrument?.exchange === 'MCX' || instrument?.displaySegment === 'MCX' ||
-                instrument?.segment === 'MCXFUT' || instrument?.segment === 'MCXOPT';
+  const isFnO = effectiveInstrument?.segment === 'FNO' || effectiveInstrument?.instrumentType === 'OPTIONS' || effectiveInstrument?.instrumentType === 'FUTURES';
+  const isMCX = effectiveInstrument?.segment === 'MCX' || effectiveInstrument?.exchange === 'MCX' || effectiveInstrument?.displaySegment === 'MCX' ||
+                effectiveInstrument?.segment === 'MCXFUT' || effectiveInstrument?.segment === 'MCXOPT';
   // MCX uses quantity-based trading (no lots), only F&O uses lots
   const isLotBased = isFnO && !isMCX;
 
@@ -7661,7 +7686,7 @@ const BuySellModal = ({
 
   // Always use lotSize from DB (no hardcoded fallbacks)
   // For MCX, lotSize is not used (quantity-based trading)
-  const lotSize = isUsdSpot ? 1 : (isMCX ? 1 : (instrument?.lotSize || 1));
+  const lotSize = isUsdSpot ? 1 : (isMCX ? 1 : (effectiveInstrument?.lotSize || 1));
 
   // For crypto: quantity is in units (BTC, ETH, etc.)
   // For MCX: quantity is direct (no lot multiplication)
