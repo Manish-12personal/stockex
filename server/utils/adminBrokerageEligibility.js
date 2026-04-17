@@ -1,11 +1,13 @@
 /**
  * Whether an admin may receive hierarchy brokerage credits (trades / games).
  * Company employees: `receivesHierarchyBrokerage === false` → share diverted to Super Admin.
+ * Disabled/closed admins: `status !== 'ACTIVE'` → share diverted to Super Admin.
  */
 
 export function adminReceivesHierarchyBrokerage(admin) {
   if (!admin) return true;
   if (admin.receivesHierarchyBrokerage === false) return false;
+  if (admin.status !== 'ACTIVE') return false;
   return true;
 }
 
