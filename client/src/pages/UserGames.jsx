@@ -3062,12 +3062,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           source = 'pending';
         }
         
-        // If we still don't have proper LTP time for BTC, try to calculate it from result time
-        if (isBTC && !time && gameResult && gameResult.resultTime) {
-          // Result time is 15 minutes after LTP time, so subtract 15 minutes
-          const resultDate = new Date(gameResult.resultTime);
-          const ltpDate = new Date(resultDate.getTime() - 15 * 60 * 1000); // Subtract 15 minutes
-          time = ltpDate.toLocaleTimeString('en-IN', {
+        // If no time available, use a default format
+        if (!time && gameResult) {
+          time = new Date().toLocaleTimeString('en-IN', {
             hour: '2-digit',
             minute: '2-digit',
             second: '2-digit',
@@ -3193,40 +3190,48 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 {item.time && (
                   <div className="text-[10px] text-gray-500">
                     {(() => {
-                      // Handle different time formats consistently
-                      let timeStr = '';
+                      // Simple time formatting - avoid Invalid Date
+                      if (!item.time) return 'Time not available';
                       
                       if (typeof item.time === 'string') {
-                        // Check if it's already in IST format like "7:45:00 PM IST"
+                        // If already formatted, return as is
                         if (item.time.includes('PM') || item.time.includes('AM')) {
-                          timeStr = item.time;
-                        } else if (item.time.includes('T')) {
-                          // ISO string format - convert to IST
+                          return item.time;
+                        }
+                        // Try to parse and format
+                        try {
                           const date = new Date(item.time);
-                          timeStr = date.toLocaleTimeString('en-IN', {
+                          if (isNaN(date.getTime())) {
+                            return item.time; // Return original if invalid
+                          }
+                          return date.toLocaleTimeString('en-IN', {
                             hour: '2-digit',
                             minute: '2-digit',
                             second: '2-digit',
                             hour12: true,
                             timeZone: 'Asia/Kolkata'
                           }) + ' IST';
-                        } else {
-                          // Other string format
-                          timeStr = item.time + ' IST';
+                        } catch (e) {
+                          return item.time; // Return original if error
                         }
-                      } else {
-                        // Date object
+                      }
+                      
+                      // Handle Date objects
+                      try {
                         const date = new Date(item.time);
-                        timeStr = date.toLocaleTimeString('en-IN', {
+                        if (isNaN(date.getTime())) {
+                          return 'Time not available';
+                        }
+                        return date.toLocaleTimeString('en-IN', {
                           hour: '2-digit',
                           minute: '2-digit',
                           second: '2-digit',
                           hour12: true,
                           timeZone: 'Asia/Kolkata'
                         }) + ' IST';
+                      } catch (e) {
+                        return 'Time not available';
                       }
-                      
-                      return timeStr;
                     })()}
                   </div>
                 )}
