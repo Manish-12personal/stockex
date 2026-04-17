@@ -3025,16 +3025,21 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         const winNum = currentWin - i - 1;
         if (winNum <= 0) continue;
         
-        // Try to get data from pending windows first
-        const pendingWindow = pendingWindows.find(pw => pw.windowNumber === winNum);
-        // Try to get data from game results
+        // Try to get data from game results first (official source)
         const gameResult = pickLatestGameResultForWindow(gameResults, winNum);
+        // Try to get data from pending windows as fallback
+        const pendingWindow = pendingWindows.find(pw => pw.windowNumber === winNum);
         
         let ltp = null;
         let time = null;
         let source = 'unknown';
         
-        if (gameResult && gameResult.closePrice) {
+        // For BTC games, prioritize official game results for consistency
+        if (isBTC && gameResult && gameResult.closePrice) {
+          ltp = Number(gameResult.closePrice);
+          time = gameResult.resultTime || gameResult.createdAt;
+          source = 'official';
+        } else if (gameResult && gameResult.closePrice) {
           ltp = Number(gameResult.closePrice);
           time = gameResult.resultTime || gameResult.createdAt;
           source = 'result';
@@ -3051,6 +3056,36 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             time: time,
             source: source
           });
+        }
+      }
+      
+      // For BTC games, validate and correct LTP consistency
+      if (isBTC && history.length > 1) {
+        for (let i = 0; i < history.length - 1; i++) {
+          const currentWindow = history[i];
+          const nextWindow = history[i + 1];
+          
+          // If current window is the result of previous window, they should match
+          // Check if times are very close (within same minute) and adjust if needed
+          if (currentWindow.time && nextWindow.time) {
+            const currentTime = new Date(currentWindow.time);
+            const nextTime = new Date(nextWindow.time);
+            const timeDiff = Math.abs(currentTime.getTime() - nextTime.getTime());
+            
+            // If times are within 1 minute and prices don't match, use the official result
+            if (timeDiff < 60000 && Math.abs(currentWindow.ltp - nextWindow.ltp) > 0.01) {
+              // If current window has official source, update next window to match
+              if (currentWindow.source === 'official' && nextWindow.source !== 'official') {
+                nextWindow.ltp = currentWindow.ltp;
+                nextWindow.source = 'corrected';
+              }
+              // If next window has official source, update current window to match
+              else if (nextWindow.source === 'official' && currentWindow.source !== 'official') {
+                currentWindow.ltp = nextWindow.ltp;
+                currentWindow.source = 'corrected';
+              }
+            }
+          }
         }
       }
       
