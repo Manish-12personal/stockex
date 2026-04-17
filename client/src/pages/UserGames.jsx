@@ -2973,26 +2973,37 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
     if (server) {
       const resultWhen = btcRefClock(btcResultRefSecForUiWindow(winNum));
+      // For BTC, check if result time has passed to show resolved or pending
+      const nowSec = currentTotalSecondsISTLib();
+      const resultSec = btcResultRefSecForUiWindow(winNum);
+      const isResultReady = nowSec >= resultSec;
+      
       return {
         ltp: server.openPrice,
-        ltpWhen: '',
-        resolved: true,
-        resultPrice: server.closePrice,
-        marketDirection:
-          server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE',
+        ltpWhen: server.ltpTime || '', // Show when LTP was captured
+        resolved: isResultReady,
+        resultPrice: isResultReady ? server.closePrice : null,
+        marketDirection: isResultReady 
+          ? (server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE')
+          : null,
         resultWhen,
         resultAt: resultWhen,
       };
     }
     if (pw) {
+      // Check if result time has passed
+      const nowSec = currentTotalSecondsISTLib();
+      const resultSec = btcResultRefSecForUiWindow(winNum);
+      const isResultReady = nowSec >= resultSec;
+      
       return {
-        ltp: null,
-        ltpWhen: '',
-        resolved: !!pw.resolved,
-        resultPrice: pw.resolved ? pw.resultPrice : null,
-        marketDirection: pw.resolved ? pw.marketDirection : null,
-        resultWhen: btcRefClock(btcResultRefSecForUiWindow(winNum)),
-        resultAt: btcRefClock(btcResultRefSecForUiWindow(winNum)),
+        ltp: pw.windowEndLTP || null,
+        ltpWhen: pw.ltpTime || '', // Show when LTP was captured (window end time)
+        resolved: !!pw.resolved && isResultReady,
+        resultPrice: (pw.resolved && isResultReady) ? pw.resultPrice : null,
+        marketDirection: (pw.resolved && isResultReady) ? pw.marketDirection : null,
+        resultWhen: btcRefClock(resultSec),
+        resultAt: btcRefClock(resultSec),
       };
     }
     if (completed) {
@@ -3034,10 +3045,12 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         let time = null;
         let source = 'unknown';
         
-        // For BTC games, prioritize official game results for consistency
+        // For BTC games, show LTP time (window end), not result time
         if (isBTC && gameResult && gameResult.closePrice) {
           ltp = Number(gameResult.closePrice);
-          time = gameResult.resultTime || gameResult.createdAt;
+          // For BTC LTP history, we want to show when the window ended (LTP time), not result time
+          // Result time is 15 minutes later, but LTP time is when the price was captured
+          time = gameResult.ltpTime || gameResult.windowEndTime || pendingWindow?.ltpTime;
           source = 'official';
         } else if (gameResult && gameResult.closePrice) {
           ltp = Number(gameResult.closePrice);
@@ -3047,6 +3060,20 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           ltp = pendingWindow.windowEndLTP;
           time = pendingWindow.ltpTime;
           source = 'pending';
+        }
+        
+        // If we still don't have proper LTP time for BTC, try to calculate it from result time
+        if (isBTC && !time && gameResult && gameResult.resultTime) {
+          // Result time is 15 minutes after LTP time, so subtract 15 minutes
+          const resultDate = new Date(gameResult.resultTime);
+          const ltpDate = new Date(resultDate.getTime() - 15 * 60 * 1000); // Subtract 15 minutes
+          time = ltpDate.toLocaleTimeString('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true,
+            timeZone: 'Asia/Kolkata'
+          }) + ' IST';
         }
         
         if (ltp && ltp > 0) {
