@@ -2076,7 +2076,7 @@ const GameLivePricePanel = ({
         <div className="mt-2 sm:mt-3 text-center flex-shrink-0 space-y-2">
           {!isBTC && (
             <div className="text-[10px] text-gray-500 uppercase tracking-wide">
-              LTP · Kite Connect last_price (IST)
+             Clearing (last 15m bar close, IST)
             </div>
           )}
           <div className="text-2xl sm:text-3xl">
@@ -2089,7 +2089,7 @@ const GameLivePricePanel = ({
           {!isBTC && sessionClearing != null && Number.isFinite(sessionClearing) && (
             <div className="rounded-lg bg-cyan-950/40 border border-cyan-600/30 px-3 py-2">
               <div className="text-[10px] text-cyan-400/90 uppercase tracking-wide mb-0.5">
-                Clearing (last 15m bar close, IST)
+                        LTP · Kite Connect last_price (IST)
               </div>
               <div className="text-lg sm:text-xl">
                 {renderInrRedPaise(sessionClearing, 'text-lg sm:text-xl text-cyan-300')}
