@@ -1592,6 +1592,7 @@ const GameLivePricePanel = ({
   onFallbackPrice,
   onDemoPriceActive,
   onSessionClearingUpdate,
+  onPriceDataUpdate,
   /** Nifty only: show scrollable LTP + IST time log under the chart (e.g. Nifty Bracket). */
   niftyLtpTape = false,
 }) => {
@@ -1604,6 +1605,8 @@ const GameLivePricePanel = ({
   const onDemoPriceActiveRef = useRef(onDemoPriceActive);
   const onSessionClearingUpdateRef = useRef(onSessionClearingUpdate);
   onSessionClearingUpdateRef.current = onSessionClearingUpdate;
+  const onPriceDataUpdateRef = useRef(onPriceDataUpdate);
+  onPriceDataUpdateRef.current = onPriceDataUpdate;
   onDemoPriceActiveRef.current = onDemoPriceActive;
   const livePriceRef = useRef(null);
   const historicalDataRef = useRef([]);
@@ -1920,6 +1923,11 @@ const GameLivePricePanel = ({
   const displayPrice = isBTC ? livePrice : nseCashOpen ? livePrice : lastKnownPrice;
   const isUp = priceChange ? parseFloat(priceChange.change) >= 0 : true;
 
+  // Notify parent of price data updates
+  useEffect(() => {
+    onPriceDataUpdateRef.current?.({ displayPrice, priceChange });
+  }, [displayPrice, priceChange]);
+
   let statusDot = 'bg-slate-500';
   let statusLabel = '';
   let statusTextClass = 'text-slate-400';
@@ -2098,36 +2106,6 @@ const GameLivePricePanel = ({
             </div>
           </div>
         )}
-        <div className="mt-2 sm:mt-3 text-center flex-shrink-0 space-y-2">
-          {!isBTC && (
-            <div className="text-[10px] text-gray-500 uppercase tracking-wide">
-             Clearing (last 15m bar close, IST)
-            </div>
-          )}
-          <div className="text-2xl sm:text-3xl">
-            {isBTC ? (
-              <span className="font-bold tracking-tight">{priceLine}</span>
-            ) : (
-              renderInrRedPaise(displayPrice, 'text-2xl sm:text-3xl text-white')
-            )}
-          </div>
-          {!isBTC && sessionClearing != null && Number.isFinite(sessionClearing) && (
-            <div className="rounded-lg bg-cyan-950/40 border border-cyan-600/30 px-3 py-2">
-              <div className="text-[10px] text-cyan-400/90 uppercase tracking-wide mb-0.5">
-                        LTP · Kite Connect last_price (IST)
-              </div>
-              <div className="text-lg sm:text-xl">
-                {renderInrRedPaise(sessionClearing, 'text-lg sm:text-xl text-cyan-300')}
-              </div>
-              <p className="text-[9px] text-gray-500 mt-1 leading-snug">
-                Same source as Kite 15m chart final candle &quot;C&quot; for today — can differ from LTP after close.
-              </p>
-            </div>
-          )}
-          <div className={`text-sm font-medium mt-1 ${priceChange ? (isUp ? 'text-green-400' : 'text-red-400') : 'text-gray-500'}`}>
-            {changeLine}
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -3809,6 +3787,9 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
   const resultTimeDisplay = settings?.resultTime || '15:45';
 
   const [dailyResult, setDailyResult] = useState(null);
+  const [sessionClearing, setSessionClearing] = useState(null);
+  const [displayPrice, setDisplayPrice] = useState(null);
+  const [priceChange, setPriceChange] = useState(null);
 
   const formatNiftyBetPlacedIST = (iso) => {
     if (!iso) return '';
@@ -4302,7 +4283,15 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
 
           {/* CENTER COLUMN - Nifty live price */}
           <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
-            <GameLivePricePanel gameId="updown" fullHeight />
+            <GameLivePricePanel
+              gameId="updown"
+              fullHeight
+              onSessionClearingUpdate={setSessionClearing}
+              onPriceDataUpdate={({ displayPrice, priceChange }) => {
+                setDisplayPrice(displayPrice);
+                setPriceChange(priceChange);
+              }}
+            />
           </div>
 
           {/* RIGHT COLUMN - Number Picker + Bet Controls */}
@@ -4391,6 +4380,40 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                       </div>
                     </div>
                   )}
+
+                  {/* Clearing and LTP Display */}
+                  <div className="mt-3 space-y-2">
+                    <div className="text-[10px] text-gray-500 uppercase tracking-wide">
+                      Clearing (last 15m bar close, IST)
+                    </div>
+                    <div className="text-2xl sm:text-3xl text-center">
+                      {displayPrice != null ? (
+                        <span className="font-bold tracking-tight text-white">
+                          ₹{displayPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      ) : (
+                        <span className="text-gray-500">—</span>
+                      )}
+                    </div>
+                    {sessionClearing != null && Number.isFinite(sessionClearing) && (
+                      <div className="rounded-lg bg-cyan-950/40 border border-cyan-600/30 px-3 py-2">
+                        <div className="text-[10px] text-cyan-400/90 uppercase tracking-wide mb-0.5">
+                          LTP · Kite Connect last_price (IST)
+                        </div>
+                        <div className="text-lg sm:text-xl">
+                          <span className="font-bold tabular-nums tracking-tight text-cyan-300">
+                            ₹{Number(sessionClearing).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <p className="text-[9px] text-gray-500 mt-1 leading-snug">
+                          Same source as Kite 15m chart final candle &quot;C&quot; for today — can differ from LTP after close.
+                        </p>
+                      </div>
+                    )}
+                    <div className={`text-sm font-medium mt-1 text-center ${priceChange ? (priceChange.change >= 0 ? 'text-green-400' : 'text-red-400') : 'text-gray-500'}`}>
+                      {priceChange ? `${priceChange.change >= 0 ? '+' : ''}₹${priceChange.change} (${priceChange.percent}%)` : '—'}
+                    </div>
+                  </div>
 
                   {/* Step 2: Select number of tickets */}
                   {currentStep === 2 && (
@@ -5498,79 +5521,6 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
           {/* LEFT COLUMN - Game Info + Achievements + History */}
           <div className="lg:w-[280px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto space-y-3">
 
-            {/* Top 3 — predicted price + bid time only (no names) */}
-            <div className="bg-dark-800 rounded-xl p-3 border border-emerald-500/30">
-              <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5 text-emerald-400">
-                <Trophy size={14} />
-                {podiumIsOfficial ? 'Top 3 winners (today)' : 'Top 3 today'}
-              </h3>
-              <p className="text-[9px] text-gray-500 mb-2">
-                {podiumIsOfficial
-                  ? 'Official ranks 1–3 · names hidden'
-                  : 'Live order (nearest spot) · final ranks after result'}
-                {podiumIsOfficial &&
-                  jackpotRankingReference != null &&
-                  Number.isFinite(Number(jackpotRankingReference)) && (
-                  <span className="text-cyan-500/90">
-                    {' '}
-                    · result ₹{jackpotRankingReference.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                  </span>
-                )}
-                {!podiumIsOfficial && leaderboardSpot != null && (
-                  <span className="text-cyan-500/90"> · spot ₹{leaderboardSpot.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
-                )}
-              </p>
-              {anonymousPodium.length === 0 ? (
-                <p className="text-gray-500 text-[10px] text-center py-3">No bids yet today</p>
-              ) : (
-                <div className="space-y-1">
-                  {anonymousPodium.map((row, idx) => {
-                    const bidTime = row.bidTime
-                      ? new Date(row.bidTime).toLocaleTimeString('en-IN', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          second: '2-digit',
-                        })
-                      : '--:--';
-                    return (
-                      <div
-                        key={idx}
-                        className={`flex items-center justify-between gap-2 p-2 rounded-lg text-xs ${
-                          idx < 3 ? 'bg-dark-700/80' : 'bg-dark-700/40'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div
-                            className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${
-                              idx === 0
-                                ? 'bg-yellow-500 text-black'
-                                : idx === 1
-                                  ? 'bg-gray-300 text-black'
-                                  : idx === 2
-                                    ? 'bg-orange-600 text-white'
-                                    : 'bg-dark-600 text-gray-400'
-                            }`}
-                          >
-                            {idx + 1}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-cyan-300 font-semibold tabular-nums truncate">
-                              {niftyAtBidDisplay(row.niftyPriceAtBid)}
-                            </div>
-                            <div className="text-[9px] text-gray-600">Predicted NIFTY</div>
-                          </div>
-                        </div>
-                        <div className="text-cyan-400/90 text-[11px] tabular-nums flex-shrink-0">{bidTime}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              <div className="mt-2 text-center text-[10px] text-gray-500">
-                {totalBids} entr{totalBids !== 1 ? 'ies' : 'y'} · {uniquePlayerCount} player{uniquePlayerCount !== 1 ? 's' : ''}
-              </div>
-            </div>
-
             {/* Prize Structure */}
             <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
               <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
@@ -5640,6 +5590,12 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 <div className="space-y-1 max-h-[160px] overflow-y-auto">
                   {bidHistory.map((bid, idx) => {
                     const niftyAtBid = formatNiftyBidPx(bid.niftyPriceAtBid);
+                    const dist =
+                      bid.distanceToReference != null && Number.isFinite(Number(bid.distanceToReference))
+                        ? Number(bid.distanceToReference).toFixed(2)
+                        : jackpotRankingReference != null && bid.niftyPriceAtBid != null
+                          ? Math.abs(Number(bid.niftyPriceAtBid) - Number(jackpotRankingReference)).toFixed(2)
+                          : '—';
                     return (
                     <div key={bid._id || idx} className={`flex items-center justify-between p-2 rounded-lg text-xs ${
                       bid.status === 'won' ? 'bg-green-900/20' :
@@ -5657,6 +5613,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                         {bid.rank != null && (
                           <div className="text-[10px] text-gray-500 mt-1">Rank #{bid.rank}</div>
                         )}
+                        <div className="text-[10px] text-gray-500 mt-0.5">Distance: <span className="text-cyan-400 font-medium">{dist}</span></div>
                       </div>
                       <div className="text-right">
                         {bid.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
