@@ -3775,16 +3775,19 @@ const TradingPanel = ({
     return null;
   }
   // For crypto: use calculated units
-  // For quantity mode (any segment): use direct quantity input
-  // For lots mode: multiply lots by lotSize
-  // For equity without toggle: use direct quantity
+  // For MCX: handle lots vs quantity modes
+  // For other segments: existing logic
   const totalQuantity = isUsdSpot 
     ? cryptoUnits 
-    : (allowsQuantityMode && inputMode === 'quantity')
-        ? parseInt(lots || 0)  // In quantity mode, use direct quantity
-        : (isFnO 
-            ? parseInt(lots || 0) * lotSize  // In lots mode for FnO, multiply by lot size
-            : parseInt(lots || 0));  // For other segments, use direct quantity
+    : isMCX
+        ? (inputMode === 'quantity' 
+            ? parseInt(lots || 0)  // MCX quantity mode: direct quantity
+            : parseInt(lots || 0) * lotSize)  // MCX lots mode: lots * lotSize
+        : (allowsQuantityMode && inputMode === 'quantity')
+            ? parseInt(lots || 0)  // Other segments quantity mode: direct quantity
+            : (isFnO 
+                ? parseInt(lots || 0) * lotSize  // Other FnO lots mode: lots * lotSize
+                : parseInt(lots || 0));  // Other segments: direct quantity
 
   // Fetch margin preview when inputs change
   useEffect(() => {
@@ -4256,22 +4259,30 @@ const TradingPanel = ({
         ) : (
           /* Indian Trading: Lots/Quantity */
           <div>
-            {/* Input Mode Toggle for Futures segments */}
-            {allowsQuantityMode && (
+            {/* Input Mode Toggle - Show for MCX (always) and other segments that allow quantity mode */}
+            {(isMCX || allowsQuantityMode) && (
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-xs text-gray-400">Trade by:</span>
-                <div className="flex bg-dark-700 rounded-lg p-0.5">
+                <div className="flex bg-dark-700 rounded-lg p-0.5 w-full">
                   <button
                     onClick={() => { setInputMode('lots'); setLots('1'); }}
-                    className={`px-3 py-1 text-xs rounded-md transition ${inputMode === 'lots' ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                    className={`flex-1 py-2 text-sm font-medium rounded-md transition ${
+                      inputMode === 'lots' 
+                        ? 'bg-green-600 text-white shadow-lg' 
+                        : 'text-gray-400 hover:text-white hover:bg-dark-600'
+                    }`}
                   >
-                    Lots
+                    {isMCX ? '📊 Trade in Lots' : 'Lots'}
                   </button>
                   <button
                     onClick={() => { setInputMode('quantity'); setLots('1'); }}
-                    className={`px-3 py-1 text-xs rounded-md transition ${inputMode === 'quantity' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                    className={`flex-1 py-2 text-sm font-medium rounded-md transition ${
+                      inputMode === 'quantity' 
+                        ? 'bg-blue-600 text-white shadow-lg' 
+                        : 'text-gray-400 hover:text-white hover:bg-dark-600'
+                    }`}
                   >
-                    Quantity
+                    {isMCX ? '🔢 Trade in Quantity' : 'Quantity'}
                   </button>
                 </div>
               </div>
@@ -4320,9 +4331,9 @@ const TradingPanel = ({
               </div>
             )}
             {/* Quick quantity buttons for quantity mode */}
-            {allowsQuantityMode && inputMode === 'quantity' && (
+            {(isMCX || allowsQuantityMode) && inputMode === 'quantity' && (
               <div className="flex gap-1 mt-2">
-                {[1, 5, 10, 25, 50].map(q => (
+                {(isMCX ? [1, 5, 10, 25, 50, 100] : [1, 5, 10, 25, 50]).map(q => (
                   <button
                     key={q}
                     onClick={() => setLots(q.toString())}
