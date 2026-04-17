@@ -4974,10 +4974,8 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                         {lockedDisplayPrice && <Lock size={10} />}
                         {lockedDisplayPrice ? `${lockedDisplayPrice === upperTarget ? 'BUY TARGET (Locked)' : 'LTP'}` : 'NIFTY 50 LTP'}
                       </div>
-                      <div className={`text-2xl font-bold ${
-                        lockedDisplayPrice ? 'text-green-400' : 'text-white'
-                      }`}>
-                        ₹{(lockedDisplayPrice || currentPrice).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      <div className="text-lg sm:text-xl">
+                        {renderInrRedPaise(lockedDisplayPrice || currentPrice, 'text-lg sm:text-xl text-cyan-300')}
                       </div>
                       <div className="text-[10px] text-gray-500 mt-1">
                         {lockedDisplayPrice ? `Target locked for result at 3:30 PM` : `Bracket: ±${bracketGap} points`}
