@@ -128,6 +128,16 @@ const instrumentSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+
+  // Last known bid and ask prices (for showing when market is closed)
+  lastBid: {
+    type: Number,
+    default: 0
+  },
+  lastAsk: {
+    type: Number,
+    default: 0
+  },
   
   // Admin controls
   isEnabled: {
@@ -330,24 +340,34 @@ instrumentSchema.statics.getEnabledForAdmin = async function(adminCode) {
 
 // Static method to update price from WebSocket
 instrumentSchema.statics.updatePrice = async function(token, priceData) {
-  const { ltp, open, high, low, close, volume } = priceData;
-  
+  const { ltp, open, high, low, close, volume, bid, ask } = priceData;
+
   const change = ltp - close;
   const changePercent = close > 0 ? ((ltp - close) / close) * 100 : 0;
-  
+
+  const updateFields = {
+    ltp,
+    open,
+    high,
+    low,
+    close,
+    volume,
+    change,
+    changePercent: Math.round(changePercent * 100) / 100,
+    lastUpdated: new Date()
+  };
+
+  // Update last bid/ask if provided and non-zero
+  if (bid && bid > 0) {
+    updateFields.lastBid = bid;
+  }
+  if (ask && ask > 0) {
+    updateFields.lastAsk = ask;
+  }
+
   return this.findOneAndUpdate(
     { token },
-    {
-      ltp,
-      open,
-      high,
-      low,
-      close,
-      volume,
-      change,
-      changePercent: Math.round(changePercent * 100) / 100,
-      lastUpdated: new Date()
-    },
+    updateFields,
     { new: true }
   );
 };

@@ -315,8 +315,9 @@ function getUsdSpotBidAsk(marketData, item) {
     return { bidPrice: bid, askPrice: ask };
   }
   const liveData = marketData[item?.token] || {};
-  const bid = liveData.bid || liveData.ltp || item?.currentPrice || item?.entryPrice;
-  const ask = liveData.ask || liveData.ltp || item?.currentPrice || item?.entryPrice;
+  // For non-USD spot (includes MCX), fall back to instrument's lastBid/lastAsk when live bid/ask are 0
+  const bid = liveData.bid || liveData.ltp || item?.lastBid || item?.ltp || item?.currentPrice || item?.entryPrice;
+  const ask = liveData.ask || liveData.ltp || item?.lastAsk || item?.ltp || item?.currentPrice || item?.entryPrice;
   return { bidPrice: bid, askPrice: ask };
 }
 
@@ -3604,8 +3605,13 @@ const TradingPanel = ({
   const livePrice = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(instrument?.ltp) || 0)
     : (liveData.ltp || instrument?.ltp || 0);
-  const liveBid = isUsdSpot ? (Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0) : (liveData.bid || livePrice);
-  const liveAsk = isUsdSpot ? (Number(liveData.ask) || livePrice || Number(instrument?.ltp) || 0) : (liveData.ask || livePrice);
+  // For non-USD spot (includes MCX), fall back to instrument's lastBid/lastAsk when live bid/ask are 0
+  const liveBid = isUsdSpot
+    ? (Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0)
+    : (liveData.bid || liveData.ltp || instrument?.lastBid || instrument?.ltp || 0);
+  const liveAsk = isUsdSpot
+    ? (Number(liveData.ask) || livePrice || Number(instrument?.ltp) || 0)
+    : (liveData.ask || liveData.ltp || instrument?.lastAsk || instrument?.ltp || 0);
   
   // Circuit detection - Upper Circuit: ask=0, Lower Circuit: bid=0
   const isUpperCircuit = !isUsdSpot && liveAsk === 0 && liveBid > 0;
