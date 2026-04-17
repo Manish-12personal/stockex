@@ -7774,11 +7774,11 @@ const BuySellModal = ({
   const bidInr =
     isUsdSpot && displayBidAsk.bidUsd && instrument
       ? spotPxToDisplayedInr(instrument, Number(displayBidAsk.bidUsd), usdRate)
-      : null;
+      : liveBid || 0;
   const askInr =
     isUsdSpot && displayBidAsk.askUsd && instrument
       ? spotPxToDisplayedInr(instrument, Number(displayBidAsk.askUsd), usdRate)
-      : null;
+      : liveAsk || 0;
   const ltpInr =
     ltp > 0 && instrument && isUsdSpot
       ? spotPxToDisplayedInr(instrument, Number(ltp), usdRate)

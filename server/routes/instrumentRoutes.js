@@ -164,7 +164,7 @@ router.get('/public', async (req, res) => {
     const skip = (page - 1) * limit;
     
     const instruments = await Instrument.find(query)
-      .select('token symbol name exchange segment displaySegment instrumentType optionType strike expiry lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured sortOrder isEnabled')
+      .select('token symbol name exchange segment displaySegment instrumentType optionType strike expiry lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured sortOrder isEnabled lastBid lastAsk')
       .sort({ isFeatured: -1, category: 1, sortOrder: 1, symbol: 1 })
       .skip(skip)
       .limit(limit);
@@ -229,7 +229,7 @@ router.get('/by-exchange/:exchange', protectUser, async (req, res) => {
     };
     
     const instruments = await Instrument.find(query)
-      .select('token symbol name exchange segment displaySegment instrumentType lotSize ltp change changePercent category isFeatured tradingSymbol expiry strike optionType')
+      .select('token symbol name exchange segment displaySegment instrumentType lotSize ltp change changePercent category isFeatured tradingSymbol expiry strike optionType lastBid lastAsk')
       .sort({ isFeatured: -1, symbol: 1 })
       .limit(limit);
     
@@ -258,7 +258,7 @@ router.get('/search', protectUser, async (req, res) => {
         { tradingSymbol: searchRegex }
       ]
     })
-      .select('token symbol name exchange segment displaySegment instrumentType lotSize ltp change changePercent category tradingSymbol expiry strike optionType')
+      .select('token symbol name exchange segment displaySegment instrumentType lotSize ltp change changePercent category tradingSymbol expiry strike optionType lastBid lastAsk')
       .sort({ isFeatured: -1, exchange: 1, symbol: 1 })
       .limit(parseInt(limit));
     
@@ -386,7 +386,7 @@ router.get('/client/closed-search', protectUser, async (req, res) => {
 
     const instruments = await Instrument.find(query)
       .select(
-        'token symbol name exchange segment displaySegment instrumentType lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured tradingSymbol expiry strike optionType adminLockedClosed clientTemporaryOpenUntil'
+        'token symbol name exchange segment displaySegment instrumentType lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured tradingSymbol expiry strike optionType adminLockedClosed clientTemporaryOpenUntil lastBid lastAsk'
       )
       .sort({ isFeatured: -1, exchange: 1, symbol: 1 })
       .limit(40);
@@ -464,7 +464,7 @@ router.get('/user', protectUser, async (req, res) => {
     query.isEnabled = true;
 
     const instruments = await Instrument.find(query)
-      .select('token symbol name exchange segment displaySegment instrumentType lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured tradingSymbol expiry strike optionType')
+      .select('token symbol name exchange segment displaySegment instrumentType lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured tradingSymbol expiry strike optionType lastBid lastAsk')
       .sort({ isFeatured: -1, exchange: 1, symbol: 1 });
 
     res.json(instruments);
@@ -1847,14 +1847,18 @@ router.get('/watchlist', protectUser, async (req, res) => {
       }
     }
     
-    // Fetch current lot sizes from Instrument database
-    const freshInstruments = await Instrument.find({ token: { $in: allTokens } }).select('token lotSize').lean();
-    const lotSizeMap = {};
+    // Fetch current lot sizes and last bid/ask from Instrument database
+    const freshInstruments = await Instrument.find({ token: { $in: allTokens } }).select('token lotSize lastBid lastAsk').lean();
+    const instrumentDataMap = {};
     for (const inst of freshInstruments) {
-      lotSizeMap[inst.token] = inst.lotSize;
+      instrumentDataMap[inst.token] = {
+        lotSize: inst.lotSize,
+        lastBid: inst.lastBid || 0,
+        lastAsk: inst.lastAsk || 0
+      };
     }
     
-    // Build result with refreshed lot sizes (split legacy FOREX into FOREXFUT / FOREXOPT)
+    // Build result with refreshed lot sizes and last bid/ask (split legacy FOREX into FOREXFUT / FOREXOPT)
     for (const wl of watchlists) {
       if (wl.segment === 'FOREX') {
         for (const inst of wl.instruments || []) {
@@ -1862,17 +1866,17 @@ router.get('/watchlist', protectUser, async (req, res) => {
           const key = it === 'OPTIONS' || it === 'OPT' ? 'FOREXOPT' : 'FOREXFUT';
           if (!result[key]) result[key] = [];
           const out =
-            inst.token && !inst.isCrypto && lotSizeMap[inst.token]
-              ? { ...inst, lotSize: lotSizeMap[inst.token] }
+            inst.token && !inst.isCrypto && instrumentDataMap[inst.token]
+              ? { ...inst, lotSize: instrumentDataMap[inst.token].lotSize, lastBid: instrumentDataMap[inst.token].lastBid, lastAsk: instrumentDataMap[inst.token].lastAsk }
               : inst;
           result[key].push(out);
         }
         continue;
       }
       result[wl.segment] = (wl.instruments || []).map(inst => {
-        // Update lotSize from database if available (non-crypto)
-        if (inst.token && !inst.isCrypto && lotSizeMap[inst.token]) {
-          return { ...inst, lotSize: lotSizeMap[inst.token] };
+        // Update lotSize and last bid/ask from database if available (non-crypto)
+        if (inst.token && !inst.isCrypto && instrumentDataMap[inst.token]) {
+          return { ...inst, lotSize: instrumentDataMap[inst.token].lotSize, lastBid: instrumentDataMap[inst.token].lastBid, lastAsk: instrumentDataMap[inst.token].lastAsk };
         }
         return inst;
       });
