@@ -2040,7 +2040,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         {inst.tradingSymbol || inst.symbol?.replace(/"/g, '') || inst.symbol}
                       </div>
                       <div className="text-sm font-medium text-gray-300 ml-2">
-                        {(inst.isCrypto || inst.isForex) ? `₹${displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {(inst.isCrypto || inst.isForex) ? `₹${displayLtp != null && !isNaN(displayLtp) ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}` : (displayLtp != null && !isNaN(displayLtp) ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--')}
                       </div>
                     </div>
                     
@@ -2587,15 +2587,15 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
                 <>
                   <span className={`font-mono font-bold ${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     ₹{isUsdSpotInstrument(selectedInstrument)
-                      ? spotPxToDisplayedInr(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                      : livePrice.ltp?.toLocaleString(undefined, {})}
+                      ? (livePrice.ltp != null && !isNaN(livePrice.ltp) ? spotPxToDisplayedInr(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--')
+                      : (livePrice.ltp != null && !isNaN(livePrice.ltp) ? livePrice.ltp.toLocaleString(undefined, {}) : '--')}
                   </span>
                   <span className={`text-sm ${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {livePrice.change >= 0 ? '+' : ''}{(parseFloat(livePrice.changePercent) || 0).toFixed(2)}%
                   </span>
                   {isUsdSpotInstrument(selectedInstrument) && livePrice.ltp != null && Number.isFinite(Number(livePrice.ltp)) && (
                     <span className="text-gray-500 font-mono text-xs hidden sm:inline" title="Binance USDT quote (same as binance.com BTC/USDT)">
-                      · USDT {Number(livePrice.ltp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      · USDT {livePrice.ltp != null && !isNaN(livePrice.ltp) ? Number(livePrice.ltp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}
                     </span>
                   )}
                 </>
@@ -2608,17 +2608,17 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
           <div className="flex items-center gap-4 text-xs text-gray-400">
             {isUsdSpotInstrument(selectedInstrument) ? (
               <>
-                <span>O: ₹{spotPxToDisplayedInr(selectedInstrument, livePrice.open || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
-                <span>H: ₹{spotPxToDisplayedInr(selectedInstrument, livePrice.high || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
-                <span>L: ₹{spotPxToDisplayedInr(selectedInstrument, livePrice.low || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
-                <span>C: ₹{spotPxToDisplayedInr(selectedInstrument, livePrice.close || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                <span>O: ₹{livePrice.open != null && !isNaN(livePrice.open) ? spotPxToDisplayedInr(selectedInstrument, livePrice.open || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--'}</span>
+                <span>H: ₹{livePrice.high != null && !isNaN(livePrice.high) ? spotPxToDisplayedInr(selectedInstrument, livePrice.high || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--'}</span>
+                <span>L: ₹{livePrice.low != null && !isNaN(livePrice.low) ? spotPxToDisplayedInr(selectedInstrument, livePrice.low || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--'}</span>
+                <span>C: ₹{livePrice.close != null && !isNaN(livePrice.close) ? spotPxToDisplayedInr(selectedInstrument, livePrice.close || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--'}</span>
               </>
             ) : (
               <>
-                <span>O: ₹{livePrice.open?.toLocaleString()}</span>
-                <span>H: ₹{livePrice.high?.toLocaleString()}</span>
-                <span>L: ₹{livePrice.low?.toLocaleString()}</span>
-                <span>C: ₹{livePrice.close?.toLocaleString()}</span>
+                <span>O: ₹{livePrice.open != null && !isNaN(livePrice.open) ? livePrice.open.toLocaleString() : '--'}</span>
+                <span>H: ₹{livePrice.high != null && !isNaN(livePrice.high) ? livePrice.high.toLocaleString() : '--'}</span>
+                <span>L: ₹{livePrice.low != null && !isNaN(livePrice.low) ? livePrice.low.toLocaleString() : '--'}</span>
+                <span>C: ₹{livePrice.close != null && !isNaN(livePrice.close) ? livePrice.close.toLocaleString() : '--'}</span>
               </>
             )}
           </div>
@@ -5171,7 +5171,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                         <div className="text-[10px] text-gray-500 truncate">Lot {inst.lotSize ?? '—'}</div>
                       </div>
                       <div className="text-right mr-1 text-xs text-gray-300 shrink-0">
-                        ₹{displayLtp.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        ₹{displayLtp != null && !isNaN(displayLtp) ? displayLtp.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '--'}
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
                         {isInWatchlist(inst) ? (
@@ -5481,11 +5481,11 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
                 <>
                   <span className={`font-mono font-bold ${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     ₹{selectedInstrument && isUsdSpotInstrument(selectedInstrument)
-                      ? spotPxToDisplayedInr(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
-                      : livePrice.ltp?.toLocaleString()}
+                      ? (livePrice.ltp != null && !isNaN(livePrice.ltp) ? spotPxToDisplayedInr(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--')
+                      : (livePrice.ltp != null && !isNaN(livePrice.ltp) ? livePrice.ltp.toLocaleString() : '--')}
                   </span>
                   <span className={`${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    {livePrice.change >= 0 ? '+' : ''}{parseFloat(livePrice.changePercent || 0).toFixed(2)}%
+                    {livePrice.change >= 0 ? '+' : ''}{(parseFloat(livePrice.changePercent) || 0).toFixed(2)}%
                   </span>
                 </>
               )}
