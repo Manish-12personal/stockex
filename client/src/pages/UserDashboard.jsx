@@ -3595,28 +3595,23 @@ const TradingPanel = ({
   // Crypto: amount mode = INR to spend; units mode = coin quantity (server still receives USDT price)
   const [cryptoAmount, setCryptoAmount] = useState('10000');
   const [cryptoInputMode, setCryptoInputMode] = useState('amount');
-
+  
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.segment === 'CRYPTO' || instrument?.exchange === 'BINANCE');
   const isForex = isForexInstrument(instrument);
   const isUsdSpot = isCryptoOnly || isForex;
-
+  
   const cryptoQuote = isUsdSpot ? getCryptoMarketQuote(marketData, instrument) : null;
   const liveData = isUsdSpot ? (cryptoQuote || {}) : (marketData[instrument?.token] || {});
   const livePrice = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(instrument?.ltp) || 0)
     : (liveData.ltp || instrument?.ltp || 0);
-  // For non-USD spot (includes MCX), fall back to instrument's lastBid/lastAsk when live bid/ask are 0
+  // Use instrument lastBid/lastAsk for instant display, then marketData, then fallback to ltp
   const liveBid = isUsdSpot
-    ? (Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0)
-    : (liveData.bid || liveData.ltp || instrument?.lastBid || instrument?.ltp || 0);
+    ? (instrument?.lastBid || Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0)
+    : (instrument?.lastBid || liveData.bid || liveData.ltp || instrument?.lastBid || instrument?.ltp || 0);
   const liveAsk = isUsdSpot
-    ? (Number(liveData.ask) || livePrice || Number(instrument?.ltp) || 0)
-    : (liveData.ask || liveData.ltp || instrument?.lastAsk || instrument?.ltp || 0);
-  
-  // Circuit detection - Upper Circuit: ask=0, Lower Circuit: bid=0
-  const isUpperCircuit = !isUsdSpot && liveAsk === 0 && liveBid > 0;
-  const isLowerCircuit = !isUsdSpot && liveBid === 0 && liveAsk > 0;
-  const circuitStatus = isUpperCircuit ? 'UPPER' : isLowerCircuit ? 'LOWER' : null;
+    ? (instrument?.lastAsk || Number(liveData.ask) || livePrice || Number(instrument?.ltp) || 0)
+    : (instrument?.lastAsk || liveData.ask || liveData.ltp || instrument?.lastAsk || instrument?.ltp || 0);
   
   const cryptoUnitPrice = livePrice > 0 ? livePrice : 0;
   const cryptoUnitNotionalInr =
@@ -7600,6 +7595,7 @@ const BuySellModal = ({
   const [inputMode, setInputMode] = useState('inr'); // 'inr' notional vs coin 'units'
   const [activeOrderTab, setActiveOrderTab] = useState('market'); // 'market' or 'pending'
   const [freshInstrument, setFreshInstrument] = useState(null);
+  const [quantityMode, setQuantityMode] = useState('lot'); // 'lot' or 'qty' for FUT instruments
 
   const isForex = isForexInstrument(instrument);
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.segment === 'CRYPTO' || instrument?.exchange === 'BINANCE');
@@ -7634,8 +7630,13 @@ const BuySellModal = ({
   const ltp = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(effectiveInstrument?.ltp) || 0)
     : (liveData.ltp || effectiveInstrument?.ltp || 0);
-  const liveBid = isUsdSpot ? (Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0) : (liveData.bid || liveData.ltp || effectiveInstrument?.lastBid || effectiveInstrument?.ltp || 0);
-  const liveAsk = isUsdSpot ? (Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0) : (liveData.ask || liveData.ltp || effectiveInstrument?.lastAsk || effectiveInstrument?.ltp || 0);
+  // Use instrument lastBid/lastAsk for instant display, then marketData, then fallback to ltp
+  const liveBid = isUsdSpot 
+    ? (instrument?.lastBid || Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0) 
+    : (instrument?.lastBid || liveData.bid || liveData.ltp || effectiveInstrument?.lastBid || effectiveInstrument?.ltp || 0);
+  const liveAsk = isUsdSpot 
+    ? (instrument?.lastAsk || Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0) 
+    : (instrument?.lastAsk || liveData.ask || liveData.ltp || effectiveInstrument?.lastAsk || effectiveInstrument?.ltp || 0);
 
   const feedRow = effectiveInstrument?.token ? marketData[effectiveInstrument.token] : null;
   const ltpFromLiveFeed = !!(
@@ -7652,6 +7653,9 @@ const BuySellModal = ({
                 effectiveInstrument?.segment === 'MCXFUT' || effectiveInstrument?.segment === 'MCXOPT';
   // MCX uses quantity-based trading (no lots), only F&O uses lots
   const isLotBased = isFnO && !isMCX;
+  // Determine if instrument is OPTIONS or FUTURES
+  const isOptions = effectiveInstrument?.instrumentType === 'OPTIONS' || effectiveInstrument?.segment === 'MCXOPT';
+  const isFutures = effectiveInstrument?.instrumentType === 'FUTURES' || effectiveInstrument?.segment === 'MCXFUT';
 
   // Determine which wallet to use based on instrument type
   const getWalletData = () => {
@@ -7690,10 +7694,10 @@ const BuySellModal = ({
 
   // For crypto: quantity is in units (BTC, ETH, etc.)
   // For MCX: quantity is direct (no lot multiplication)
-  // For F&O: quantity = lots * lotSize
+  // For F&O: quantity = lots * lotSize (if lot mode) or direct quantity (if qty mode for FUT)
   const totalQuantity = isUsdSpot
     ? parseFloat(quantity || 0.01)
-    : (isMCX ? parseFloat(quantity || 1) : (isLotBased ? parseFloat(quantity || 1) * lotSize : parseFloat(quantity || 1)));
+    : (isMCX ? parseFloat(quantity || 1) : (isLotBased && (quantityMode === 'lot' || isOptions) ? parseFloat(quantity || 1) * lotSize : parseFloat(quantity || 1)));
   const orderValue = ltp * totalQuantity;
   
   // Calculate margin required with leverage (fallback before margin-preview returns)
@@ -7989,7 +7993,33 @@ const BuySellModal = ({
 
           {/* Volume Input */}
           <div className="px-3 pb-2">
-            <label className="block text-sm text-gray-400 mb-2">Volume</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm text-gray-400">Volume</label>
+              {isFutures && (
+                <div className="flex bg-[#1a1a1a] rounded-lg border border-gray-700">
+                  <button
+                    onClick={() => setQuantityMode('lot')}
+                    className={`px-3 py-1 text-xs font-medium transition ${
+                      quantityMode === 'lot'
+                        ? 'bg-blue-600 text-white'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    Lot
+                  </button>
+                  <button
+                    onClick={() => setQuantityMode('qty')}
+                    className={`px-3 py-1 text-xs font-medium transition ${
+                      quantityMode === 'qty'
+                        ? 'bg-blue-600 text-white'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    Qty
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex items-center bg-[#1a1a1a] rounded-lg border border-gray-700">
               <button 
                 onClick={() => setQuantity((Math.max(0.01, parseFloat(quantity) - 0.01)).toFixed(2))}
@@ -8010,7 +8040,9 @@ const BuySellModal = ({
                 +
               </button>
             </div>
-            <div className="text-right text-xs text-gray-500 mt-1">{quantity} lot</div>
+            <div className="text-right text-xs text-gray-500 mt-1">
+              {quantityMode === 'lot' || isOptions ? `${quantity} lot` : `${quantity} qty`}
+            </div>
           </div>
 
           {/* Leverage Dropdown — options from segment exposure (Super Admin CRYPTO/FOREX) via margin-preview */}
@@ -8246,9 +8278,35 @@ const BuySellModal = ({
         <div className="p-4 pt-0 space-y-4">
           {/* Lots/Quantity */}
           <div>
-            <label className="block text-sm text-gray-400 mb-2">
-              {isLotBased ? `Lots (1 Lot = ${lotSize} qty)` : 'Quantity'}
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm text-gray-400">
+                {isLotBased ? `Lots (1 Lot = ${lotSize} qty)` : 'Quantity'}
+              </label>
+              {isFutures && (
+                <div className="flex bg-dark-700 rounded-lg border border-dark-600">
+                  <button
+                    onClick={() => setQuantityMode('lot')}
+                    className={`px-3 py-1 text-xs font-medium transition ${
+                      quantityMode === 'lot'
+                        ? 'bg-green-600 text-white'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    Lot
+                  </button>
+                  <button
+                    onClick={() => setQuantityMode('qty')}
+                    className={`px-3 py-1 text-xs font-medium transition ${
+                      quantityMode === 'qty'
+                        ? 'bg-green-600 text-white'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    Qty
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex gap-2">
               <button 
                 onClick={() => setQuantity(Math.max(1, parseInt(quantity) - 1).toString())}
@@ -8269,6 +8327,9 @@ const BuySellModal = ({
               >
                 +
               </button>
+            </div>
+            <div className="text-right text-xs text-gray-500 mt-1">
+              {quantityMode === 'lot' || isOptions ? `${quantity} lot` : `${quantity} qty`}
             </div>
           </div>
 

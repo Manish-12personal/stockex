@@ -1054,11 +1054,12 @@ router.get('/games/live-activity', protectUser, async (req, res) => {
 
 const GAMES_RECENT_WINNER_IDS = ['updown', 'btcupdown', 'niftyNumber', 'niftyBracket', 'niftyJackpot'];
 
-// Live feed of real win credits (all users) for the Fantasy Games hub
+// Live feed of real win credits (current user only) for the Fantasy Games hub
 router.get('/games/recent-winners', protectUser, async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 15, 1), 40);
     const rows = await GamesWalletLedger.find({
+      user: req.user._id,
       entryType: 'credit',
       amount: { $gt: 0 },
       gameId: { $in: GAMES_RECENT_WINNER_IDS },
