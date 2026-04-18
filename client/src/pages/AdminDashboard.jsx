@@ -333,6 +333,7 @@ const AdminDashboard = () => {
         { path: `${basePath}/all-accounts`, icon: Eye, label: 'All Accounts Overview' },
         { path: `${basePath}/admins`, icon: Shield, label: 'Hierarchy Management' },
         { path: `${basePath}/admin-brokerage-policy`, icon: UserCog, label: 'Admins & brokerage' },
+        { path: `${basePath}/restrictions`, icon: Lock, label: 'Restrictions' },
         { path: `${basePath}/demo-brokers`, icon: Play, label: 'Demo Brokers' },
         { path: `${basePath}/all-users`, icon: Users, label: 'All Users' },
         { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
@@ -361,6 +362,7 @@ const AdminDashboard = () => {
         ...baseItems,
         { path: `${basePath}/wallet`, icon: Wallet, label: 'My Wallet' },
         { path: `${basePath}/admins`, icon: Shield, label: 'Broker/SubBroker' },
+        { path: `${basePath}/restrictions-on-broker`, icon: Lock, label: 'Restrictions on Broker' },
         { path: `${basePath}/subordinate-fund-requests`, icon: CreditCard, label: 'Subordinate Requests' },
         { path: `${basePath}/users`, icon: Users, label: 'User Management' },
         { path: `${basePath}/create-user`, icon: UserPlus, label: 'Create User' },
@@ -382,6 +384,7 @@ const AdminDashboard = () => {
         ...baseItems,
         { path: `${basePath}/wallet`, icon: Wallet, label: isDemo ? 'Demo Wallet' : 'My Wallet' },
         { path: `${basePath}/admins`, icon: Shield, label: isDemo ? 'Demo Sub Brokers' : 'Sub Brokers' },
+        { path: `${basePath}/restrictions-on-subbroker`, icon: Lock, label: 'Restrictions on Sub Broker' },
         { path: `${basePath}/subordinate-fund-requests`, icon: CreditCard, label: isDemo ? 'Demo SubBroker Requests' : 'SubBroker Requests' },
         { path: `${basePath}/users`, icon: Users, label: isDemo ? 'Demo User Management' : 'User Management' },
         { path: `${basePath}/create-user`, icon: UserPlus, label: isDemo ? 'Create Demo User' : 'Create User' },
@@ -541,9 +544,8 @@ const AdminDashboard = () => {
           <Route path="dashboard" element={isSuperAdmin ? <SuperAdminDashboard /> : <AdminDashboardHome />} />
           {/* Super Admin Only Routes */}
           {isSuperAdmin && <Route path="all-accounts" element={<AllAccountsOverview />} />}
-          {isSuperAdmin && (
-            <Route path="admin-brokerage-policy" element={<AdminBrokerageRecipientPolicy />} />
-          )}
+          {isSuperAdmin && <Route path="admin-brokerage-policy" element={<AdminBrokerageRecipientPolicy />} />}
+          {isSuperAdmin && <Route path="restrictions" element={<SuperAdminRestrictions />} />}
           {isSuperAdmin && <Route path="admins/*" element={<AdminManagement />} />}
           {isSuperAdmin && <Route path="demo-brokers" element={<DemoBrokersManagement />} />}
           {isSuperAdmin && <Route path="all-users" element={<AllUsersManagement />} />}
@@ -566,6 +568,8 @@ const AdminDashboard = () => {
           {/* Admin Only Routes */}
           {!isSuperAdmin && <Route path="wallet" element={<AdminWallet />} />}
           {!isSuperAdmin && !isSubBroker && <Route path="admins/*" element={<AdminManagement />} />}
+          {!isSuperAdmin && isAdmin && <Route path="restrictions-on-broker" element={<AdminRestrictionsOnBroker />} />}
+          {!isSuperAdmin && isBroker && <Route path="restrictions-on-subbroker" element={<BrokerRestrictionsOnSubBroker />} />}
           {!isSuperAdmin && !isSubBroker && <Route path="subordinate-fund-requests" element={<SubordinateFundRequests />} />}
           {!isSuperAdmin && <Route path="users/*" element={<UserManagement />} />}
           {!isSuperAdmin && <Route path="create-user" element={<AdminCreateUser />} />}
@@ -26394,6 +26398,694 @@ const TransactionSlipsManagement = () => {
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// Super Admin Restrictions - Set restrictions on Admins
+const SuperAdminRestrictions = () => {
+  const { admin } = useAuth();
+  const [admins, setAdmins] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [selectedAdmin, setSelectedAdmin] = useState(null);
+  const [showRestrictionModal, setShowRestrictionModal] = useState(false);
+
+  useEffect(() => {
+    fetchAdmins();
+  }, []);
+
+  const fetchAdmins = async () => {
+    try {
+      const { data } = await axios.get('/api/admin/manage/admins', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setAdmins(data);
+    } catch (error) {
+      console.error('Error fetching admins:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenRestrictionModal = (adm) => {
+    setSelectedAdmin(adm);
+    setShowRestrictionModal(true);
+  };
+
+  const handleSaveRestrictions = async (restrictions) => {
+    setSaving(true);
+    try {
+      await axios.put(`/api/admin/manage/admins/${selectedAdmin._id}/restrictions`, restrictions, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      // Refresh admin list to get updated restrictions
+      fetchAdmins();
+      setShowRestrictionModal(false);
+      setSelectedAdmin(null);
+      alert('Restrictions saved successfully');
+    } catch (error) {
+      console.error('Error saving restrictions:', error);
+      alert('Error saving restrictions: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center">
+        <RefreshCw className="animate-spin" size={32} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 md:p-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Lock className="text-yellow-400" size={28} />
+            Restrictions
+          </h1>
+          <p className="text-gray-400 text-sm mt-1">Set trading restrictions for Admins</p>
+        </div>
+        <button
+          onClick={fetchAdmins}
+          className="flex items-center gap-2 bg-dark-700 hover:bg-dark-600 px-4 py-2 rounded-lg"
+        >
+          <RefreshCw size={18} />
+          Refresh
+        </button>
+      </div>
+
+      <div className="bg-dark-800 rounded-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-dark-900">
+              <tr>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Name</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Username</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Admin Code</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Restrictions Status</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-dark-700">
+              {admins.map((adm) => (
+                <tr key={adm._id} className="hover:bg-dark-700/50">
+                  <td className="p-3 text-sm font-medium">{adm.name}</td>
+                  <td className="p-3 text-sm text-gray-400">{adm.username}</td>
+                  <td className="p-3 text-sm font-mono text-purple-400">{adm.adminCode}</td>
+                  <td className="p-3 text-sm">
+                    {adm.restrictions ? (
+                      <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">
+                        Applied
+                      </span>
+                    ) : (
+                      <span className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded text-xs">
+                        Not Set
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-3 text-sm">
+                    <button
+                      onClick={() => handleOpenRestrictionModal(adm)}
+                      className="flex items-center gap-1 bg-purple-600 hover:bg-purple-700 px-3 py-1.5 rounded text-xs"
+                    >
+                      <Lock size={14} />
+                      Set Restrictions
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showRestrictionModal && selectedAdmin && (
+        <RestrictionModal
+          admin={selectedAdmin}
+          parentRestrictions={null}
+          onSave={handleSaveRestrictions}
+          onClose={() => { setShowRestrictionModal(false); setSelectedAdmin(null); }}
+          loading={saving}
+        />
+      )}
+    </div>
+  );
+};
+
+// Admin Restrictions on Broker
+const AdminRestrictionsOnBroker = () => {
+  const { admin } = useAuth();
+  const [brokers, setBrokers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [selectedBroker, setSelectedBroker] = useState(null);
+  const [showRestrictionModal, setShowRestrictionModal] = useState(false);
+
+  useEffect(() => {
+    fetchBrokers();
+  }, []);
+
+  const fetchBrokers = async () => {
+    try {
+      const { data } = await axios.get('/api/admin/manage/brokers', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setBrokers(data);
+    } catch (error) {
+      console.error('Error fetching brokers:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenRestrictionModal = (broker) => {
+    setSelectedBroker(broker);
+    setShowRestrictionModal(true);
+  };
+
+  const handleSaveRestrictions = async (restrictions) => {
+    setSaving(true);
+    try {
+      await axios.put(`/api/admin/manage/brokers/${selectedBroker._id}/restrictions`, restrictions, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      fetchBrokers();
+      setShowRestrictionModal(false);
+      setSelectedBroker(null);
+      alert('Restrictions saved successfully');
+    } catch (error) {
+      console.error('Error saving restrictions:', error);
+      alert('Error saving restrictions: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center">
+        <RefreshCw className="animate-spin" size={32} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 md:p-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Lock className="text-purple-400" size={28} />
+            Restrictions on Broker
+          </h1>
+          <p className="text-gray-400 text-sm mt-1">Set trading restrictions for Brokers (cannot exceed your restrictions)</p>
+        </div>
+        <button
+          onClick={fetchBrokers}
+          className="flex items-center gap-2 bg-dark-700 hover:bg-dark-600 px-4 py-2 rounded-lg"
+        >
+          <RefreshCw size={18} />
+          Refresh
+        </button>
+      </div>
+
+      <div className="bg-dark-800 rounded-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-dark-900">
+              <tr>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Name</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Username</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Broker Code</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Restrictions Status</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-dark-700">
+              {brokers.map((broker) => (
+                <tr key={broker._id} className="hover:bg-dark-700/50">
+                  <td className="p-3 text-sm font-medium">{broker.name}</td>
+                  <td className="p-3 text-sm text-gray-400">{broker.username}</td>
+                  <td className="p-3 text-sm font-mono text-cyan-400">{broker.brokerCode}</td>
+                  <td className="p-3 text-sm">
+                    {broker.restrictions ? (
+                      <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">
+                        Applied
+                      </span>
+                    ) : (
+                      <span className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded text-xs">
+                        Not Set
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-3 text-sm">
+                    <button
+                      onClick={() => handleOpenRestrictionModal(broker)}
+                      className="flex items-center gap-1 bg-purple-600 hover:bg-purple-700 px-3 py-1.5 rounded text-xs"
+                    >
+                      <Lock size={14} />
+                      Set Restrictions
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showRestrictionModal && selectedBroker && (
+        <RestrictionModal
+          admin={selectedBroker}
+          parentRestrictions={admin.restrictions}
+          onSave={handleSaveRestrictions}
+          onClose={() => { setShowRestrictionModal(false); setSelectedBroker(null); }}
+          loading={saving}
+        />
+      )}
+    </div>
+  );
+};
+
+// Broker Restrictions on Sub Broker
+const BrokerRestrictionsOnSubBroker = () => {
+  const { admin } = useAuth();
+  const [subBrokers, setSubBrokers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [selectedSubBroker, setSelectedSubBroker] = useState(null);
+  const [showRestrictionModal, setShowRestrictionModal] = useState(false);
+
+  useEffect(() => {
+    fetchSubBrokers();
+  }, []);
+
+  const fetchSubBrokers = async () => {
+    try {
+      const { data } = await axios.get('/api/admin/manage/subbrokers', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setSubBrokers(data);
+    } catch (error) {
+      console.error('Error fetching sub brokers:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenRestrictionModal = (subBroker) => {
+    setSelectedSubBroker(subBroker);
+    setShowRestrictionModal(true);
+  };
+
+  const handleSaveRestrictions = async (restrictions) => {
+    setSaving(true);
+    try {
+      await axios.put(`/api/admin/manage/subbrokers/${selectedSubBroker._id}/restrictions`, restrictions, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      fetchSubBrokers();
+      setShowRestrictionModal(false);
+      setSelectedSubBroker(null);
+      alert('Restrictions saved successfully');
+    } catch (error) {
+      console.error('Error saving restrictions:', error);
+      alert('Error saving restrictions: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center">
+        <RefreshCw className="animate-spin" size={32} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 md:p-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Lock className="text-cyan-400" size={28} />
+            Restrictions on Sub Broker
+          </h1>
+          <p className="text-gray-400 text-sm mt-1">Set trading restrictions for Sub Brokers (cannot exceed your restrictions)</p>
+        </div>
+        <button
+          onClick={fetchSubBrokers}
+          className="flex items-center gap-2 bg-dark-700 hover:bg-dark-600 px-4 py-2 rounded-lg"
+        >
+          <RefreshCw size={18} />
+          Refresh
+        </button>
+      </div>
+
+      <div className="bg-dark-800 rounded-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-dark-900">
+              <tr>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Name</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Username</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Sub Broker Code</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Restrictions Status</th>
+                <th className="p-3 text-left text-xs font-semibold text-gray-400">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-dark-700">
+              {subBrokers.map((subBroker) => (
+                <tr key={subBroker._id} className="hover:bg-dark-700/50">
+                  <td className="p-3 text-sm font-medium">{subBroker.name}</td>
+                  <td className="p-3 text-sm text-gray-400">{subBroker.username}</td>
+                  <td className="p-3 text-sm font-mono text-green-400">{subBroker.subBrokerCode}</td>
+                  <td className="p-3 text-sm">
+                    {subBroker.restrictions ? (
+                      <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">
+                        Applied
+                      </span>
+                    ) : (
+                      <span className="px-2 py-1 bg-gray-500/20 text-gray-400 rounded text-xs">
+                        Not Set
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-3 text-sm">
+                    <button
+                      onClick={() => handleOpenRestrictionModal(subBroker)}
+                      className="flex items-center gap-1 bg-purple-600 hover:bg-purple-700 px-3 py-1.5 rounded text-xs"
+                    >
+                      <Lock size={14} />
+                      Set Restrictions
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showRestrictionModal && selectedSubBroker && (
+        <RestrictionModal
+          admin={selectedSubBroker}
+          parentRestrictions={admin.restrictions}
+          onSave={handleSaveRestrictions}
+          onClose={() => { setShowRestrictionModal(false); setSelectedSubBroker(null); }}
+          loading={saving}
+        />
+      )}
+    </div>
+  );
+};
+
+// Restriction Modal Component
+const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading }) => {
+  const [restrictions, setRestrictions] = useState({
+    intradayLimit: admin.restrictions?.intradayLimit || '',
+    carryforwardLimit: admin.restrictions?.carryforwardLimit || '',
+    maxLot: admin.restrictions?.maxLot || '',
+    minLot: admin.restrictions?.minLot || '',
+    breakupQuantity: admin.restrictions?.breakupQuantity || '',
+    maxPositionValue: admin.restrictions?.maxPositionValue || '',
+    maxExposure: admin.restrictions?.maxExposure || '',
+    allowIntraday: admin.restrictions?.allowIntraday ?? true,
+    allowCarryforward: admin.restrictions?.allowCarryforward ?? true,
+    allowShortSelling: admin.restrictions?.allowShortSelling ?? true,
+    allowOptions: admin.restrictions?.allowOptions ?? true,
+    allowFutures: admin.restrictions?.allowFutures ?? true,
+    allowCommodity: admin.restrictions?.allowCommodity ?? true,
+    allowCrypto: admin.restrictions?.allowCrypto ?? true,
+  });
+
+  const handleChange = (field, value) => {
+    setRestrictions({ ...restrictions, [field]: value });
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    
+    // Validate against parent restrictions
+    if (parentRestrictions) {
+      if (parentRestrictions.intradayLimit && restrictions.intradayLimit > parentRestrictions.intradayLimit) {
+        alert(`Intraday limit cannot exceed parent's limit of ${parentRestrictions.intradayLimit}`);
+        return;
+      }
+      if (parentRestrictions.carryforwardLimit && restrictions.carryforwardLimit > parentRestrictions.carryforwardLimit) {
+        alert(`Carryforward limit cannot exceed parent's limit of ${parentRestrictions.carryforwardLimit}`);
+        return;
+      }
+      if (parentRestrictions.maxLot && restrictions.maxLot > parentRestrictions.maxLot) {
+        alert(`Max lot cannot exceed parent's limit of ${parentRestrictions.maxLot}`);
+        return;
+      }
+      if (parentRestrictions.minLot && restrictions.minLot < parentRestrictions.minLot) {
+        alert(`Min lot cannot be less than parent's minimum of ${parentRestrictions.minLot}`);
+        return;
+      }
+      if (parentRestrictions.breakupQuantity && restrictions.breakupQuantity > parentRestrictions.breakupQuantity) {
+        alert(`Breakup quantity cannot exceed parent's limit of ${parentRestrictions.breakupQuantity}`);
+        return;
+      }
+      if (parentRestrictions.maxPositionValue && restrictions.maxPositionValue > parentRestrictions.maxPositionValue) {
+        alert(`Max position value cannot exceed parent's limit of ${parentRestrictions.maxPositionValue}`);
+        return;
+      }
+      if (parentRestrictions.maxExposure && restrictions.maxExposure > parentRestrictions.maxExposure) {
+        alert(`Max exposure cannot exceed parent's limit of ${parentRestrictions.maxExposure}`);
+        return;
+      }
+    }
+
+    onSave(restrictions);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold">
+              Set Restrictions for {admin.name}
+            </h2>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-white"
+            >
+              <X size={24} />
+            </button>
+          </div>
+
+          {parentRestrictions && (
+            <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded">
+              <p className="text-xs text-yellow-400">
+                ⚠️ You cannot set restrictions that are less restrictive than your parent's restrictions.
+              </p>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Limit Fields */}
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Intraday Limit (₹)</label>
+                <input
+                  type="number"
+                  value={restrictions.intradayLimit}
+                  onChange={(e) => handleChange('intradayLimit', parseFloat(e.target.value) || '')}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                  placeholder="Enter limit"
+                />
+                {parentRestrictions?.intradayLimit && (
+                  <p className="text-[10px] text-yellow-400 mt-1">Parent limit: {parentRestrictions.intradayLimit}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Carryforward Limit (₹)</label>
+                <input
+                  type="number"
+                  value={restrictions.carryforwardLimit}
+                  onChange={(e) => handleChange('carryforwardLimit', parseFloat(e.target.value) || '')}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                  placeholder="Enter limit"
+                />
+                {parentRestrictions?.carryforwardLimit && (
+                  <p className="text-[10px] text-yellow-400 mt-1">Parent limit: {parentRestrictions.carryforwardLimit}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Max Lot</label>
+                <input
+                  type="number"
+                  value={restrictions.maxLot}
+                  onChange={(e) => handleChange('maxLot', parseInt(e.target.value) || '')}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                  placeholder="Enter max lot"
+                />
+                {parentRestrictions?.maxLot && (
+                  <p className="text-[10px] text-yellow-400 mt-1">Parent limit: {parentRestrictions.maxLot}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Min Lot</label>
+                <input
+                  type="number"
+                  value={restrictions.minLot}
+                  onChange={(e) => handleChange('minLot', parseInt(e.target.value) || '')}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                  placeholder="Enter min lot"
+                />
+                {parentRestrictions?.minLot && (
+                  <p className="text-[10px] text-yellow-400 mt-1">Parent minimum: {parentRestrictions.minLot}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Breakup Quantity</label>
+                <input
+                  type="number"
+                  value={restrictions.breakupQuantity}
+                  onChange={(e) => handleChange('breakupQuantity', parseInt(e.target.value) || '')}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                  placeholder="Enter breakup quantity"
+                />
+                {parentRestrictions?.breakupQuantity && (
+                  <p className="text-[10px] text-yellow-400 mt-1">Parent limit: {parentRestrictions.breakupQuantity}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Max Position Value (₹)</label>
+                <input
+                  type="number"
+                  value={restrictions.maxPositionValue}
+                  onChange={(e) => handleChange('maxPositionValue', parseFloat(e.target.value) || '')}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                  placeholder="Enter max position value"
+                />
+                {parentRestrictions?.maxPositionValue && (
+                  <p className="text-[10px] text-yellow-400 mt-1">Parent limit: {parentRestrictions.maxPositionValue}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Max Exposure (₹)</label>
+                <input
+                  type="number"
+                  value={restrictions.maxExposure}
+                  onChange={(e) => handleChange('maxExposure', parseFloat(e.target.value) || '')}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                  placeholder="Enter max exposure"
+                />
+                {parentRestrictions?.maxExposure && (
+                  <p className="text-[10px] text-yellow-400 mt-1">Parent limit: {parentRestrictions.maxExposure}</p>
+                )}
+              </div>
+
+              {/* Permission Toggles */}
+              <div className="md:col-span-2">
+                <h3 className="text-sm font-semibold text-gray-300 mb-3">Trading Permissions</h3>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-dark-700 rounded">
+                <span className="text-sm">Allow Intraday</span>
+                <input
+                  type="checkbox"
+                  checked={restrictions.allowIntraday}
+                  onChange={(e) => handleChange('allowIntraday', e.target.checked)}
+                  className="w-5 h-5 rounded"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-dark-700 rounded">
+                <span className="text-sm">Allow Carryforward</span>
+                <input
+                  type="checkbox"
+                  checked={restrictions.allowCarryforward}
+                  onChange={(e) => handleChange('allowCarryforward', e.target.checked)}
+                  className="w-5 h-5 rounded"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-dark-700 rounded">
+                <span className="text-sm">Allow Short Selling</span>
+                <input
+                  type="checkbox"
+                  checked={restrictions.allowShortSelling}
+                  onChange={(e) => handleChange('allowShortSelling', e.target.checked)}
+                  className="w-5 h-5 rounded"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-dark-700 rounded">
+                <span className="text-sm">Allow Options</span>
+                <input
+                  type="checkbox"
+                  checked={restrictions.allowOptions}
+                  onChange={(e) => handleChange('allowOptions', e.target.checked)}
+                  className="w-5 h-5 rounded"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-dark-700 rounded">
+                <span className="text-sm">Allow Futures</span>
+                <input
+                  type="checkbox"
+                  checked={restrictions.allowFutures}
+                  onChange={(e) => handleChange('allowFutures', e.target.checked)}
+                  className="w-5 h-5 rounded"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-dark-700 rounded">
+                <span className="text-sm">Allow Commodity</span>
+                <input
+                  type="checkbox"
+                  checked={restrictions.allowCommodity}
+                  onChange={(e) => handleChange('allowCommodity', e.target.checked)}
+                  className="w-5 h-5 rounded"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-dark-700 rounded">
+                <span className="text-sm">Allow Crypto</span>
+                <input
+                  type="checkbox"
+                  checked={restrictions.allowCrypto}
+                  onChange={(e) => handleChange('allowCrypto', e.target.checked)}
+                  className="w-5 h-5 rounded"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 bg-dark-700 hover:bg-dark-600 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded disabled:opacity-50"
+              >
+                {loading ? 'Saving...' : 'Save Restrictions'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   );
 };

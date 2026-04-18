@@ -571,6 +571,26 @@ const adminSchema = new mongoose.Schema({
       blocked: { type: Boolean, default: false }
     },
     default: {}
+  },
+
+  // Trading Restrictions - Set by parent admin (SuperAdmin for Admin, Admin for Broker, Broker for SubBroker)
+  // Child admin cannot set restrictions that are less restrictive than parent's restrictions
+  restrictions: {
+    intradayLimit: { type: Number, default: 0 }, // Maximum intraday position value (₹)
+    carryforwardLimit: { type: Number, default: 0 }, // Maximum carryforward position value (₹)
+    maxLot: { type: Number, default: 0 }, // Maximum lot size per order
+    minLot: { type: Number, default: 0 }, // Minimum lot size per order
+    breakupQuantity: { type: Number, default: 0 }, // Maximum breakup quantity per order
+    maxPositionValue: { type: Number, default: 0 }, // Maximum total position value (₹)
+    maxExposure: { type: Number, default: 0 }, // Maximum exposure (₹)
+    // Trading permissions
+    allowIntraday: { type: Boolean, default: true },
+    allowCarryforward: { type: Boolean, default: true },
+    allowShortSelling: { type: Boolean, default: true },
+    allowOptions: { type: Boolean, default: true },
+    allowFutures: { type: Boolean, default: true },
+    allowCommodity: { type: Boolean, default: true },
+    allowCrypto: { type: Boolean, default: true }
   }
 }, { timestamps: true });
 

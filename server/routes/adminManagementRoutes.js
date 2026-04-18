@@ -475,6 +475,158 @@ router.put('/admins/:id/lot-settings', protectAdmin, superAdminOnly, async (req,
   }
 });
 
+// Update admin restrictions (Super Admin only)
+router.put('/admins/:id/restrictions', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    if (admin.role === 'SUPER_ADMIN') return res.status(403).json({ message: 'Cannot modify Super Admin restrictions' });
+    
+    admin.restrictions = req.body;
+    await admin.save();
+    
+    res.json({ message: 'Restrictions updated successfully', restrictions: admin.restrictions });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update broker restrictions (Admin only)
+router.put('/brokers/:id/restrictions', protectAdmin, async (req, res) => {
+  try {
+    const currentAdmin = req.admin;
+    
+    const broker = await Admin.findById(req.params.id);
+    if (!broker) return res.status(404).json({ message: 'Broker not found' });
+    if (broker.role !== 'BROKER') return res.status(400).json({ message: 'Target is not a broker' });
+    
+    // Verify that the current admin is the parent of this broker
+    if (broker.createdBy.toString() !== currentAdmin._id.toString()) {
+      return res.status(403).json({ message: 'You can only set restrictions for your own brokers' });
+    }
+    
+    // Validate against parent restrictions
+    if (currentAdmin.restrictions) {
+      const parentRestrictions = currentAdmin.restrictions;
+      const newRestrictions = req.body;
+      
+      if (parentRestrictions.intradayLimit && newRestrictions.intradayLimit > parentRestrictions.intradayLimit) {
+        return res.status(400).json({ message: `Intraday limit cannot exceed parent's limit of ${parentRestrictions.intradayLimit}` });
+      }
+      if (parentRestrictions.carryforwardLimit && newRestrictions.carryforwardLimit > parentRestrictions.carryforwardLimit) {
+        return res.status(400).json({ message: `Carryforward limit cannot exceed parent's limit of ${parentRestrictions.carryforwardLimit}` });
+      }
+      if (parentRestrictions.maxLot && newRestrictions.maxLot > parentRestrictions.maxLot) {
+        return res.status(400).json({ message: `Max lot cannot exceed parent's limit of ${parentRestrictions.maxLot}` });
+      }
+      if (parentRestrictions.minLot && newRestrictions.minLot < parentRestrictions.minLot) {
+        return res.status(400).json({ message: `Min lot cannot be less than parent's minimum of ${parentRestrictions.minLot}` });
+      }
+      if (parentRestrictions.breakupQuantity && newRestrictions.breakupQuantity > parentRestrictions.breakupQuantity) {
+        return res.status(400).json({ message: `Breakup quantity cannot exceed parent's limit of ${parentRestrictions.breakupQuantity}` });
+      }
+      if (parentRestrictions.maxPositionValue && newRestrictions.maxPositionValue > parentRestrictions.maxPositionValue) {
+        return res.status(400).json({ message: `Max position value cannot exceed parent's limit of ${parentRestrictions.maxPositionValue}` });
+      }
+      if (parentRestrictions.maxExposure && newRestrictions.maxExposure > parentRestrictions.maxExposure) {
+        return res.status(400).json({ message: `Max exposure cannot exceed parent's limit of ${parentRestrictions.maxExposure}` });
+      }
+    }
+    
+    broker.restrictions = req.body;
+    await broker.save();
+    
+    res.json({ message: 'Restrictions updated successfully', restrictions: broker.restrictions });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update sub-broker restrictions (Broker only)
+router.put('/subbrokers/:id/restrictions', protectAdmin, async (req, res) => {
+  try {
+    const currentAdmin = req.admin;
+    
+    const subBroker = await Admin.findById(req.params.id);
+    if (!subBroker) return res.status(404).json({ message: 'Sub Broker not found' });
+    if (subBroker.role !== 'SUB_BROKER') return res.status(400).json({ message: 'Target is not a sub-broker' });
+    
+    // Verify that the current admin is the parent of this sub-broker
+    if (subBroker.createdBy.toString() !== currentAdmin._id.toString()) {
+      return res.status(403).json({ message: 'You can only set restrictions for your own sub-brokers' });
+    }
+    
+    // Validate against parent restrictions
+    if (currentAdmin.restrictions) {
+      const parentRestrictions = currentAdmin.restrictions;
+      const newRestrictions = req.body;
+      
+      if (parentRestrictions.intradayLimit && newRestrictions.intradayLimit > parentRestrictions.intradayLimit) {
+        return res.status(400).json({ message: `Intraday limit cannot exceed parent's limit of ${parentRestrictions.intradayLimit}` });
+      }
+      if (parentRestrictions.carryforwardLimit && newRestrictions.carryforwardLimit > parentRestrictions.carryforwardLimit) {
+        return res.status(400).json({ message: `Carryforward limit cannot exceed parent's limit of ${parentRestrictions.carryforwardLimit}` });
+      }
+      if (parentRestrictions.maxLot && newRestrictions.maxLot > parentRestrictions.maxLot) {
+        return res.status(400).json({ message: `Max lot cannot exceed parent's limit of ${parentRestrictions.maxLot}` });
+      }
+      if (parentRestrictions.minLot && newRestrictions.minLot < parentRestrictions.minLot) {
+        return res.status(400).json({ message: `Min lot cannot be less than parent's minimum of ${parentRestrictions.minLot}` });
+      }
+      if (parentRestrictions.breakupQuantity && newRestrictions.breakupQuantity > parentRestrictions.breakupQuantity) {
+        return res.status(400).json({ message: `Breakup quantity cannot exceed parent's limit of ${parentRestrictions.breakupQuantity}` });
+      }
+      if (parentRestrictions.maxPositionValue && newRestrictions.maxPositionValue > parentRestrictions.maxPositionValue) {
+        return res.status(400).json({ message: `Max position value cannot exceed parent's limit of ${parentRestrictions.maxPositionValue}` });
+      }
+      if (parentRestrictions.maxExposure && newRestrictions.maxExposure > parentRestrictions.maxExposure) {
+        return res.status(400).json({ message: `Max exposure cannot exceed parent's limit of ${parentRestrictions.maxExposure}` });
+      }
+    }
+    
+    subBroker.restrictions = req.body;
+    await subBroker.save();
+    
+    res.json({ message: 'Restrictions updated successfully', restrictions: subBroker.restrictions });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get all brokers (Admin only)
+router.get('/brokers', protectAdmin, async (req, res) => {
+  try {
+    const currentAdmin = req.admin;
+    
+    // Admin can only see their own brokers
+    const brokers = await Admin.find({
+      role: 'BROKER',
+      createdBy: currentAdmin._id
+    }).select('-password -pin');
+    
+    res.json(brokers);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get all sub-brokers (Broker only)
+router.get('/subbrokers', protectAdmin, async (req, res) => {
+  try {
+    const currentAdmin = req.admin;
+    
+    // Broker can only see their own sub-brokers
+    const subBrokers = await Admin.find({
+      role: 'SUB_BROKER',
+      createdBy: currentAdmin._id
+    }).select('-password -pin');
+    
+    res.json(subBrokers);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // ============ HIERARCHICAL LEVERAGE MANAGEMENT ============
 
 // Set max leverage for child admin (hierarchical)
