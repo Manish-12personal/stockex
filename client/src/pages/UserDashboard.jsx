@@ -10,7 +10,7 @@ import {
   ChevronDown, ChevronRight, Settings, Bell, User, X,
   BarChart2, History, ListOrdered, UserCircle, Menu,
   ArrowDownCircle, ArrowUpCircle, CreditCard, Copy, Check, Building2,
-  Home, ArrowLeft, ClipboardList, Star, Info
+  Home, ArrowLeft, ClipboardList, Star, Info, ArrowRightLeft
 } from 'lucide-react';
 import MarketWatch from '../components/MarketWatch';
 import ClosedInstrumentsTicker from '../components/ClosedInstrumentsTicker';
