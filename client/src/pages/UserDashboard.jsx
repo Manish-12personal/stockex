@@ -1699,53 +1699,6 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
         ))}
       </div>
 
-      {/* Share and Earn More Section */}
-      <div className="p-3 border-b border-dark-600 bg-gradient-to-b from-dark-750 to-dark-800">
-        <div className="flex items-center gap-2 mb-2">
-          <Share2 size={16} className="text-purple-400" />
-          <span className="text-xs font-bold text-purple-400">Share and Earn More</span>
-        </div>
-        {user?.referralCode ? (
-          <div className="space-y-2">
-            <div className="bg-dark-700 rounded p-2">
-              <div className="text-xs text-gray-400 mb-1">Your referral code:</div>
-              <div className="flex items-center gap-2">
-                <code className="text-xs font-mono text-green-400 flex-1 bg-dark-800 px-2 py-1 rounded">{user.referralCode}</code>
-                <button
-                  onClick={() => {
-                    const link = `${window.location.origin}/signup?ref=${user.referralCode}`;
-                    navigator.clipboard.writeText(link);
-                    alert('Referral link copied to clipboard!');
-                  }}
-                  className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-2 py-1 rounded font-medium transition-colors"
-                  title="Copy referral link"
-                >
-                  Copy
-                </button>
-              </div>
-            </div>
-            <div className="text-xs text-gray-400">
-              Earn 5% of friends' first game wins (top 10) + brokerage from first trading win!
-            </div>
-          </div>
-        ) : (
-          <button
-            onClick={async () => {
-              try {
-                const headers = { Authorization: `Bearer ${user.token}` };
-                const { data } = await axios.post('/api/referral/generate', {}, { headers });
-                alert('Referral code generated!');
-              } catch (error) {
-                alert(error.response?.data?.message || 'Failed to generate referral code');
-              }
-            }}
-            className="w-full bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white text-xs py-1.5 rounded font-medium transition-all shadow-lg shadow-purple-600/20"
-          >
-            Generate Referral Code
-          </button>
-        )}
-      </div>
-
       {/* Search */}
       <div className="p-2 border-b border-dark-600">
         <div className="relative">

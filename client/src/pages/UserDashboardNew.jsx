@@ -6,7 +6,7 @@ import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import {
   Home, Wallet, Users, FileText, Copy, BarChart2, User, HelpCircle,
   LogOut, Menu, X, ChevronDown, Settings, Bell, Sun, Moon,
-  TrendingUp, CreditCard, Building2, MoreHorizontal, Receipt, ChevronUp
+  TrendingUp, CreditCard, Building2, MoreHorizontal, Receipt, ChevronUp, Share2
 } from 'lucide-react';
 
 // Import page components
@@ -1568,6 +1568,58 @@ const UserDashboardNew = () => {
             </Link>
           ))}
         </nav>
+
+        {/* Share and Earn More Section */}
+        <div className="p-2 border-t border-dark-600">
+          <div className="bg-gradient-to-b from-dark-750 to-dark-800 rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Share2 size={16} className="text-purple-400 flex-shrink-0" />
+              <span className={`text-xs font-bold text-purple-400 whitespace-nowrap overflow-hidden transition-all duration-300 ${sidebarOpen ? 'w-auto opacity-100' : 'w-0 opacity-0'}`}>
+                Share and Earn
+              </span>
+            </div>
+            {user?.referralCode ? (
+              <div className="space-y-2">
+                <div className="bg-dark-700 rounded p-2">
+                  <div className={`text-xs text-gray-400 mb-1 ${sidebarOpen ? 'block' : 'hidden'}`}>Your code:</div>
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs font-mono text-green-400 flex-1 bg-dark-800 px-2 py-1 rounded">{user.referralCode}</code>
+                    <button
+                      onClick={() => {
+                        const link = `${window.location.origin}/signup?ref=${user.referralCode}`;
+                        navigator.clipboard.writeText(link);
+                        alert('Referral link copied!');
+                      }}
+                      className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-2 py-1 rounded font-medium transition-colors flex-shrink-0"
+                      title="Copy"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                </div>
+                <div className={`text-xs text-gray-400 ${sidebarOpen ? 'block' : 'hidden'}`}>
+                  Earn rewards from referrals!
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={async () => {
+                  try {
+                    const headers = { Authorization: `Bearer ${user.token}` };
+                    await axios.post('/api/referral/generate', {}, { headers });
+                    alert('Referral code generated!');
+                    window.location.reload();
+                  } catch (error) {
+                    alert(error.response?.data?.message || 'Failed');
+                  }
+                }}
+                className="w-full bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white text-xs py-1.5 rounded font-medium transition-all shadow-lg shadow-purple-600/20"
+              >
+                Generate Code
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* Theme Toggle */}
         <div className="p-2 border-t border-dark-600">
