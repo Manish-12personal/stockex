@@ -40,12 +40,21 @@ const UserLogin = () => {
       if (refCode) {
         try {
           // Fetch branding
-          const { data: brandingData } = await axios.get(`/api/admin/branding/${refCode}`);
-          setBranding(brandingData);
-          
+          try {
+            const { data: brandingData } = await axios.get(`/api/admin/branding/${refCode}`);
+            setBranding(brandingData);
+          } catch (err) {
+            console.error('Failed to fetch branding:', err);
+          }
+
           // Fetch broker info including certificate
-          const { data: brokerData } = await axios.get(`/api/user/broker-info/${refCode}`);
-          setBrokerInfo(brokerData);
+          try {
+            const { data: brokerData } = await axios.get(`/api/user/broker-info/${refCode}`);
+            setBrokerInfo(brokerData);
+          } catch (err) {
+            console.error('Failed to fetch broker info:', err);
+            // Don't crash if broker info fails - it's optional for user referrals
+          }
         } catch (err) {
           console.error('Failed to fetch branding/broker info:', err);
         }
