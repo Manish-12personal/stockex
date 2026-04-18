@@ -43,6 +43,12 @@ const UserAccounts = () => {
   const [showMcxOrders, setShowMcxOrders] = useState(false);
   const [mcxOrders, setMcxOrders] = useState([]);
   const [mcxOrdersLoading, setMcxOrdersLoading] = useState(false);
+  
+  // Wallet transfer dropdown state
+  const [showWalletTransferDropdown, setShowWalletTransferDropdown] = useState(null); // null, 'trading', 'mcx', 'games', 'crypto', 'forex'
+  const [showWalletTransferModal, setShowWalletTransferModal] = useState(false);
+  const [walletTransferSource, setWalletTransferSource] = useState('');
+  const [walletTransferTarget, setWalletTransferTarget] = useState('');
 
   const fetchWallet = useCallback(async () => {
     if (!user?.token) return;
@@ -289,7 +295,7 @@ const UserAccounts = () => {
           </div>
 
           {/* Account Actions */}
-          <div className="p-4 flex gap-2">
+          <div className="p-4 flex gap-2 relative">
             <button 
               onClick={opestockexRoom}
               className="flex-1 flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 py-3 rounded-lg font-medium transition"
@@ -313,6 +319,47 @@ const UserAccounts = () => {
               <Minus size={18} />
               Withdraw
             </button>
+            <button 
+              onClick={() => setShowWalletTransferDropdown(showWalletTransferDropdown === 'trading' ? null : 'trading')}
+              className="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 px-4 py-3 rounded-lg transition"
+              title="Transfer to other wallets"
+            >
+              <ArrowLeftRight size={18} />
+              Transfer
+            </button>
+            
+            {/* Dropdown menu */}
+            {showWalletTransferDropdown === 'trading' && (
+              <div className="absolute bottom-full right-0 mb-2 bg-dark-700 border border-dark-600 rounded-lg shadow-xl z-50 min-w-[200px]">
+                <div className="p-2">
+                  <div className="text-xs text-gray-400 px-2 py-1 mb-1">Transfer to:</div>
+                  <button
+                    onClick={() => { setWalletTransferSource('wallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    MCX Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('wallet'); setWalletTransferTarget('gamesWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Games Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('wallet'); setWalletTransferTarget('cryptoWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Crypto Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('wallet'); setWalletTransferTarget('forexWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Forex Wallet
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -487,7 +534,7 @@ const UserAccounts = () => {
           </div>
 
           {/* Account Actions */}
-          <div className="p-4 flex gap-2">
+          <div className="p-4 flex gap-2 relative">
             <button 
               onClick={openMcxTrading}
               className="flex-1 flex items-center justify-center gap-2 bg-yellow-600 hover:bg-yellow-700 py-3 rounded-lg font-medium transition"
@@ -511,6 +558,47 @@ const UserAccounts = () => {
               <Minus size={18} />
               Withdraw
             </button>
+            <button 
+              onClick={() => setShowWalletTransferDropdown(showWalletTransferDropdown === 'mcx' ? null : 'mcx')}
+              className="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 px-4 py-3 rounded-lg transition"
+              title="Transfer to other wallets"
+            >
+              <ArrowLeftRight size={18} />
+              Transfer
+            </button>
+            
+            {/* Dropdown menu */}
+            {showWalletTransferDropdown === 'mcx' && (
+              <div className="absolute bottom-full right-0 mb-2 bg-dark-700 border border-dark-600 rounded-lg shadow-xl z-50 min-w-[200px]">
+                <div className="p-2">
+                  <div className="text-xs text-gray-400 px-2 py-1 mb-1">Transfer to:</div>
+                  <button
+                    onClick={() => { setWalletTransferSource('mcxWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Trading Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('mcxWallet'); setWalletTransferTarget('gamesWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Games Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('mcxWallet'); setWalletTransferTarget('cryptoWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Crypto Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('mcxWallet'); setWalletTransferTarget('forexWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Forex Wallet
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -672,7 +760,7 @@ const UserAccounts = () => {
           </div>
 
           {/* Account Actions */}
-          <div className="p-4 flex gap-2">
+          <div className="p-4 flex gap-2 relative">
             <button 
               onClick={openGamesTrading}
               className="flex-1 flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 py-3 rounded-lg font-medium transition"
@@ -696,6 +784,47 @@ const UserAccounts = () => {
               <Minus size={18} />
               Withdraw
             </button>
+            <button 
+              onClick={() => setShowWalletTransferDropdown(showWalletTransferDropdown === 'games' ? null : 'games')}
+              className="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 px-4 py-3 rounded-lg transition"
+              title="Transfer to other wallets"
+            >
+              <ArrowLeftRight size={18} />
+              Transfer
+            </button>
+            
+            {/* Dropdown menu */}
+            {showWalletTransferDropdown === 'games' && (
+              <div className="absolute bottom-full right-0 mb-2 bg-dark-700 border border-dark-600 rounded-lg shadow-xl z-50 min-w-[200px]">
+                <div className="p-2">
+                  <div className="text-xs text-gray-400 px-2 py-1 mb-1">Transfer to:</div>
+                  <button
+                    onClick={() => { setWalletTransferSource('gamesWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Trading Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('gamesWallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    MCX Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('gamesWallet'); setWalletTransferTarget('cryptoWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Crypto Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('gamesWallet'); setWalletTransferTarget('forexWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Forex Wallet
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         </div>
@@ -749,7 +878,7 @@ const UserAccounts = () => {
             </div>
           </div>
 
-          <div className="p-4 flex gap-2">
+          <div className="p-4 flex gap-2 relative">
             <button
               type="button"
               onClick={openCryptoTrading}
@@ -776,6 +905,47 @@ const UserAccounts = () => {
               <Minus size={18} />
               Withdraw
             </button>
+            <button 
+              onClick={() => setShowWalletTransferDropdown(showWalletTransferDropdown === 'crypto' ? null : 'crypto')}
+              className="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 px-4 py-3 rounded-lg transition"
+              title="Transfer to other wallets"
+            >
+              <ArrowLeftRight size={18} />
+              Transfer
+            </button>
+            
+            {/* Dropdown menu */}
+            {showWalletTransferDropdown === 'crypto' && (
+              <div className="absolute bottom-full right-0 mb-2 bg-dark-700 border border-dark-600 rounded-lg shadow-xl z-50 min-w-[200px]">
+                <div className="p-2">
+                  <div className="text-xs text-gray-400 px-2 py-1 mb-1">Transfer to:</div>
+                  <button
+                    onClick={() => { setWalletTransferSource('cryptoWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Trading Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('cryptoWallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    MCX Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('cryptoWallet'); setWalletTransferTarget('gamesWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Games Wallet
+                  </button>
+                  <button
+                    onClick={() => { setWalletTransferSource('cryptoWallet'); setWalletTransferTarget('forexWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Forex Wallet
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -827,7 +997,7 @@ const UserAccounts = () => {
               </div>
             </div>
 
-            <div className="p-4 flex gap-2">
+            <div className="p-4 flex gap-2 relative">
               <button
                 type="button"
                 onClick={openForexTrading}
@@ -854,6 +1024,47 @@ const UserAccounts = () => {
                 <Minus size={18} />
                 Withdraw
               </button>
+              <button 
+                onClick={() => setShowWalletTransferDropdown(showWalletTransferDropdown === 'forex' ? null : 'forex')}
+                className="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 px-4 py-3 rounded-lg transition"
+                title="Transfer to other wallets"
+              >
+                <ArrowLeftRight size={18} />
+                Transfer
+              </button>
+              
+              {/* Dropdown menu */}
+              {showWalletTransferDropdown === 'forex' && (
+                <div className="absolute bottom-full right-0 mb-2 bg-dark-700 border border-dark-600 rounded-lg shadow-xl z-50 min-w-[200px]">
+                  <div className="p-2">
+                    <div className="text-xs text-gray-400 px-2 py-1 mb-1">Transfer to:</div>
+                    <button
+                      onClick={() => { setWalletTransferSource('forexWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                    >
+                      Trading Wallet
+                    </button>
+                    <button
+                      onClick={() => { setWalletTransferSource('forexWallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                    >
+                      MCX Wallet
+                    </button>
+                    <button
+                      onClick={() => { setWalletTransferSource('forexWallet'); setWalletTransferTarget('gamesWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                    >
+                      Games Wallet
+                    </button>
+                    <button
+                      onClick={() => { setWalletTransferSource('forexWallet'); setWalletTransferTarget('cryptoWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                    >
+                      Crypto Wallet
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -970,6 +1181,17 @@ const UserAccounts = () => {
           direction={forexTransferDirection}
           onClose={() => setShowForexTransferModal(false)}
           onSuccess={() => { fetchWallet(); setShowForexTransferModal(false); }}
+        />
+      )}
+
+      {/* Wallet Transfer Modal */}
+      {showWalletTransferModal && (
+        <WalletTransferModal
+          token={user?.token}
+          sourceWallet={walletTransferSource}
+          targetWallet={walletTransferTarget}
+          onClose={() => setShowWalletTransferModal(false)}
+          onSuccess={() => { fetchWallet(); setShowWalletTransferModal(false); }}
         />
       )}
     </div>
@@ -1657,6 +1879,159 @@ const ForexTransferModal = ({ user, walletBalance, forexBalance, direction, onCl
             {loading ? 'Transferring...' : `Transfer to ${destLabel}`}
           </button>
         </form>
+      </div>
+    </div>
+  );
+};
+
+// Wallet Transfer Modal - Transfer between different wallets
+const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuccess }) => {
+  const [source, setSource] = useState(sourceWallet || 'wallet');
+  const [target, setTarget] = useState(targetWallet || '');
+  const [amount, setAmount] = useState('');
+  const [remarks, setRemarks] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  useEffect(() => {
+    if (sourceWallet) {
+      setSource(sourceWallet);
+    }
+  }, [sourceWallet]);
+
+  useEffect(() => {
+    if (targetWallet) {
+      setTarget(targetWallet);
+    }
+  }, [targetWallet]);
+
+  const handleTransfer = async (e) => {
+    e.preventDefault();
+    if (!target || !amount || Number(amount) <= 0) {
+      setError('Please select target wallet and enter valid amount');
+      return;
+    }
+    if (source === target) {
+      setError('Source and target wallets cannot be the same');
+      return;
+    }
+    
+    setLoading(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      await axios.post('/api/users/wallet-transfer', {
+        sourceWallet: source,
+        targetWallet: target,
+        amount: Number(amount),
+        remarks
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      setSuccess(`Successfully transferred ₹${Number(amount).toLocaleString()}`);
+      setAmount('');
+      setRemarks('');
+      setTimeout(() => {
+        onSuccess();
+        onClose();
+      }, 1500);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Transfer failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getWalletDisplayName = (walletType) => {
+    switch(walletType) {
+      case 'wallet': return 'Trading Wallet';
+      case 'cryptoWallet': return 'Crypto Wallet';
+      case 'forexWallet': return 'Forex Wallet';
+      case 'mcxWallet': return 'MCX Wallet';
+      case 'gamesWallet': return 'Games Wallet';
+      default: return walletType;
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-lg w-full max-w-lg p-6">
+        <div className="flex justify-between mb-4">
+          <h2 className="text-xl font-bold flex items-center gap-2">
+            <ArrowLeftRight size={24} /> Wallet Transfer
+          </h2>
+          <button onClick={onClose}><X size={24} /></button>
+        </div>
+
+        {error && <div className="bg-red-500/20 text-red-400 p-3 rounded mb-4">{error}</div>}
+        {success && <div className="bg-green-500/20 text-green-400 p-3 rounded mb-4">{success}</div>}
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Source Wallet</label>
+            <select 
+              value={source} 
+              onChange={e => setSource(e.target.value)}
+              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+            >
+              <option value="wallet">Trading Wallet</option>
+              <option value="cryptoWallet">Crypto Wallet</option>
+              <option value="forexWallet">Forex Wallet</option>
+              <option value="mcxWallet">MCX Wallet</option>
+              <option value="gamesWallet">Games Wallet</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Target Wallet</label>
+            <select 
+              value={target} 
+              onChange={e => setTarget(e.target.value)}
+              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+            >
+              <option value="">-- Select Target --</option>
+              <option value="wallet" disabled={source === 'wallet'}>Trading Wallet</option>
+              <option value="cryptoWallet" disabled={source === 'cryptoWallet'}>Crypto Wallet</option>
+              <option value="forexWallet" disabled={source === 'forexWallet'}>Forex Wallet</option>
+              <option value="mcxWallet" disabled={source === 'mcxWallet'}>MCX Wallet</option>
+              <option value="gamesWallet" disabled={source === 'gamesWallet'}>Games Wallet</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Amount (₹)</label>
+            <input
+              type="number"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              placeholder="Enter amount"
+              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+              min="1"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Remarks (Optional)</label>
+            <input
+              type="text"
+              value={remarks}
+              onChange={e => setRemarks(e.target.value)}
+              placeholder="e.g., Fund transfer"
+              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+            />
+          </div>
+
+          <button
+            onClick={handleTransfer}
+            disabled={loading}
+            className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 py-3 rounded font-medium"
+          >
+            {loading ? 'Transferring...' : 'Transfer'}
+          </button>
+        </div>
       </div>
     </div>
   );
