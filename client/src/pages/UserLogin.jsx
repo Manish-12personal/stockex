@@ -360,14 +360,14 @@ const UserLogin = () => {
                     <Shield className="w-5 h-5 text-green-400" />
                     <span className="font-semibold text-green-400">Registering with Verified Broker</span>
                   </div>
-                  
+
                   <div className="space-y-3">
                     {/* Broker Name */}
                     <div className="flex items-center justify-between">
                       <span className="text-gray-400 text-sm">Broker</span>
                       <span className="text-white font-medium">{brokerInfo.name || brokerInfo.username}</span>
                     </div>
-                    
+
                     {/* Certificate Code (Referral Code) - Read Only */}
                     <div>
                       <label className="block text-xs text-gray-400 mb-1">Certificate Code</label>
@@ -377,7 +377,7 @@ const UserLogin = () => {
                         <span className="text-yellow-400 font-mono font-medium flex-1">{refCode}</span>
                       </div>
                     </div>
-                    
+
                     {/* Specialization */}
                     {brokerInfo.specialization && (
                       <div className="flex items-center justify-between text-sm">
@@ -385,6 +385,23 @@ const UserLogin = () => {
                         <span className="text-white">{brokerInfo.specialization}</span>
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Show referral code when registering without broker info (user-to-user referral) */}
+              {isRegister && refCode && !brokerInfo && (
+                <div className="mb-4 p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/30 rounded-xl">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Award className="w-5 h-5 text-purple-400" />
+                    <span className="font-semibold text-purple-400">Referral Code Applied</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Your Referral Code</label>
+                    <div className="flex items-center gap-2 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2">
+                      <span className="text-purple-400 font-mono font-medium flex-1">{refCode}</span>
+                    </div>
                   </div>
                 </div>
               )}
