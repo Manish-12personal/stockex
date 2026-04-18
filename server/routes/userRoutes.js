@@ -48,6 +48,7 @@ import {
 import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate, atomicGamesWalletDebit } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger, GAMES_WALLET_GAME_LABELS } from '../utils/gamesWalletLedger.js';
 import GamesWalletLedger from '../models/GamesWalletLedger.js';
+import WalletTransferService from '../services/walletTransferService.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
 import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
 import {
@@ -664,6 +665,44 @@ router.get('/wallet', protectUser, async (req, res) => {
       rmsStatus: user.rmsSettings?.tradingBlocked ? 'BLOCKED' : 'ACTIVE',
       rmsBlockReason: user.rmsSettings?.blockReason
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Wallet-to-wallet transfer
+router.post('/wallet-transfer', protectUser, async (req, res) => {
+  try {
+    const { sourceWallet, targetWallet, amount, remarks } = req.body;
+
+    if (!sourceWallet || !targetWallet) {
+      return res.status(400).json({ message: 'Source and target wallets are required' });
+    }
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Transfer amount must be greater than 0' });
+    }
+
+    const result = await WalletTransferService.executeTransfer(
+      req.user._id,
+      sourceWallet,
+      targetWallet,
+      amount,
+      remarks || '',
+      req.user._id
+    );
+
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Get wallet transfer history
+router.get('/wallet-transfer-history', protectUser, async (req, res) => {
+  try {
+    const history = await WalletTransferService.getTransferHistory(req.user._id);
+    res.json({ history });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

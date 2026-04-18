@@ -20,6 +20,7 @@ import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
 import { resolveNiftyBracketTrade } from '../services/niftyBracketResolve.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
+import WalletTransferService from '../services/walletTransferService.js';
 import {
   distributeGameProfit,
   distributeWinBrokerage,
@@ -872,6 +873,55 @@ router.get('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+});
+
+// Admin wallet transfer - Transfer funds between different wallets of an admin
+router.post('/admins/:id/wallet-transfer', protectAdmin, async (req, res) => {
+  try {
+    const { sourceWallet, targetWallet, amount, remarks } = req.body;
+    const parentAdmin = req.admin;
+    const targetAdminId = req.params.id;
+
+    if (!sourceWallet || !targetWallet) {
+      return res.status(400).json({ message: 'Source and target wallets are required' });
+    }
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Transfer amount must be greater than 0' });
+    }
+
+    const targetAdmin = await Admin.findById(targetAdminId);
+    if (!targetAdmin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+
+    // Verify hierarchy - parent must be able to manage child
+    if (parentAdmin.role !== 'SUPER_ADMIN') {
+      if (!parentAdmin.canManage(targetAdmin.role)) {
+        return res.status(403).json({ message: 'You cannot manage this admin level' });
+      }
+      if (targetAdmin.parentId && targetAdmin.parentId.toString() !== parentAdmin._id.toString()) {
+        const isInHierarchy = targetAdmin.hierarchyPath?.some(id => id.toString() === parentAdmin._id.toString());
+        if (!isInHierarchy) {
+          return res.status(403).json({ message: 'This admin is not under your management' });
+        }
+      }
+    }
+
+    // Execute transfer
+    const result = await WalletTransferService.executeTransfer(
+      targetAdminId,
+      sourceWallet,
+      targetWallet,
+      amount,
+      remarks || '',
+      parentAdmin._id
+    );
+
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 });
 
