@@ -1361,6 +1361,147 @@ const UserSupport = () => (
   </div>
 );
 
+// Referral Component
+const UserReferral = () => {
+  const { user } = useAuth();
+  const [referralStats, setReferralStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchReferralStats();
+  }, [user?.token]);
+
+  const fetchReferralStats = async () => {
+    if (!user?.token) return;
+    try {
+      const headers = { Authorization: `Bearer ${user.token}` };
+      const { data } = await axios.get('/api/referral/stats', { headers });
+      setReferralStats(data);
+    } catch (error) {
+      console.error('Error fetching referral stats:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateReferralCode = async () => {
+    try {
+      const headers = { Authorization: `Bearer ${user.token}` };
+      await axios.post('/api/referral/generate', {}, { headers });
+      alert('Referral code generated!');
+      window.location.reload();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Failed to generate referral code');
+    }
+  };
+
+  const copyReferralLink = () => {
+    const link = `${window.location.origin}/signup?ref=${user.referralCode}`;
+    navigator.clipboard.writeText(link);
+    alert('Referral link copied to clipboard!');
+  };
+
+  if (loading) {
+    return <div className="p-6 text-center text-gray-400">Loading...</div>;
+  }
+
+  return (
+    <div className="p-4 md:p-6 overflow-y-auto h-full">
+      <h1 className="text-2xl font-bold mb-6">Share and Earn</h1>
+
+      <div className="max-w-2xl">
+        {/* Referral Code Section */}
+        {user?.referralCode ? (
+          <div className="bg-gradient-to-br from-purple-900/30 to-dark-800 rounded-xl p-6 mb-6 border border-purple-600/30">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-purple-600 rounded-lg flex items-center justify-center">
+                <Share2 size={24} className="text-white" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-purple-300">Your Referral Code</h2>
+                <p className="text-sm text-gray-400">Share this code to earn rewards</p>
+              </div>
+            </div>
+
+            <div className="bg-dark-700 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between">
+                <code className="text-2xl font-mono text-green-400">{user.referralCode}</code>
+                <button
+                  onClick={copyReferralLink}
+                  className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-medium transition"
+                >
+                  Copy Link
+                </button>
+              </div>
+            </div>
+
+            <div className="text-sm text-gray-300 leading-relaxed">
+              <span className="font-semibold text-purple-300">How it works:</span> Share your referral link with friends. When they sign up and start trading or playing games, you'll earn 5% of their first game wins (top 10 only) and brokerage from their first trading win!
+            </div>
+          </div>
+        ) : (
+          <div className="bg-gradient-to-br from-purple-900/30 to-dark-800 rounded-xl p-6 mb-6 border border-purple-600/30 text-center">
+            <div className="w-16 h-16 bg-purple-600/20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Share2 size={32} className="text-purple-400" />
+            </div>
+            <h2 className="text-xl font-bold text-purple-300 mb-2">Start Earning Today!</h2>
+            <p className="text-gray-400 mb-4">Generate your referral code and start inviting friends to earn rewards.</p>
+            <button
+              onClick={generateReferralCode}
+              className="bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white px-6 py-3 rounded-lg font-medium transition-all shadow-lg shadow-purple-600/20"
+            >
+              Generate Referral Code
+            </button>
+          </div>
+        )}
+
+        {/* Referral Stats */}
+        {referralStats && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+              <div className="text-sm text-gray-400 mb-1">Total Referrals</div>
+              <div className="text-2xl font-bold text-green-400">{referralStats.totalReferrals || 0}</div>
+            </div>
+            <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+              <div className="text-sm text-gray-400 mb-1">Total Earnings</div>
+              <div className="text-2xl font-bold text-green-400">₹{(referralStats.totalEarnings || 0).toLocaleString()}</div>
+            </div>
+            <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+              <div className="text-sm text-gray-400 mb-1">Active Referrals</div>
+              <div className="text-2xl font-bold text-green-400">{referralStats.activeReferrals || 0}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Reward Breakdown */}
+        <div className="bg-dark-800 rounded-xl p-6 border border-dark-600">
+          <h3 className="text-lg font-bold mb-4">Reward Structure</h3>
+          <div className="space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-green-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                <span className="text-green-400 font-bold">5%</span>
+              </div>
+              <div>
+                <div className="font-medium text-white">Game Wins</div>
+                <div className="text-sm text-gray-400">Earn 5% of your friends' first game wins (top 10 games only)</div>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-purple-600/20 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                <span className="text-purple-400 font-bold">₹</span>
+              </div>
+              <div>
+                <div className="font-medium text-white">Trading Brokerage</div>
+                <div className="text-sm text-gray-400">Earn brokerage from your friends' first winning trades</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Main Dashboard Wrapper
 const UserDashboardNew = () => {
   const { user, logoutUser } = useAuth();
@@ -1513,6 +1654,7 @@ const UserDashboardNew = () => {
     { path: '/user/home', icon: Home, label: 'Dashboard' },
     { path: '/user/accounts', icon: Users, label: 'Market' },
     { path: '/user/wallet', icon: Wallet, label: 'Wallet' },
+    { path: '/user/referral', icon: Share2, label: 'Share and Earn' },
     { path: '/user/profile', icon: User, label: 'Profile' },
     { path: '/user/support', icon: HelpCircle, label: 'Support' },
   ];
@@ -1568,58 +1710,6 @@ const UserDashboardNew = () => {
             </Link>
           ))}
         </nav>
-
-        {/* Share and Earn More Section */}
-        <div className="p-2 border-t border-dark-600">
-          <div className="bg-gradient-to-b from-dark-750 to-dark-800 rounded-lg p-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Share2 size={16} className="text-purple-400 flex-shrink-0" />
-              <span className={`text-xs font-bold text-purple-400 whitespace-nowrap overflow-hidden transition-all duration-300 ${sidebarOpen ? 'w-auto opacity-100' : 'w-0 opacity-0'}`}>
-                Share and Earn
-              </span>
-            </div>
-            {user?.referralCode ? (
-              <div className="space-y-2">
-                <div className="bg-dark-700 rounded p-2">
-                  <div className={`text-xs text-gray-400 mb-1 ${sidebarOpen ? 'block' : 'hidden'}`}>Your code:</div>
-                  <div className="flex items-center gap-2">
-                    <code className="text-xs font-mono text-green-400 flex-1 bg-dark-800 px-2 py-1 rounded">{user.referralCode}</code>
-                    <button
-                      onClick={() => {
-                        const link = `${window.location.origin}/signup?ref=${user.referralCode}`;
-                        navigator.clipboard.writeText(link);
-                        alert('Referral link copied!');
-                      }}
-                      className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-2 py-1 rounded font-medium transition-colors flex-shrink-0"
-                      title="Copy"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                </div>
-                <div className={`text-xs text-gray-400 ${sidebarOpen ? 'block' : 'hidden'}`}>
-                  Earn rewards from referrals!
-                </div>
-              </div>
-            ) : (
-              <button
-                onClick={async () => {
-                  try {
-                    const headers = { Authorization: `Bearer ${user.token}` };
-                    await axios.post('/api/referral/generate', {}, { headers });
-                    alert('Referral code generated!');
-                    window.location.reload();
-                  } catch (error) {
-                    alert(error.response?.data?.message || 'Failed');
-                  }
-                }}
-                className="w-full bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white text-xs py-1.5 rounded font-medium transition-all shadow-lg shadow-purple-600/20"
-              >
-                Generate Code
-              </button>
-            )}
-          </div>
-        </div>
 
         {/* Theme Toggle */}
         <div className="p-2 border-t border-dark-600">
@@ -1762,6 +1852,7 @@ const UserDashboardNew = () => {
             <Route path="home" element={<UserHome />} />
             <Route path="accounts" element={<UserAccounts />} />
             <Route path="wallet" element={<UserWalletPage />} />
+            <Route path="referral" element={<UserReferral />} />
             <Route path="profile" element={<UserProfile />} />
             <Route path="support" element={<UserSupport />} />
             <Route path="*" element={<UserHome />} />
