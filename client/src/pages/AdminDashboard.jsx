@@ -1334,6 +1334,7 @@ const AdminManagement = () => {
   const [selectedAdmin, setSelectedAdmin] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('ALL');
+  const [superAdminBrokerageSettings, setSuperAdminBrokerageSettings] = useState({});
   
   const isSuperAdmin = admin?.role === 'SUPER_ADMIN';
   const isAdmin = admin?.role === 'ADMIN';
@@ -1627,6 +1628,51 @@ const AdminManagement = () => {
     setExpandedSubBrokers(prev => ({ ...prev, [subBrokerId]: !prev[subBrokerId] }));
   };
 
+  const handleSuperAdminBrokerageChange = async (adminId, type, value) => {
+    // Update local state
+    setSuperAdminBrokerageSettings(prev => ({
+      ...prev,
+      [adminId]: {
+        ...prev[adminId],
+        [type === 'flat' ? 'superAdminFlatBrokerage' : 'superAdminFixedBrokerage']: value
+      }
+    }));
+
+    // Update the admin in the local admins array
+    setAdmins(prev => prev.map(adm => {
+      if (adm._id === adminId) {
+        return {
+          ...adm,
+          [type === 'flat' ? 'superAdminFlatBrokerage' : 'superAdminFixedBrokerage']: value
+        };
+      }
+      return adm;
+    }));
+
+    // Save to backend
+    try {
+      const field = type === 'flat' ? 'superAdminFlatBrokerage' : 'superAdminFixedBrokerage';
+      await axios.put(`/api/admin/manage/admins/${adminId}`, {
+        [field]: value
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+    } catch (error) {
+      console.error('Error updating super admin brokerage:', error);
+      // Revert local state on error
+      setAdmins(prev => prev.map(adm => {
+        if (adm._id === adminId) {
+          return {
+            ...adm,
+            [type === 'flat' ? 'superAdminFlatBrokerage' : 'superAdminFixedBrokerage']: 
+              (type === 'flat' ? adm.superAdminFlatBrokerage : adm.superAdminFixedBrokerage) || 0
+          };
+        }
+        return adm;
+      }));
+    }
+  };
+
   return (
     <div className="p-4 md:p-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
@@ -1791,6 +1837,37 @@ const AdminManagement = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Super Admin Brokerage Settings - Only for Super Admin */}
+                {isSuperAdmin && (
+                  <div className="flex gap-4 flex-wrap items-end">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">SA Flat %</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value={adm.superAdminFlatBrokerage || 0}
+                        onChange={(e) => handleSuperAdminBrokerageChange(adm._id, 'flat', parseFloat(e.target.value) || 0)}
+                        className="w-20 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm"
+                        placeholder="%"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">SA Fixed ₹</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={adm.superAdminFixedBrokerage || 0}
+                        onChange={(e) => handleSuperAdminBrokerageChange(adm._id, 'fixed', parseFloat(e.target.value) || 0)}
+                        className="w-24 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm"
+                        placeholder="₹"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {/* Actions */}
                 <div className="flex flex-wrap gap-2">
@@ -4376,6 +4453,39 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                             </select>
                           </div>
                         </div>
+
+                        {/* Super Admin Brokerage & Incentive - Only for MCX segments */}
+                        {['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
+                          <>
+                            <h4 className="text-xs font-semibold text-yellow-400 mb-2">Super Admin Brokerage & Incentive</h4>
+                            <div className="grid grid-cols-2 gap-3 mb-4">
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin (₹)</label>
+                                <input type="number" value={s.superAdminIncentive || 0} onChange={e => handleSegDefChange(expandedSeg, 'superAdminIncentive', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <p className="text-[10px] text-gray-600 mt-1">Incentive/rebate per lot/quantity by Super Admin</p>
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (₹)</label>
+                                <input type="number" value={s.superAdminBrokerageCharge || 0} onChange={e => handleSegDefChange(expandedSeg, 'superAdminBrokerageCharge', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per lot/quantity by Super Admin</p>
+                              </div>
+                            </div>
+
+                            <h4 className="text-xs font-semibold text-orange-400 mb-2">Super Admin Brokerage & Incentive (in Crores)</h4>
+                            <div className="grid grid-cols-2 gap-3 mb-4">
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin (in Crores)</label>
+                                <input type="number" value={s.superAdminIncentiveInCrore || 0} onChange={e => handleSegDefChange(expandedSeg, 'superAdminIncentiveInCrore', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <p className="text-[10px] text-gray-600 mt-1">Incentive/rebate per crore turnover by Super Admin</p>
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (in Crores)</label>
+                                <input type="number" value={s.superAdminBrokerageChargeInCrore || 0} onChange={e => handleSegDefChange(expandedSeg, 'superAdminBrokerageChargeInCrore', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                                <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per crore turnover by Super Admin</p>
+                              </div>
+                            </div>
+                          </>
+                        )}
 
                         {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
                           <div className="mb-4">
@@ -15225,6 +15335,47 @@ const SystemDefaultSettings = () => {
                         </select>
                       </div>
                     </div>
+
+                    {/* Super Admin Brokerage & Incentive - Only for MCX segments */}
+                    {['MCXFUT', 'MCXOPT', 'MCX'].includes(adminDefExpandedSeg) && (
+                      <>
+                        <h4 className="text-sm font-semibold text-yellow-400 mb-3">Super Admin Brokerage & Incentive</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin (₹)</label>
+                            <input type="number" value={s.superAdminIncentive || 0}
+                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'superAdminIncentive', parseFloat(e.target.value) || 0)}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                            <p className="text-[10px] text-gray-600 mt-1">Incentive/rebate per lot/quantity by Super Admin</p>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (₹)</label>
+                            <input type="number" value={s.superAdminBrokerageCharge || 0}
+                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'superAdminBrokerageCharge', parseFloat(e.target.value) || 0)}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                            <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per lot/quantity by Super Admin</p>
+                          </div>
+                        </div>
+
+                        <h4 className="text-sm font-semibold text-orange-400 mb-3">Super Admin Brokerage & Incentive (in Crores)</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin (in Crores)</label>
+                            <input type="number" value={s.superAdminIncentiveInCrore || 0}
+                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'superAdminIncentiveInCrore', parseFloat(e.target.value) || 0)}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                            <p className="text-[10px] text-gray-600 mt-1">Incentive/rebate per crore turnover by Super Admin</p>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (in Crores)</label>
+                            <input type="number" value={s.superAdminBrokerageChargeInCrore || 0}
+                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'superAdminBrokerageChargeInCrore', parseFloat(e.target.value) || 0)}
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                            <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per crore turnover by Super Admin</p>
+                          </div>
+                        </div>
+                      </>
+                    )}
 
                     {['CRYPTOFUT', 'CRYPTOOPT'].includes(adminDefExpandedSeg) && (
                       <div className="mb-6">
