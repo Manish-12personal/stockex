@@ -1367,11 +1367,16 @@ const UserReferral = () => {
   const [referralStats, setReferralStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [generatedCode, setGeneratedCode] = useState('');
+  const [localReferralCode, setLocalReferralCode] = useState('');
 
   useEffect(() => {
     fetchReferralStats();
-  }, [user?.token]);
+    console.log('User referralCode from context:', user?.referralCode);
+    if (user?.referralCode) {
+      setLocalReferralCode(user.referralCode);
+      console.log('Set localReferralCode from user context:', user.referralCode);
+    }
+  }, [user?.token, user?.referralCode]);
 
   const fetchReferralStats = async () => {
     if (!user?.token) return;
@@ -1391,12 +1396,16 @@ const UserReferral = () => {
     try {
       const headers = { Authorization: `Bearer ${user.token}` };
       const { data } = await axios.post('/api/referral/generate', {}, { headers });
-      setGeneratedCode(data.referralCode || user.referralCode);
+      
+      console.log('Referral code response:', data);
+      
+      // Set the referral code from response
+      if (data.referralCode) {
+        setLocalReferralCode(data.referralCode);
+        console.log('Set localReferralCode to:', data.referralCode);
+      }
+      
       alert('Referral code generated successfully!');
-      // Refresh user data by fetching updated profile
-      const userRes = await axios.get('/api/user/profile', { headers });
-      // Update localStorage with new user data
-      localStorage.setItem('user', JSON.stringify(userRes.data));
     } catch (error) {
       console.error('Error generating referral code:', error);
       alert(error.response?.data?.message || 'Failed to generate referral code');
@@ -1420,13 +1429,16 @@ const UserReferral = () => {
     return <div className="p-6 text-center text-gray-400">Loading...</div>;
   }
 
+  console.log('Rendering - user.referralCode:', user?.referralCode);
+  console.log('Rendering - localReferralCode:', localReferralCode);
+
   return (
     <div className="p-4 md:p-6 overflow-y-auto h-full">
       <h1 className="text-2xl font-bold mb-6">Share and Earn</h1>
 
       <div className="max-w-2xl">
         {/* Referral Code Section */}
-        {user?.referralCode ? (
+        {user?.referralCode || localReferralCode ? (
           <div className="bg-gradient-to-br from-purple-900/30 to-dark-800 rounded-xl p-6 mb-6 border border-purple-600/30">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-12 h-12 bg-purple-600 rounded-lg flex items-center justify-center">
@@ -1441,9 +1453,13 @@ const UserReferral = () => {
             <div className="bg-dark-700 rounded-lg p-4 mb-4">
               <div className="text-xs text-gray-400 mb-2">Referral Code</div>
               <div className="flex items-center justify-between mb-3">
-                <code className="text-2xl font-mono text-green-400">{user.referralCode}</code>
+                <code className="text-2xl font-mono text-green-400">{localReferralCode || user.referralCode}</code>
                 <button
-                  onClick={copyReferralCode}
+                  onClick={() => {
+                    const code = localReferralCode || user.referralCode;
+                    navigator.clipboard.writeText(code);
+                    alert('Referral code copied to clipboard!');
+                  }}
                   className="bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded-lg font-medium transition text-sm"
                 >
                   Copy Code
@@ -1452,10 +1468,15 @@ const UserReferral = () => {
               <div className="text-xs text-gray-400 mb-2">Referral Link</div>
               <div className="flex items-center gap-2">
                 <code className="text-xs font-mono text-gray-300 flex-1 bg-dark-800 px-3 py-2 rounded truncate">
-                  {window.location.origin}/signup?ref={user.referralCode}
+                  {window.location.origin}/signup?ref={localReferralCode || user.referralCode}
                 </code>
                 <button
-                  onClick={copyReferralLink}
+                  onClick={() => {
+                    const code = localReferralCode || user.referralCode;
+                    const link = `${window.location.origin}/signup?ref=${code}`;
+                    navigator.clipboard.writeText(link);
+                    alert('Referral link copied to clipboard!');
+                  }}
                   className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-2 rounded-lg font-medium transition text-sm whitespace-nowrap"
                 >
                   Copy Link
@@ -1483,14 +1504,14 @@ const UserReferral = () => {
             </button>
 
             {/* Referral Code Display Field */}
-            {generatedCode && (
+            {localReferralCode && (
               <div className="mt-4">
                 <div className="text-xs text-gray-400 mb-2">Your Referral Code</div>
                 <div className="bg-dark-700 rounded-lg p-3 flex items-center justify-between gap-2">
-                  <code className="text-lg font-mono text-green-400">{generatedCode}</code>
+                  <code className="text-lg font-mono text-green-400">{localReferralCode}</code>
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(generatedCode);
+                      navigator.clipboard.writeText(localReferralCode);
                       alert('Referral code copied!');
                     }}
                     className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded font-medium transition text-sm"
@@ -1499,7 +1520,7 @@ const UserReferral = () => {
                   </button>
                 </div>
                 <div className="text-xs text-gray-400 mt-2">
-                  Share this code or use link: {window.location.origin}/signup?ref={generatedCode}
+                  Share this code or use link: {window.location.origin}/signup?ref={localReferralCode}
                 </div>
               </div>
             )}
