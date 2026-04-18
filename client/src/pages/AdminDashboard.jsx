@@ -1905,13 +1905,6 @@ const AdminManagement = () => {
                     <Wallet size={16} /> Fund
                   </button>
                   <button
-                    onClick={() => { setSelectedAdmin(adm); setShowWalletTransferModal(true); }}
-                    className="px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded text-sm flex items-center gap-1"
-                    title="Transfer funds between wallets"
-                  >
-                    <ArrowRightLeft size={16} /> Transfer
-                  </button>
-                  <button
                     onClick={() => handleViewFundHistory(adm)}
                     className="px-3 py-2 bg-teal-600 hover:bg-teal-700 rounded text-sm flex items-center gap-1"
                     title="View fund transaction history"
