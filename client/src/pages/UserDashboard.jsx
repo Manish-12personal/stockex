@@ -2145,33 +2145,35 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
         )}
       </div>
 
-      {/* Referral Link Section */}
-      <div className="border-t border-dark-600 p-3 bg-dark-750">
-        <div className="flex items-center gap-2 mb-2">
-          <Share2 size={16} className="text-purple-400" />
-          <span className="text-sm font-medium text-purple-400">Referral Link</span>
+      {/* Share and Earn More Section */}
+      <div className="border-t border-dark-600 p-3 bg-gradient-to-b from-dark-750 to-dark-800">
+        <div className="flex items-center gap-2 mb-3">
+          <Share2 size={18} className="text-purple-400" />
+          <span className="text-sm font-bold text-purple-400">Share and Earn More</span>
         </div>
         {user?.referralCode ? (
-          <div className="space-y-2">
-            <div className="bg-dark-700 rounded p-2">
-              <div className="text-xs text-gray-400 mb-1">Your referral code:</div>
+          <div className="space-y-3">
+            <div className="bg-dark-700 rounded-lg p-3 border border-purple-600/30">
+              <div className="text-xs text-gray-400 mb-2 font-medium">Your referral code:</div>
               <div className="flex items-center gap-2">
-                <code className="text-sm font-mono text-green-400 flex-1">{user.referralCode}</code>
+                <code className="text-sm font-mono text-green-400 flex-1 bg-dark-800 px-2 py-1.5 rounded">{user.referralCode}</code>
                 <button
                   onClick={() => {
                     const link = `${window.location.origin}/signup?ref=${user.referralCode}`;
                     navigator.clipboard.writeText(link);
                     alert('Referral link copied to clipboard!');
                   }}
-                  className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-2 py-1 rounded"
+                  className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded font-medium transition-colors"
                   title="Copy referral link"
                 >
                   Copy
                 </button>
               </div>
             </div>
-            <div className="text-xs text-gray-500">
-              Share this link to earn 5% of your friends' first game wins (top 10 only) and brokerage from their first trading win!
+            <div className="bg-purple-900/20 rounded-lg p-3 border border-purple-600/20">
+              <div className="text-xs text-gray-300 leading-relaxed">
+                <span className="font-semibold text-purple-300">Earn rewards:</span> Share this link to earn 5% of your friends' first game wins (top 10 only) and brokerage from their first trading win!
+              </div>
             </div>
           </div>
         ) : (
@@ -2186,7 +2188,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                 alert(error.response?.data?.message || 'Failed to generate referral code');
               }
             }}
-            className="w-full bg-purple-600 hover:bg-purple-500 text-white text-xs py-2 rounded"
+            className="w-full bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white text-xs py-2.5 rounded-lg font-medium transition-all shadow-lg shadow-purple-600/20"
           >
             Generate Referral Code
           </button>
