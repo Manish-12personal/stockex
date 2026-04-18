@@ -26,6 +26,7 @@ import exchangeRateRoutes from './routes/exchangeRateRoutes.js';
 import marketDataRoutes from './routes/marketDataRoutes.js';
 import adminTransactionSlipRoutes from './routes/adminTransactionSlipRoutes.js';
 import cryptoLeverageRoutes from './routes/cryptoLeverageRoutes.js';
+import referralRoutes from './routes/referralRoutes.js';
 import User from './models/User.js';
 import Trade from './models/Trade.js';
 import MarketState from './models/MarketState.js';
@@ -122,6 +123,7 @@ app.use('/api/exchange-rate', exchangeRateRoutes);
 app.use('/api/market', marketDataRoutes);
 app.use('/api/admin', adminTransactionSlipRoutes);
 app.use('/api/crypto-leverage', cryptoLeverageRoutes);
+app.use('/api/referral', referralRoutes);
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

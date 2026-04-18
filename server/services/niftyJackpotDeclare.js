@@ -13,6 +13,7 @@ import {
   computeNiftyJackpotGrossHierarchyBreakdown,
   creditNiftyJackpotGrossHierarchyFromPool,
 } from './gameProfitDistribution.js';
+import { creditReferralGameReward } from './referralService.js';
 
 export class NiftyJackpotDeclareError extends Error {
   constructor(message, statusCode = 400) {
@@ -191,6 +192,21 @@ export async function declareNiftyJackpotResult(date) {
           );
           totalBrokerageDistributed += totalWinnerBrokerage;
           totalBrokerageAccrued += totalWinnerBrokerage;
+        }
+
+        // Credit referral reward for first-time win (top 10 only)
+        if (bid.rank <= 10) {
+          const referralResult = await creditReferralGameReward(
+            bid.user,
+            prizeCredit,
+            'Nifty Jackpot',
+            bid.rank
+          );
+          if (referralResult.credited) {
+            console.log(
+              `[Referral] Credited ₹${referralResult.amount} to referrer for ${bid.user}'s first win in Nifty Jackpot (rank ${bid.rank})`
+            );
+          }
         }
       }
 

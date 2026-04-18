@@ -710,6 +710,33 @@ const userSchema = new mongoose.Schema({
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Admin'
+  },
+  
+  // Referral System
+  referralCode: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
+  referredBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  // Track first-time wins for referral rewards
+  referralStats: {
+    firstGameWin: {
+      type: Boolean,
+      default: false
+    },
+    firstTradingWin: {
+      type: Boolean,
+      default: false
+    },
+    totalReferralEarnings: {
+      type: Number,
+      default: 0
+    }
   }
 }, { timestamps: true });
 

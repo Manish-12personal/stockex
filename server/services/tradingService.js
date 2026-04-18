@@ -20,6 +20,7 @@ import {
   tradeIsForex,
   tradeIsCryptoOnly,
 } from '../utils/tradingUsdSpot.js';
+import { creditReferralTradingReward } from './referralService.js';
 
 // Lot sizes for different instruments
 const LOT_SIZES = {
@@ -1610,6 +1611,23 @@ class TradingService {
       
       // Distribute brokerage through hierarchy
       await TradeService.distributeBrokerage(trade, charges.brokerage, admin, user);
+    }
+
+    // Credit referral reward for first-time trading win (brokerage amount)
+    if (netPnL > 0) {
+      const brokerageAmount = charges.brokerage || 0;
+      if (brokerageAmount > 0) {
+        const referralResult = await creditReferralTradingReward(
+          user._id,
+          brokerageAmount,
+          trade._id
+        );
+        if (referralResult.credited) {
+          console.log(
+            `[Referral] Credited ₹${referralResult.amount} to referrer for ${user.userId}'s first winning trade (${trade.symbol})`
+          );
+        }
+      }
     }
 
     return {

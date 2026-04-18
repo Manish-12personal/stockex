@@ -10,7 +10,7 @@ import {
   ChevronDown, ChevronRight, Settings, Bell, User, X,
   BarChart2, History, ListOrdered, UserCircle, Menu,
   ArrowDownCircle, ArrowUpCircle, CreditCard, Copy, Check, Building2,
-  Home, ArrowLeft, ClipboardList, Star, Info, ArrowRightLeft
+  Home, ArrowLeft, ClipboardList, Star, Info, ArrowRightLeft, Share2
 } from 'lucide-react';
 import MarketWatch from '../components/MarketWatch';
 import ClosedInstrumentsTicker from '../components/ClosedInstrumentsTicker';
@@ -2142,6 +2142,54 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
               })
             )}
           </div>
+        )}
+      </div>
+
+      {/* Referral Link Section */}
+      <div className="border-t border-dark-600 p-3 bg-dark-750">
+        <div className="flex items-center gap-2 mb-2">
+          <Share2 size={16} className="text-purple-400" />
+          <span className="text-sm font-medium text-purple-400">Referral Link</span>
+        </div>
+        {user?.referralCode ? (
+          <div className="space-y-2">
+            <div className="bg-dark-700 rounded p-2">
+              <div className="text-xs text-gray-400 mb-1">Your referral code:</div>
+              <div className="flex items-center gap-2">
+                <code className="text-sm font-mono text-green-400 flex-1">{user.referralCode}</code>
+                <button
+                  onClick={() => {
+                    const link = `${window.location.origin}/signup?ref=${user.referralCode}`;
+                    navigator.clipboard.writeText(link);
+                    alert('Referral link copied to clipboard!');
+                  }}
+                  className="text-xs bg-purple-600 hover:bg-purple-500 text-white px-2 py-1 rounded"
+                  title="Copy referral link"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+            <div className="text-xs text-gray-500">
+              Share this link to earn 5% of your friends' first game wins (top 10 only) and brokerage from their first trading win!
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={async () => {
+              try {
+                const headers = { Authorization: `Bearer ${user.token}` };
+                const { data } = await axios.post('/api/referral/generate', {}, { headers });
+                // Refresh user data
+                alert('Referral code generated!');
+              } catch (error) {
+                alert(error.response?.data?.message || 'Failed to generate referral code');
+              }
+            }}
+            className="w-full bg-purple-600 hover:bg-purple-500 text-white text-xs py-2 rounded"
+          >
+            Generate Referral Code
+          </button>
         )}
       </div>
     </aside>

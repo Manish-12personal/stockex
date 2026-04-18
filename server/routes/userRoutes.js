@@ -161,21 +161,42 @@ router.post('/register', async (req, res) => {
     const { username, email, password, fullName, phone, adminCode, referralCode } = req.body;
     
     let admin;
+    let referrerUser = null;
     
     // If admin code or referral code provided, use that admin
-    if (adminCode || referralCode) {
-      const lookup = adminCode
-        ? { adminCode: adminCode.trim().toUpperCase() }
-        : { referralCode: referralCode.trim().toUpperCase() };
-
-      admin = await Admin.findOne(lookup);
+    if (adminCode) {
+      // Admin code takes priority
+      admin = await Admin.findOne({ adminCode: adminCode.trim().toUpperCase() });
 
       if (!admin) {
-        return res.status(400).json({ message: 'Invalid admin or referral code' });
+        return res.status(400).json({ message: 'Invalid admin code' });
       }
 
       if (admin.status !== 'ACTIVE') {
         return res.status(400).json({ message: 'Admin is not active. Contact support.' });
+      }
+    } else if (referralCode) {
+      // Check if it's a user referral code
+      referrerUser = await User.findOne({ referralCode: referralCode.trim().toUpperCase() });
+      
+      if (referrerUser) {
+        // User referral - use the referrer's admin
+        admin = await Admin.findById(referrerUser.admin);
+        
+        if (!admin || admin.status !== 'ACTIVE') {
+          return res.status(400).json({ message: 'Referrer admin is not active. Contact support.' });
+        }
+      } else {
+        // Check if it's an admin referral code
+        admin = await Admin.findOne({ referralCode: referralCode.trim().toUpperCase() });
+
+        if (!admin) {
+          return res.status(400).json({ message: 'Invalid referral code' });
+        }
+
+        if (admin.status !== 'ACTIVE') {
+          return res.status(400).json({ message: 'Admin is not active. Contact support.' });
+        }
       }
     } else {
       // No admin code provided - assign to Super Admin by default
@@ -198,8 +219,21 @@ router.post('/register', async (req, res) => {
       fullName,
       phone,
       admin: admin._id,
-      adminCode: admin.adminCode
+      adminCode: admin.adminCode,
+      referredBy: referrerUser?._id || null
     });
+
+    // Create referral record if referred by a user
+    if (referrerUser) {
+      const Referral = (await import('../models/Referral.js')).default;
+      await Referral.create({
+        referrer: referrerUser._id,
+        referredUser: user._id,
+        referralCode: referralCode.trim().toUpperCase(),
+        status: 'ACTIVE',
+        activatedAt: new Date()
+      });
+    }
 
     // Update admin stats - increment user count
     admin.stats.totalUsers = (admin.stats.totalUsers || 0) + 1;
