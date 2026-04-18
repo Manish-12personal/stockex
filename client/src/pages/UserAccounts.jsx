@@ -1922,7 +1922,7 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
     setSuccess('');
 
     try {
-      await axios.post('/api/users/wallet-transfer', {
+      await axios.post('/api/user/wallet-transfer', {
         sourceWallet: source,
         targetWallet: target,
         amount: Number(amount),
