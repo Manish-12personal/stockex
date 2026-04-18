@@ -1367,6 +1367,7 @@ const UserReferral = () => {
   const [referralStats, setReferralStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [generatedCode, setGeneratedCode] = useState('');
 
   useEffect(() => {
     fetchReferralStats();
@@ -1390,13 +1391,12 @@ const UserReferral = () => {
     try {
       const headers = { Authorization: `Bearer ${user.token}` };
       const { data } = await axios.post('/api/referral/generate', {}, { headers });
+      setGeneratedCode(data.referralCode || user.referralCode);
       alert('Referral code generated successfully!');
       // Refresh user data by fetching updated profile
       const userRes = await axios.get('/api/user/profile', { headers });
       // Update localStorage with new user data
       localStorage.setItem('user', JSON.stringify(userRes.data));
-      // Reload page to refresh user context
-      window.location.reload();
     } catch (error) {
       console.error('Error generating referral code:', error);
       alert(error.response?.data?.message || 'Failed to generate referral code');
@@ -1481,6 +1481,28 @@ const UserReferral = () => {
             >
               {generating ? 'Generating...' : 'Generate Referral Code'}
             </button>
+
+            {/* Referral Code Display Field */}
+            {generatedCode && (
+              <div className="mt-4">
+                <div className="text-xs text-gray-400 mb-2">Your Referral Code</div>
+                <div className="bg-dark-700 rounded-lg p-3 flex items-center justify-between gap-2">
+                  <code className="text-lg font-mono text-green-400">{generatedCode}</code>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(generatedCode);
+                      alert('Referral code copied!');
+                    }}
+                    className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded font-medium transition text-sm"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <div className="text-xs text-gray-400 mt-2">
+                  Share this code or use link: {window.location.origin}/signup?ref={generatedCode}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
