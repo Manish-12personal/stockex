@@ -4450,19 +4450,7 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                         {/* Super Admin Brokerage & Incentive - Only for MCX segments */}
                         {['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
                           <>
-                            <h4 className="text-xs font-semibold text-yellow-400 mb-2">Super Admin Brokerage & Incentive</h4>
-                            <div className="grid grid-cols-2 gap-3 mb-4">
-                              <div>
-                                <label className="block text-xs text-gray-400 mb-1">Incentive Given by Super Admin (₹)</label>
-                                <input type="number" value={s.superAdminIncentive || 0} onChange={e => handleSegDefChange(expandedSeg, 'superAdminIncentive', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                                <p className="text-[10px] text-gray-600 mt-1">Incentive/rebate per lot/quantity by Super Admin</p>
-                              </div>
-                              <div>
-                                <label className="block text-xs text-gray-400 mb-1">Brokerage Charged by Super Admin (₹)</label>
-                                <input type="number" value={s.superAdminBrokerageCharge || 0} onChange={e => handleSegDefChange(expandedSeg, 'superAdminBrokerageCharge', parseFloat(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                                <p className="text-[10px] text-gray-600 mt-1">Brokerage charge per lot/quantity by Super Admin</p>
-                              </div>
-                            </div>
+                           
 
                             <h4 className="text-xs font-semibold text-orange-400 mb-2">Super Admin Brokerage & Incentive (in Crores)</h4>
                             <div className="grid grid-cols-2 gap-3 mb-4">
