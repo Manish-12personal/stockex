@@ -1699,25 +1699,6 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
         ))}
       </div>
 
-      {/* Wallet Section */}
-      <div className="p-3 border-b border-dark-600 bg-dark-750">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <Wallet size={16} className="text-green-400" />
-            <span className="text-xs font-medium text-gray-300">Trading Balance</span>
-          </div>
-          <span className="text-sm font-bold text-green-400">
-            ₹{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}
-          </span>
-        </div>
-        <button
-          onClick={() => window.dispatchEvent(new CustomEvent('open-wallet-modal'))}
-          className="w-full bg-green-600 hover:bg-green-500 text-white text-xs py-1.5 rounded font-medium transition-colors"
-        >
-          Add Funds
-        </button>
-      </div>
-
       {/* Share and Earn More Section */}
       <div className="p-3 border-b border-dark-600 bg-gradient-to-b from-dark-750 to-dark-800">
         <div className="flex items-center gap-2 mb-2">
