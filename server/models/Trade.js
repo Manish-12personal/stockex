@@ -94,6 +94,10 @@ const tradeSchema = new mongoose.Schema({
     enum: ['CNC', 'MIS', 'NRML', 'INTRADAY', 'DELIVERY', 'CARRYFORWARD'],
     default: 'INTRADAY'
   },
+  intradayOnly: {
+    type: Boolean,
+    default: false
+  },
   orderType: {
     type: String,
     enum: ['MARKET', 'LIMIT', 'SL', 'SL-M'],

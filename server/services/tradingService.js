@@ -948,6 +948,7 @@ class TradingService {
       optionType: orderData.optionType,
       side: orderData.side,
       productType: orderData.productType || 'MIS',
+      intradayOnly: orderData.intradayOnly || false,
       orderType: orderData.orderType || 'MARKET',
       quantity: totalQuantity,
       lotSize: lotSize,

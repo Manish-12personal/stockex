@@ -10,6 +10,81 @@ import WalletService from './walletService.js';
 import { calculatePortfolioReduction } from './autoSquareOffEngine.js';
 import { getLTPMapForTrades, cacheKeyForTrade } from './ltpResolutionService.js';
 
+/**
+ * Auto-square intraday-only trades at 3:30 PM IST
+ * This function closes all trades with intradayOnly flag set to true
+ */
+export async function autoSquareIntradayOnlyTrades() {
+  try {
+    console.log('[autoSquareIntradayOnlyTrades] Starting auto-square for intraday-only trades at 3:30 PM IST');
+    
+    // Find all open trades with intradayOnly flag
+    const intradayOnlyTrades = await Trade.find({
+      status: 'OPEN',
+      intradayOnly: true
+    }).populate('user');
+    
+    if (intradayOnlyTrades.length === 0) {
+      console.log('[autoSquareIntradayOnlyTrades] No intraday-only trades to close');
+      return { closedTrades: 0, message: 'No intraday-only trades to close' };
+    }
+    
+    console.log(`[autoSquareIntradayOnlyTrades] Found ${intradayOnlyTrades.length} intraday-only trades to close`);
+    
+    // Get LTP map for all trades
+    const ltpMap = await getLTPMapForTrades(intradayOnlyTrades);
+    
+    let closedCount = 0;
+    let failedCount = 0;
+    
+    for (const trade of intradayOnlyTrades) {
+      try {
+        const ck = cacheKeyForTrade(trade);
+        const ltp = ltpMap.get(ck);
+        
+        if (!ltp || ltp <= 0) {
+          console.warn(`[autoSquareIntradayOnlyTrades] No LTP found for trade ${trade.tradeId}, skipping`);
+          failedCount++;
+          continue;
+        }
+        
+        // Calculate exit price based on side
+        const exitPrice = trade.side === 'BUY' ? ltp : ltp;
+        
+        // Close the trade
+        const result = await TradingService.squareOffPosition(
+          trade._id.toString(),
+          'AUTO_SQUARE_330',
+          exitPrice,
+          ltp, // bidPrice
+          ltp  // askPrice
+        );
+        
+        if (result.success) {
+          closedCount++;
+          console.log(`[autoSquareIntradayOnlyTrades] Closed trade ${trade.tradeId} at ${exitPrice}`);
+        } else {
+          failedCount++;
+          console.error(`[autoSquareIntradayOnlyTrades] Failed to close trade ${trade.tradeId}: ${result.message}`);
+        }
+      } catch (error) {
+        failedCount++;
+        console.error(`[autoSquareIntradayOnlyTrades] Error closing trade ${trade.tradeId}:`, error.message);
+      }
+    }
+    
+    console.log(`[autoSquareIntradayOnlyTrades] Completed. Closed: ${closedCount}, Failed: ${failedCount}`);
+    return { 
+      closedTrades: closedCount, 
+      failedTrades: failedCount,
+      message: `Auto-square completed: ${closedCount} closed, ${failedCount} failed`
+    };
+  } catch (error) {
+    console.error('[autoSquareIntradayOnlyTrades] Error:', error);
+    return { closedTrades: 0, failedTrades: 0, error: error.message };
+  }
+}
+
 export function segmentQueryForEod(segment) {
   if (segment === 'MCX') {
     return {

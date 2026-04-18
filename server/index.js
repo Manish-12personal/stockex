@@ -33,6 +33,8 @@ import TradingService from './services/tradingService.js';
 import { runGamesAutoSettlementTick } from './services/gamesAutoSettlement.js';
 import { runInstrumentAvailabilityTicks } from './services/instrumentAvailabilityJobs.js';
 import { startInstrumentExpiryMonitoring } from './services/instrumentExpiryService.js';
+import { autoSquareIntradayOnlyTrades } from './services/eodAutoSquareOffService.js';
+import cron from 'node-cron';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -307,3 +309,18 @@ const cleanupExpiredDemoAccounts = async () => {
 
 // First run is inside httpServer.listen after Mongo connects; then hourly
 setInterval(cleanupExpiredDemoAccounts, 60 * 60 * 1000); // Every hour
+
+// Auto-square intraday-only trades at 3:30 PM IST (Monday-Friday)
+cron.schedule('30 15 * * 1-5', async () => {
+  try {
+    console.log('[Cron] Running auto-square for intraday-only trades at 3:30 PM IST');
+    const result = await autoSquareIntradayOnlyTrades();
+    console.log('[Cron] Auto-square result:', result);
+  } catch (error) {
+    console.error('[Cron] Error in auto-square intraday-only trades:', error);
+  }
+}, {
+  timezone: 'Asia/Kolkata'
+});
+
+console.log('[Cron] Scheduled auto-square for intraday-only trades at 3:30 PM IST (Mon-Fri)');

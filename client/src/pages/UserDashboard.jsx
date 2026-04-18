@@ -3619,6 +3619,7 @@ const TradingPanel = ({
   // Crypto: amount mode = INR to spend; units mode = coin quantity (server still receives USDT price)
   const [cryptoAmount, setCryptoAmount] = useState('10000');
   const [cryptoInputMode, setCryptoInputMode] = useState('amount');
+  const [intradayOnly, setIntradayOnly] = useState(false);
   
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.segment === 'CRYPTO' || instrument?.exchange === 'BINANCE');
   const isForex = isForexInstrument(instrument);
@@ -3912,7 +3913,8 @@ const TradingPanel = ({
         stopLoss: stopLoss ? (isUsdSpot ? parseFloat(stopLoss) / usdRate : parseFloat(stopLoss)) : null,
         target: target ? (isUsdSpot ? parseFloat(target) / usdRate : parseFloat(target)) : null,
         cryptoAmount: isUsdSpot ? cryptoTotalCost : null,
-        forexAmount: isForex ? cryptoTotalCost : null
+        forexAmount: isForex ? cryptoTotalCost : null,
+        intradayOnly: intradayOnly
       };
       
       console.log('Placing order:', orderData);
@@ -4148,21 +4150,60 @@ const TradingPanel = ({
         {/* Product Type */}
         <div>
           <label className="block text-xs text-gray-400 mb-2">Product Type</label>
+          
+          {/* Intraday Only Toggle */}
+          {!isUsdSpot && (isFutures || isOptions || isMCX) && (
+            <div className="mb-3 p-3 bg-dark-700 rounded border border-dark-600">
+              <label className="flex items-center justify-between cursor-pointer">
+                <div className="flex items-center gap-2">
+                  <Clock size={16} className="text-orange-400" />
+                  <span className="text-sm font-medium">Intraday Only</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={intradayOnly}
+                  onChange={(e) => {
+                    setIntradayOnly(e.target.checked);
+                    if (e.target.checked) {
+                      setProductType('MIS');
+                    }
+                  }}
+                  className="w-5 h-5 rounded"
+                />
+              </label>
+              <p className="text-xs text-gray-500 mt-2">
+                {intradayOnly 
+                  ? 'Auto square-off at 3:30 PM. Manual cancellation allowed.' 
+                  : 'Enable to force intraday trading only (auto square at 3:30 PM)'}
+              </p>
+            </div>
+          )}
+          
           <div className="space-y-2">
-            {getProductTypes().map(pt => (
-              <button
-                key={pt.value}
-                onClick={() => setProductType(pt.value)}
-                className={`w-full text-left px-3 py-2 rounded border transition ${
-                  productType === pt.value 
-                    ? 'border-green-500 bg-green-500/10' 
-                    : 'border-dark-600 hover:border-dark-500'
-                }`}
-              >
-                <div className="font-medium text-sm">{pt.label}</div>
-                <div className="text-xs text-gray-500">{pt.desc}</div>
-              </button>
-            ))}
+            {getProductTypes().map(pt => {
+              // Disable NRML if intradayOnly is enabled
+              const isDisabled = intradayOnly && pt.value === 'NRML';
+              return (
+                <button
+                  key={pt.value}
+                  onClick={() => !isDisabled && setProductType(pt.value)}
+                  disabled={isDisabled}
+                  className={`w-full text-left px-3 py-2 rounded border transition ${
+                    productType === pt.value 
+                      ? 'border-green-500 bg-green-500/10' 
+                      : isDisabled
+                      ? 'border-dark-600 bg-dark-700 text-gray-600 cursor-not-allowed'
+                      : 'border-dark-600 hover:border-dark-500'
+                  }`}
+                >
+                  <div className="font-medium text-sm">{pt.label}</div>
+                  <div className="text-xs text-gray-500">{pt.desc}</div>
+                  {isDisabled && (
+                    <div className="text-xs text-orange-400 mt-1">Disabled (Intraday Only mode)</div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
