@@ -121,125 +121,46 @@ class WalletTransferService {
    * Execute standard wallet transfer (wallet, cryptoWallet, forexWallet, mcxWallet)
    */
   static async executeStandardWalletTransfer(user, sourceWallet, targetWallet, amount, transferId, remarks, performedBy) {
-    const session = await User.startSession();
-    session.startTransaction();
-
     try {
-      // Debit from source wallet
-      const sourceUpdate = {};
-      sourceUpdate[`${sourceWallet}.balance`] = -amount;
+      // Get current balances
+      const freshUser = await User.findById(user._id);
+      const currentSourceBalance = freshUser[sourceWallet]?.balance || 0;
       
-      const updatedUser = await User.findByIdAndUpdate(
-        user._id,
-        { $inc: sourceUpdate },
-        { session, new: true }
-      );
-
-      if (!updatedUser) {
-        throw new Error('Failed to debit source wallet');
+      // Verify sufficient balance before transfer
+      if (currentSourceBalance < amount) {
+        throw new Error(`Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Available: ₹${currentSourceBalance.toLocaleString()}`);
       }
 
-      // Verify source wallet has sufficient balance after debit
-      const newSourceBalance = updatedUser[sourceWallet]?.balance || 0;
-      if (newSourceBalance < 0) {
-        throw new Error('Insufficient balance after debit');
-      }
-
-      // Credit to target wallet
-      const targetUpdate = {};
-      targetUpdate[`${targetWallet}.balance`] = amount;
-      targetUpdate[`${targetWallet}.depositTotal`] = amount;
+      // Debit from source wallet and credit to target wallet in a single atomic operation
+      const updates = {};
+      updates[`${sourceWallet}.balance`] = -amount;
+      updates[`${targetWallet}.balance`] = amount;
+      updates[`${targetWallet}.depositTotal`] = amount;
 
       const finalUser = await User.findByIdAndUpdate(
         user._id,
-        { $inc: targetUpdate },
-        { session, new: true }
+        { $inc: updates },
+        { new: true }
       );
 
       if (!finalUser) {
-        throw new Error('Failed to credit target wallet');
+        throw new Error('Failed to update wallet balances');
       }
 
-      // Create ledger entries
-      await WalletLedger.create([
-        {
-          ownerType: 'USER',
-          ownerId: user._id,
-          adminCode: user.adminCode || 'SUPER',
-          type: 'DEBIT',
-          reason: 'WALLET_TRANSFER_DEBIT',
-          amount: amount,
-          balanceAfter: finalUser[sourceWallet]?.balance || 0,
-          description: `Transfer to ${this.getWalletDisplayName(targetWallet)}`,
-          performedBy: performedBy,
-          meta: {
-            transferId,
-            sourceWallet,
-            targetWallet
-          }
-        },
-        {
-          ownerType: 'USER',
-          ownerId: user._id,
-          adminCode: user.adminCode || 'SUPER',
-          type: 'CREDIT',
-          reason: 'WALLET_TRANSFER_CREDIT',
-          amount: amount,
-          balanceAfter: finalUser[targetWallet]?.balance || 0,
-          description: `Transfer from ${this.getWalletDisplayName(sourceWallet)}`,
-          performedBy: performedBy,
-          meta: {
-            transferId,
-            sourceWallet,
-            targetWallet
-          }
-        }
-      ], { session });
+      // Verify source wallet balance didn't go negative
+      const newSourceBalance = finalUser[sourceWallet]?.balance || 0;
+      if (newSourceBalance < 0) {
+        // Rollback by reversing the transaction
+        const rollbackUpdates = {};
+        rollbackUpdates[`${sourceWallet}.balance`] = amount;
+        rollbackUpdates[`${targetWallet}.balance`] = -amount;
+        rollbackUpdates[`${targetWallet}.depositTotal`] = -amount;
+        await User.findByIdAndUpdate(user._id, { $inc: rollbackUpdates });
+        throw new Error('Insufficient balance after transfer');
+      }
 
-      await session.commitTransaction();
-      session.endSession();
-
-      return {
-        success: true,
-        transferId,
-        message: `Successfully transferred ₹${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
-        sourceBalance: finalUser[sourceWallet]?.balance || 0,
-        targetBalance: finalUser[targetWallet]?.balance || 0
-      };
-    } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
-      throw error;
-    }
-  }
-
-  /**
-   * Execute transfer involving games wallet
-   */
-  static async executeGamesWalletTransfer(user, sourceWallet, targetWallet, amount, transferId, remarks, performedBy) {
-    const session = await User.startSession();
-    session.startTransaction();
-
-    try {
-      if (sourceWallet === 'gamesWallet') {
-        // Debit from games wallet
-        const gamesWalletDebit = await atomicGamesWalletDebit(User, user._id, amount);
-        if (!gamesWalletDebit) {
-          throw new Error('Insufficient balance in games wallet');
-        }
-
-        // Credit to target wallet
-        const targetUpdate = {};
-        targetUpdate[`${targetWallet}.balance`] = amount;
-        targetUpdate[`${targetWallet}.depositTotal`] = amount;
-
-        const finalUser = await User.findByIdAndUpdate(
-          user._id,
-          { $inc: targetUpdate },
-          { session, new: true }
-        );
-
-        // Create ledger entries
+      // Create ledger entries (non-critical, can be retried if failed)
+      try {
         await WalletLedger.create([
           {
             ownerType: 'USER',
@@ -248,7 +169,7 @@ class WalletTransferService {
             type: 'DEBIT',
             reason: 'WALLET_TRANSFER_DEBIT',
             amount: amount,
-            balanceAfter: gamesWalletDebit.balance,
+            balanceAfter: finalUser[sourceWallet]?.balance || 0,
             description: `Transfer to ${this.getWalletDisplayName(targetWallet)}`,
             performedBy: performedBy,
             meta: {
@@ -273,10 +194,90 @@ class WalletTransferService {
               targetWallet
             }
           }
-        ], { session });
+        ]);
+      } catch (ledgerError) {
+        console.error('Failed to create ledger entries for wallet transfer:', ledgerError);
+        // Don't throw error - ledger creation is non-critical
+      }
 
-        await session.commitTransaction();
-        session.endSession();
+      return {
+        success: true,
+        transferId,
+        message: `Successfully transferred ₹${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
+        sourceBalance: finalUser[sourceWallet]?.balance || 0,
+        targetBalance: finalUser[targetWallet]?.balance || 0
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Execute transfer involving games wallet
+   */
+  static async executeGamesWalletTransfer(user, sourceWallet, targetWallet, amount, transferId, remarks, performedBy) {
+    try {
+      if (sourceWallet === 'gamesWallet') {
+        // Debit from games wallet
+        const gamesWalletDebit = await atomicGamesWalletDebit(User, user._id, amount);
+        if (!gamesWalletDebit) {
+          throw new Error('Insufficient balance in games wallet');
+        }
+
+        // Credit to target wallet
+        const targetUpdate = {};
+        targetUpdate[`${targetWallet}.balance`] = amount;
+        targetUpdate[`${targetWallet}.depositTotal`] = amount;
+
+        const finalUser = await User.findByIdAndUpdate(
+          user._id,
+          { $inc: targetUpdate },
+          { new: true }
+        );
+
+        if (!finalUser) {
+          throw new Error('Failed to credit target wallet');
+        }
+
+        // Create ledger entries (non-critical)
+        try {
+          await WalletLedger.create([
+            {
+              ownerType: 'USER',
+              ownerId: user._id,
+              adminCode: user.adminCode || 'SUPER',
+              type: 'DEBIT',
+              reason: 'WALLET_TRANSFER_DEBIT',
+              amount: amount,
+              balanceAfter: gamesWalletDebit.balance,
+              description: `Transfer to ${this.getWalletDisplayName(targetWallet)}`,
+              performedBy: performedBy,
+              meta: {
+                transferId,
+                sourceWallet,
+                targetWallet
+              }
+            },
+            {
+              ownerType: 'USER',
+              ownerId: user._id,
+              adminCode: user.adminCode || 'SUPER',
+              type: 'CREDIT',
+              reason: 'WALLET_TRANSFER_CREDIT',
+              amount: amount,
+              balanceAfter: finalUser[targetWallet]?.balance || 0,
+              description: `Transfer from ${this.getWalletDisplayName(sourceWallet)}`,
+              performedBy: performedBy,
+              meta: {
+                transferId,
+                sourceWallet,
+                targetWallet
+              }
+            }
+          ]);
+        } catch (ledgerError) {
+          console.error('Failed to create ledger entries for games wallet transfer:', ledgerError);
+        }
 
         return {
           success: true,
@@ -286,6 +287,15 @@ class WalletTransferService {
           targetBalance: finalUser[targetWallet]?.balance || 0
         };
       } else {
+        // Get current source balance
+        const freshUser = await User.findById(user._id);
+        const currentSourceBalance = freshUser[sourceWallet]?.balance || 0;
+        
+        // Verify sufficient balance
+        if (currentSourceBalance < amount) {
+          throw new Error(`Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Available: ₹${currentSourceBalance.toLocaleString()}`);
+        }
+
         // Debit from source wallet
         const sourceUpdate = {};
         sourceUpdate[`${sourceWallet}.balance`] = -amount;
@@ -293,11 +303,21 @@ class WalletTransferService {
         const updatedUser = await User.findByIdAndUpdate(
           user._id,
           { $inc: sourceUpdate },
-          { session, new: true }
+          { new: true }
         );
 
         if (!updatedUser) {
           throw new Error('Failed to debit source wallet');
+        }
+
+        // Verify source wallet balance didn't go negative
+        const newSourceBalance = updatedUser[sourceWallet]?.balance || 0;
+        if (newSourceBalance < 0) {
+          // Rollback
+          const rollbackUpdates = {};
+          rollbackUpdates[`${sourceWallet}.balance`] = amount;
+          await User.findByIdAndUpdate(user._id, { $inc: rollbackUpdates });
+          throw new Error('Insufficient balance after transfer');
         }
 
         // Credit to games wallet
@@ -305,44 +325,45 @@ class WalletTransferService {
 
         const finalUser = await User.findById(user._id).select('gamesWallet').lean();
 
-        // Create ledger entries
-        await WalletLedger.create([
-          {
-            ownerType: 'USER',
-            ownerId: user._id,
-            adminCode: user.adminCode || 'SUPER',
-            type: 'DEBIT',
-            reason: 'WALLET_TRANSFER_DEBIT',
-            amount: amount,
-            balanceAfter: updatedUser[sourceWallet]?.balance || 0,
-            description: `Transfer to ${this.getWalletDisplayName(targetWallet)}`,
-            performedBy: performedBy,
-            meta: {
-              transferId,
-              sourceWallet,
-              targetWallet
+        // Create ledger entries (non-critical)
+        try {
+          await WalletLedger.create([
+            {
+              ownerType: 'USER',
+              ownerId: user._id,
+              adminCode: user.adminCode || 'SUPER',
+              type: 'DEBIT',
+              reason: 'WALLET_TRANSFER_DEBIT',
+              amount: amount,
+              balanceAfter: updatedUser[sourceWallet]?.balance || 0,
+              description: `Transfer to ${this.getWalletDisplayName(targetWallet)}`,
+              performedBy: performedBy,
+              meta: {
+                transferId,
+                sourceWallet,
+                targetWallet
+              }
+            },
+            {
+              ownerType: 'USER',
+              ownerId: user._id,
+              adminCode: user.adminCode || 'SUPER',
+              type: 'CREDIT',
+              reason: 'WALLET_TRANSFER_CREDIT',
+              amount: amount,
+              balanceAfter: finalUser?.gamesWallet?.balance || 0,
+              description: `Transfer from ${this.getWalletDisplayName(sourceWallet)}`,
+              performedBy: performedBy,
+              meta: {
+                transferId,
+                sourceWallet,
+                targetWallet
+              }
             }
-          },
-          {
-            ownerType: 'USER',
-            ownerId: user._id,
-            adminCode: user.adminCode || 'SUPER',
-            type: 'CREDIT',
-            reason: 'WALLET_TRANSFER_CREDIT',
-            amount: amount,
-            balanceAfter: finalUser?.gamesWallet?.balance || 0,
-            description: `Transfer from ${this.getWalletDisplayName(sourceWallet)}`,
-            performedBy: performedBy,
-            meta: {
-              transferId,
-              sourceWallet,
-              targetWallet
-            }
-          }
-        ], { session });
-
-        await session.commitTransaction();
-        session.endSession();
+          ]);
+        } catch (ledgerError) {
+          console.error('Failed to create ledger entries for games wallet transfer:', ledgerError);
+        }
 
         return {
           success: true,
@@ -353,8 +374,6 @@ class WalletTransferService {
         };
       }
     } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
       throw error;
     }
   }
