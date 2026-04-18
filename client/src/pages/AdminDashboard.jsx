@@ -2690,7 +2690,8 @@ const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
       FNO: { enabled: true, parentPercentage: 50 },
       MCX: { enabled: true, parentPercentage: 50 },
       CRYPTO: { enabled: true, parentPercentage: 50 },
-      CURRENCY: { enabled: true, parentPercentage: 50 }
+      CURRENCY: { enabled: true, parentPercentage: 50 },
+      FOREX: { enabled: true, parentPercentage: 50 }
     },
     notes: targetAdmin.pattiSharing?.notes || ''
   });
@@ -2717,7 +2718,8 @@ const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
             FNO: { enabled: true, parentPercentage: 50 },
             MCX: { enabled: true, parentPercentage: 50 },
             CRYPTO: { enabled: true, parentPercentage: 50 },
-            CURRENCY: { enabled: true, parentPercentage: 50 }
+            CURRENCY: { enabled: true, parentPercentage: 50 },
+            FOREX: { enabled: true, parentPercentage: 50 }
           },
           notes: data.notes || ''
         });
