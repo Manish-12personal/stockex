@@ -1939,7 +1939,8 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
         onClose();
       }, 1500);
     } catch (err) {
-      setError(err.response?.data?.message || 'Transfer failed');
+      console.error('Wallet transfer error:', err.response?.data);
+      setError(err.response?.data?.message || err.message || 'Transfer failed');
     } finally {
       setLoading(false);
     }
