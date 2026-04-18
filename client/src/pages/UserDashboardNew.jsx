@@ -1366,6 +1366,7 @@ const UserReferral = () => {
   const { user } = useAuth();
   const [referralStats, setReferralStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     fetchReferralStats();
@@ -1385,13 +1386,22 @@ const UserReferral = () => {
   };
 
   const generateReferralCode = async () => {
+    setGenerating(true);
     try {
       const headers = { Authorization: `Bearer ${user.token}` };
-      await axios.post('/api/referral/generate', {}, { headers });
-      alert('Referral code generated!');
+      const { data } = await axios.post('/api/referral/generate', {}, { headers });
+      alert('Referral code generated successfully!');
+      // Refresh user data by fetching updated profile
+      const userRes = await axios.get('/api/user/profile', { headers });
+      // Update localStorage with new user data
+      localStorage.setItem('user', JSON.stringify(userRes.data));
+      // Reload page to refresh user context
       window.location.reload();
     } catch (error) {
+      console.error('Error generating referral code:', error);
       alert(error.response?.data?.message || 'Failed to generate referral code');
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -1399,6 +1409,11 @@ const UserReferral = () => {
     const link = `${window.location.origin}/signup?ref=${user.referralCode}`;
     navigator.clipboard.writeText(link);
     alert('Referral link copied to clipboard!');
+  };
+
+  const copyReferralCode = () => {
+    navigator.clipboard.writeText(user.referralCode);
+    alert('Referral code copied to clipboard!');
   };
 
   if (loading) {
@@ -1424,11 +1439,24 @@ const UserReferral = () => {
             </div>
 
             <div className="bg-dark-700 rounded-lg p-4 mb-4">
-              <div className="flex items-center justify-between">
+              <div className="text-xs text-gray-400 mb-2">Referral Code</div>
+              <div className="flex items-center justify-between mb-3">
                 <code className="text-2xl font-mono text-green-400">{user.referralCode}</code>
                 <button
+                  onClick={copyReferralCode}
+                  className="bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded-lg font-medium transition text-sm"
+                >
+                  Copy Code
+                </button>
+              </div>
+              <div className="text-xs text-gray-400 mb-2">Referral Link</div>
+              <div className="flex items-center gap-2">
+                <code className="text-xs font-mono text-gray-300 flex-1 bg-dark-800 px-3 py-2 rounded truncate">
+                  {window.location.origin}/signup?ref={user.referralCode}
+                </code>
+                <button
                   onClick={copyReferralLink}
-                  className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-medium transition"
+                  className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-2 rounded-lg font-medium transition text-sm whitespace-nowrap"
                 >
                   Copy Link
                 </button>
@@ -1448,9 +1476,10 @@ const UserReferral = () => {
             <p className="text-gray-400 mb-4">Generate your referral code and start inviting friends to earn rewards.</p>
             <button
               onClick={generateReferralCode}
-              className="bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white px-6 py-3 rounded-lg font-medium transition-all shadow-lg shadow-purple-600/20"
+              disabled={generating}
+              className="bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white px-6 py-3 rounded-lg font-medium transition-all shadow-lg shadow-purple-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Generate Referral Code
+              {generating ? 'Generating...' : 'Generate Referral Code'}
             </button>
           </div>
         )}
