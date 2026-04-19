@@ -1371,10 +1371,8 @@ const UserReferral = () => {
 
   useEffect(() => {
     fetchReferralStats();
-    console.log('User referralCode from context:', user?.referralCode);
     if (user?.referralCode) {
       setLocalReferralCode(user.referralCode);
-      console.log('Set localReferralCode from user context:', user.referralCode);
     }
   }, [user?.token, user?.referralCode]);
 
@@ -1396,15 +1394,7 @@ const UserReferral = () => {
     try {
       const headers = { Authorization: `Bearer ${user.token}` };
       const { data } = await axios.post('/api/referral/generate', {}, { headers });
-      
-      console.log('Referral code response:', data);
-      
-      // Set the referral code from response
-      if (data.referralCode) {
-        setLocalReferralCode(data.referralCode);
-        console.log('Set localReferralCode to:', data.referralCode);
-      }
-      
+      setLocalReferralCode(data.referralCode);
       alert('Referral code generated successfully!');
     } catch (error) {
       console.error('Error generating referral code:', error);
@@ -1415,13 +1405,15 @@ const UserReferral = () => {
   };
 
   const copyReferralLink = () => {
-    const link = `${window.location.origin}/signup?ref=${user.referralCode}`;
+    const code = localReferralCode || user.referralCode;
+    const link = `${window.location.origin}/signup?ref=${code}`;
     navigator.clipboard.writeText(link);
     alert('Referral link copied to clipboard!');
   };
 
   const copyReferralCode = () => {
-    navigator.clipboard.writeText(user.referralCode);
+    const code = localReferralCode || user.referralCode;
+    navigator.clipboard.writeText(code);
     alert('Referral code copied to clipboard!');
   };
 
@@ -1429,57 +1421,77 @@ const UserReferral = () => {
     return <div className="p-6 text-center text-gray-400">Loading...</div>;
   }
 
-  console.log('Rendering - user.referralCode:', user?.referralCode);
-  console.log('Rendering - localReferralCode:', localReferralCode);
-
   return (
     <div className="p-4 md:p-6 overflow-y-auto h-full">
       <h1 className="text-2xl font-bold mb-6">Share and Earn</h1>
 
       <div className="max-w-2xl">
+        {/* Rules Section - Always visible */}
+        <div className="bg-dark-800 rounded-xl p-6 border border-dark-600 mb-6">
+          <h3 className="text-lg font-bold mb-4 text-white">Rules</h3>
+          <div className="space-y-3 text-sm text-gray-300">
+            <div className="flex gap-3">
+              <span className="text-purple-400 font-bold">1.</span>
+              <p>Share this link to your friends.</p>
+            </div>
+            <div className="flex gap-3">
+              <span className="text-purple-400 font-bold">2.</span>
+              <p>When your friend opens this link, tell them to register here first.</p>
+            </div>
+            <div className="flex gap-3">
+              <span className="text-purple-400 font-bold">3.</span>
+              <p>After registering, they can play any game.</p>
+            </div>
+            <div className="flex gap-3">
+              <span className="text-purple-400 font-bold">4.</span>
+              <p>You will get 5% on Nifty Jackpot only if your friend wins for the first time.</p>
+            </div>
+            <div className="flex gap-3">
+              <span className="text-purple-400 font-bold">5.</span>
+              <p>The winning amount will be credited to your account only if your friend's account places trades and plays games continuously for 1 month. Your friend needs to be actively participating in all games for 1 month. After 1 month, you will be credited with your friend's first winning amount.</p>
+            </div>
+          </div>
+        </div>
+
         {/* Referral Code Section */}
-        {user?.referralCode || localReferralCode ? (
+        {localReferralCode || user?.referralCode ? (
           <div className="bg-gradient-to-br from-purple-900/30 to-dark-800 rounded-xl p-6 mb-6 border border-purple-600/30">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-12 h-12 bg-purple-600 rounded-lg flex items-center justify-center">
                 <Share2 size={24} className="text-white" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-purple-300">Your Referral Code</h2>
-                <p className="text-sm text-gray-400">Share this code to earn rewards</p>
+                <h2 className="text-lg font-bold text-purple-300">Your Referral Link</h2>
+                <p className="text-sm text-gray-400">Share this link to earn rewards</p>
               </div>
             </div>
 
+            {/* Referral Link - Prominent Display */}
             <div className="bg-dark-700 rounded-lg p-4 mb-4">
-              <div className="text-xs text-gray-400 mb-2">Referral Code</div>
-              <div className="flex items-center justify-between mb-3">
-                <code className="text-2xl font-mono text-green-400">{localReferralCode || user.referralCode}</code>
-                <button
-                  onClick={() => {
-                    const code = localReferralCode || user.referralCode;
-                    navigator.clipboard.writeText(code);
-                    alert('Referral code copied to clipboard!');
-                  }}
-                  className="bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded-lg font-medium transition text-sm"
-                >
-                  Copy Code
-                </button>
-              </div>
               <div className="text-xs text-gray-400 mb-2">Referral Link</div>
               <div className="flex items-center gap-2">
-                <code className="text-xs font-mono text-gray-300 flex-1 bg-dark-800 px-3 py-2 rounded truncate">
+                <code className="text-sm font-mono text-green-400 flex-1 bg-dark-800 px-3 py-2 rounded break-all">
                   {window.location.origin}/signup?ref={localReferralCode || user.referralCode}
                 </code>
                 <button
-                  onClick={() => {
-                    const code = localReferralCode || user.referralCode;
-                    const link = `${window.location.origin}/signup?ref=${code}`;
-                    navigator.clipboard.writeText(link);
-                    alert('Referral link copied to clipboard!');
-                  }}
+                  onClick={copyReferralLink}
                   className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-2 rounded-lg font-medium transition text-sm whitespace-nowrap"
                 >
                   Copy Link
+                </button>
+              </div>
+            </div>
+
+            {/* Referral Code - Secondary */}
+            <div className="bg-dark-700 rounded-lg p-4 mb-4">
+              <div className="text-xs text-gray-400 mb-2">Referral Code</div>
+              <div className="flex items-center justify-between">
+                <code className="text-xl font-mono text-gray-300">{localReferralCode || user.referralCode}</code>
+                <button
+                  onClick={copyReferralCode}
+                  className="bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded-lg font-medium transition text-sm"
+                >
+                  Copy Code
                 </button>
               </div>
             </div>
@@ -1493,7 +1505,7 @@ const UserReferral = () => {
             <div className="w-16 h-16 bg-purple-600/20 rounded-full flex items-center justify-center mx-auto mb-4">
               <Share2 size={32} className="text-purple-400" />
             </div>
-            <h2 className="text-xl font-bold text-purple-300 mb-2">Start Earning Today!</h2>
+            <h2 className="text-xl font-bold text-purple-300 mb-2">Get Your Referral Code</h2>
             <p className="text-gray-400 mb-4">Generate your referral code and start inviting friends to earn rewards.</p>
             <button
               onClick={generateReferralCode}
@@ -1502,28 +1514,6 @@ const UserReferral = () => {
             >
               {generating ? 'Generating...' : 'Generate Referral Code'}
             </button>
-
-            {/* Referral Code Display Field */}
-            {localReferralCode && (
-              <div className="mt-4">
-                <div className="text-xs text-gray-400 mb-2">Your Referral Code</div>
-                <div className="bg-dark-700 rounded-lg p-3 flex items-center justify-between gap-2">
-                  <code className="text-lg font-mono text-green-400">{localReferralCode}</code>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(localReferralCode);
-                      alert('Referral code copied!');
-                    }}
-                    className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded font-medium transition text-sm"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <div className="text-xs text-gray-400 mt-2">
-                  Share this code or use link: {window.location.origin}/signup?ref={localReferralCode}
-                </div>
-              </div>
-            )}
           </div>
         )}
 

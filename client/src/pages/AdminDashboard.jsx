@@ -11,6 +11,7 @@ import {
 import { groupNseFoMarketWatch } from '../utils/nseFnOSectors.js';
 import io from 'socket.io-client';
 import { WALLET_LEDGER_GAME_OPTIONS } from '../constants/walletLedgerGames.js';
+import AdminFundTransfer from '../components/AdminFundTransfer';
 import {
   Users,
   LogOut,
@@ -370,6 +371,7 @@ const AdminDashboard = () => {
         { path: `${basePath}/trades`, icon: FileText, label: 'Position' },
         { path: `${basePath}/net-positions`, icon: Layers, label: 'Net Positions' },
         { path: `${basePath}/fund-requests`, icon: CreditCard, label: 'User Fund Requests' },
+        { path: `${basePath}/fund-transfer-to-admin`, icon: ArrowRightLeft, label: 'Fund Transfer to Admin' },
         { path: `${basePath}/bank-accounts`, icon: Building2, label: 'Bank Accounts' },
         { path: `${basePath}/ledger`, icon: FileText, label: 'Transactions' },
         { path: `${basePath}/transaction-slips`, icon: Receipt, label: 'Transaction Slips' },
@@ -575,6 +577,7 @@ const AdminDashboard = () => {
           {!isSuperAdmin && <Route path="create-user" element={<AdminCreateUser />} />}
           {!isSuperAdmin && <Route path="trades" element={<AllTrades />} />}
           {!isSuperAdmin && <Route path="fund-requests" element={<FundRequests />} />}
+          {!isSuperAdmin && <Route path="fund-transfer-to-admin" element={<AdminFundTransfer />} />}
           {!isSuperAdmin && <Route path="bank-accounts" element={<BankAccounts />} />}
           {!isSuperAdmin && <Route path="ledger" element={<LedgerView />} />}
           {!isSuperAdmin && <Route path="transaction-slips" element={<TransactionSlipsManagement />} />}
@@ -583,6 +586,7 @@ const AdminDashboard = () => {
           <Route path="trading" element={<TradingPanel />} />
           <Route path="net-positions" element={<NetPositions />} />
           <Route path="profile" element={<ProfileSettings />} />
+// ...
           <Route path="*" element={isSuperAdmin ? <SuperAdminDashboard /> : <AdminDashboardHome />} />
         </Routes>
       </main>

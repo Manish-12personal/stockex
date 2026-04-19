@@ -1180,4 +1180,74 @@ router.delete('/bank-settings/upi-account/:id', protectAdmin, async (req, res) =
   }
 });
 
+// Transfer funds to another admin
+router.post('/transfer-to-admin', protectAdmin, async (req, res) => {
+  try {
+    const { targetAdminId, amount, description } = req.body;
+
+    if (!targetAdminId || !amount) {
+      return res.status(400).json({ message: 'Target admin ID and amount are required' });
+    }
+
+    if (Number(amount) <= 0) {
+      return res.status(400).json({ message: 'Amount must be greater than 0' });
+    }
+
+    // Get current admin
+    const currentAdmin = await Admin.findById(req.admin._id);
+    if (!currentAdmin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+
+    // Check if current admin has enough balance
+    if (currentAdmin.wallet.balance < Number(amount)) {
+      return res.status(400).json({ message: 'Insufficient balance' });
+    }
+
+    // Get target admin
+    const targetAdmin = await Admin.findById(targetAdminId);
+    if (!targetAdmin) {
+      return res.status(404).json({ message: 'Target admin not found' });
+    }
+
+    // Check if target admin is same as current admin
+    if (targetAdmin._id.toString() === currentAdmin._id.toString()) {
+      return res.status(400).json({ message: 'Cannot transfer to yourself' });
+    }
+
+    // Perform the transfer
+    currentAdmin.wallet.balance -= Number(amount);
+    targetAdmin.wallet.balance += Number(amount);
+
+    await currentAdmin.save();
+    await targetAdmin.save();
+
+    res.json({
+      message: 'Transfer successful',
+      currentWallet: currentAdmin.wallet,
+      targetWallet: targetAdmin.wallet
+    });
+  } catch (error) {
+    console.error('Error transferring funds:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get list of admins for transfer
+router.get('/admins-list', protectAdmin, async (req, res) => {
+  try {
+    const admins = await Admin.find({
+      _id: { $ne: req.admin._id },
+      role: 'ADMIN'
+    })
+    .select('name username role adminCode wallet.balance')
+    .lean();
+
+    res.json({ admins });
+  } catch (error) {
+    console.error('Error fetching admins list:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;

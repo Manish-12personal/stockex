@@ -212,6 +212,22 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'User with this email or username already exists' });
     }
 
+    // Generate unique referral code for user (like brokers)
+    const generateUserReferralCode = () => {
+      const timestamp = Date.now().toString(36).toUpperCase();
+      const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+      return `REF${timestamp}${random}`;
+    };
+
+    let userReferralCode = generateUserReferralCode();
+
+    // Ensure uniqueness
+    let existingUserWithCode = await User.findOne({ referralCode: userReferralCode });
+    while (existingUserWithCode) {
+      userReferralCode = generateUserReferralCode();
+      existingUserWithCode = await User.findOne({ referralCode: userReferralCode });
+    }
+
     const user = await User.create({
       username,
       email,
@@ -220,6 +236,7 @@ router.post('/register', async (req, res) => {
       phone,
       admin: admin._id,
       adminCode: admin.adminCode,
+      referralCode: userReferralCode,
       referredBy: referrerUser?._id || null
     });
 

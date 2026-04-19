@@ -131,6 +131,7 @@ function App() {
             <Route path="/tools/margin-calculator" element={<MarginCalculator />} />
             <Route path="/tools/market-heatmap" element={<MarketHeatmap />} />
             <Route path="/login" element={<UserLogin />} />
+            <Route path="/signup" element={<UserLogin />} />
             <Route path="/login-as" element={<LoginAs />} />
             
             {/* Separate Login Pages for each role */}
