@@ -896,6 +896,40 @@ router.post('/users/:id/force-logout', protectAdmin, async (req, res) => {
   }
 });
 
+// Convert demo user to real account (Super Admin only)
+router.post('/users/:id/convert-to-real', protectAdmin, async (req, res) => {
+  try {
+    if (req.admin.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Super Admin can convert users to real accounts' });
+    }
+
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.isDemo) {
+      return res.status(400).json({ message: 'User is already a real account' });
+    }
+
+    // Convert to real account and set the convertedAt date for 1-month first win calculation
+    await User.updateOne(
+      { _id: req.params.id },
+      {
+        $set: {
+          isDemo: false,
+          convertedToRealAt: new Date(),
+          demoExpiresAt: null
+        }
+      }
+    );
+
+    res.json({ message: 'User converted to real account successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Add funds to user wallet
 router.post('/users/:id/wallet/deposit', protectAdmin, async (req, res) => {
   try {

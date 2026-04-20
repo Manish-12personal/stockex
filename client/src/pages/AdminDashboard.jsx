@@ -21156,6 +21156,7 @@ const AllUsersManagement = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
   const [selectedAdminFilter, setSelectedAdminFilter] = useState('');
+  const [userTypeFilter, setUserTypeFilter] = useState('all'); // 'all', 'demo', 'real'
   const [selectedUser, setSelectedUser] = useState(null);
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -21390,6 +21391,21 @@ const AllUsersManagement = () => {
     }
   };
 
+  const handleConvertToRealAccount = async (user) => {
+    if (!confirm(`Are you sure you want to convert "${user.fullName || user.username}" from demo to real account? This will start the 1-month first win calculation for referral bonuses.`)) {
+      return;
+    }
+    try {
+      await axios.post(`/api/admin/users/${user._id}/convert-to-real`, {}, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert('User converted to real account successfully!');
+      fetchAllUsers();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error converting user to real account');
+    }
+  };
+
   const openEditModal = (user) => {
     setSelectedUser(user);
     const userSegmentKeys = Object.keys(user.segmentPermissions || {});
@@ -21499,9 +21515,18 @@ const AllUsersManagement = () => {
 
   // Pre-filter by admin first
   const adminFilteredUsers = useMemo(() => {
-    if (!selectedAdminFilter) return users;
-    return users.filter(u => u.adminCode === selectedAdminFilter);
-  }, [users, selectedAdminFilter]);
+    let filtered = users;
+    if (selectedAdminFilter) {
+      filtered = filtered.filter(u => u.adminCode === selectedAdminFilter);
+    }
+    // Filter by user type (demo/real)
+    if (userTypeFilter === 'demo') {
+      filtered = filtered.filter(u => u.isDemo);
+    } else if (userTypeFilter === 'real') {
+      filtered = filtered.filter(u => !u.isDemo);
+    }
+    return filtered;
+  }, [users, selectedAdminFilter, userTypeFilter]);
 
   const { currentPage, setCurrentPage, totalPages, paginatedData: paginatedUsers, totalItems } = usePagination(
     adminFilteredUsers, 20, filter, ['username', 'email', 'fullName', 'adminCode', 'phone']
@@ -21545,6 +21570,35 @@ const AllUsersManagement = () => {
               </option>
             ))}
           </select>
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <label className="block text-sm text-gray-400 mb-1">User Type</label>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setUserTypeFilter('all')}
+              className={`flex-1 px-4 py-2 rounded-lg font-medium transition ${
+                userTypeFilter === 'all' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+              }`}
+            >
+              All Users
+            </button>
+            <button
+              onClick={() => setUserTypeFilter('demo')}
+              className={`flex-1 px-4 py-2 rounded-lg font-medium transition ${
+                userTypeFilter === 'demo' ? 'bg-yellow-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+              }`}
+            >
+              Demo Users
+            </button>
+            <button
+              onClick={() => setUserTypeFilter('real')}
+              className={`flex-1 px-4 py-2 rounded-lg font-medium transition ${
+                userTypeFilter === 'real' ? 'bg-green-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+              }`}
+            >
+              Real Users
+            </button>
+          </div>
         </div>
         <div className="flex-1 min-w-[200px]">
           <label className="block text-sm text-gray-400 mb-1">Search</label>
@@ -21652,6 +21706,15 @@ const AllUsersManagement = () => {
                       >
                         <UserPlus size={16} />
                       </button>
+                      {user.isDemo && (
+                        <button
+                          onClick={() => handleConvertToRealAccount(user)}
+                          className="p-2 hover:bg-dark-600 rounded transition text-emerald-400"
+                          title="Convert to Real Account"
+                        >
+                          <RefreshCw size={16} />
+                        </button>
+                      )}
                       {isSuperAdmin && (
                         <button
                           onClick={() => handleForceLogoutUser(user._id, user.fullName || user.username)}

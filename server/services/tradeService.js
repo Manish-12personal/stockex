@@ -853,9 +853,11 @@ class TradeService {
       admin.tradingPnL.todayRealized += trade.adminPnL;
       admin.stats.totalPnL += trade.adminPnL;
       await admin.save();
-      
-      // Distribute brokerage through MLM hierarchy
-      await this.distributeBrokerage(trade, charges.brokerage, admin, user);
+
+      // Distribute brokerage through MLM hierarchy (exclude demo users)
+      if (!user.isDemo) {
+        await this.distributeBrokerage(trade, charges.brokerage, admin, user);
+      }
     }
 
     void import('./marginMonitorService.js').then((m) => m.invalidateMarginOpenTradesCache?.());

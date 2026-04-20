@@ -17,6 +17,11 @@ export async function creditReferralGameReward(referredUserId, winAmount, gameNa
       return { credited: false, reason: 'No referrer' };
     }
 
+    // Exclude demo users from referral bonuses
+    if (referredUser.isDemo) {
+      return { credited: false, reason: 'Demo users do not generate referral bonuses' };
+    }
+
     // Check if this is the first game win
     if (referredUser.referralStats?.firstGameWin) {
       return { credited: false, reason: 'Already credited first game win' };
@@ -25,6 +30,16 @@ export async function creditReferralGameReward(referredUserId, winAmount, gameNa
     // Check if user is in top 10 (if rank is provided)
     if (rank !== null && rank > 10) {
       return { credited: false, reason: 'Not in top 10' };
+    }
+
+    // Check if user converted from demo to real - only count wins within 1 month of conversion
+    if (referredUser.convertedToRealAt) {
+      const oneMonthAfterConversion = new Date(referredUser.convertedToRealAt);
+      oneMonthAfterConversion.setMonth(oneMonthAfterConversion.getMonth() + 1);
+      const now = new Date();
+      if (now > oneMonthAfterConversion) {
+        return { credited: false, reason: 'First win window (1 month after conversion) has expired' };
+      }
     }
 
     const referrer = await User.findById(referredUser.referredBy);
@@ -102,9 +117,24 @@ export async function creditReferralTradingReward(referredUserId, brokerageAmoun
       return { credited: false, reason: 'No referrer' };
     }
 
+    // Exclude demo users from referral bonuses
+    if (referredUser.isDemo) {
+      return { credited: false, reason: 'Demo users do not generate referral bonuses' };
+    }
+
     // Check if this is the first trading win
     if (referredUser.referralStats?.firstTradingWin) {
       return { credited: false, reason: 'Already credited first trading win' };
+    }
+
+    // Check if user converted from demo to real - only count wins within 1 month of conversion
+    if (referredUser.convertedToRealAt) {
+      const oneMonthAfterConversion = new Date(referredUser.convertedToRealAt);
+      oneMonthAfterConversion.setMonth(oneMonthAfterConversion.getMonth() + 1);
+      const now = new Date();
+      if (now > oneMonthAfterConversion) {
+        return { credited: false, reason: 'First win window (1 month after conversion) has expired' };
+      }
     }
 
     const referrer = await User.findById(referredUser.referredBy);

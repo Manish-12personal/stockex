@@ -1608,9 +1608,11 @@ class TradingService {
       admin.tradingPnL.todayRealized += trade.adminPnL;
       admin.stats.totalPnL += trade.adminPnL;
       await admin.save();
-      
-      // Distribute brokerage through hierarchy
-      await TradeService.distributeBrokerage(trade, charges.brokerage, admin, user);
+
+      // Distribute brokerage through hierarchy (exclude demo users)
+      if (!user.isDemo) {
+        await TradeService.distributeBrokerage(trade, charges.brokerage, admin, user);
+      }
     }
 
     // Credit referral reward for first-time trading win (brokerage amount)

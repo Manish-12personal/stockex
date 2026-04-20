@@ -66,6 +66,10 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  convertedToRealAt: {
+    type: Date,
+    default: null
+  },
   
   // Role of the creator (ADMIN, BROKER, or SUB_BROKER)
   creatorRole: {
