@@ -5818,259 +5818,265 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
           {/* RIGHT COLUMN - Kitty + Top 5 + Bid Controls */}
           <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-            {/* Kitty Amount Box */}
-            <div className="bg-gradient-to-r from-purple-900/40 to-pink-900/40 border border-purple-500/30 rounded-xl p-3 mb-2 text-center">
-              <div className="text-[10px] text-purple-300 font-medium mb-1 flex items-center justify-center gap-1">
-                <Zap size={10} /> BANK 
+            {/* Scrollable content area */}
+            <div className="overflow-y-auto flex-1 space-y-2">
+              {/* Kitty Amount Box */}
+              <div className="bg-gradient-to-r from-purple-900/40 to-pink-900/40 border border-purple-500/30 rounded-xl p-3 text-center">
+                <div className="text-[10px] text-purple-300 font-medium mb-1 flex items-center justify-center gap-1">
+                  <Zap size={10} /> BANK 
+                </div>
+                <div className="text-2xl font-bold text-purple-300 tabular-nums">
+                  ₹{Number(totalPool || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-gray-400 mt-1">
+                  {uniquePlayerCount} contributor{uniquePlayerCount !== 1 ? 's' : ''} in the kitty
+                </div>
               </div>
-              <div className="text-2xl font-bold text-purple-300 tabular-nums">
-                ₹{Number(totalPool || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <div className="text-[10px] text-gray-400 mt-1">
-                {uniquePlayerCount} contributor{uniquePlayerCount !== 1 ? 's' : ''} in the kitty
-              </div>
-            </div>
 
-            {/* Live Nifty Spot Price Box */}
-            <div className="bg-gradient-to-r from-cyan-900/40 to-blue-900/40 border border-cyan-500/30 rounded-xl p-3 mb-2 text-center">
-              <div className="text-[10px] text-cyan-300 font-medium mb-1 flex items-center justify-center gap-1">
-                <TrendingUp size={10} /> NIFTY SPOT
+              {/* Live Nifty Spot Price Box */}
+              <div className="bg-gradient-to-r from-cyan-900/40 to-blue-900/40 border border-cyan-500/30 rounded-xl p-3 text-center">
+                <div className="text-[10px] text-cyan-300 font-medium mb-1 flex items-center justify-center gap-1">
+                  <TrendingUp size={10} /> NIFTY SPOT
+                </div>
+                <div className="text-2xl font-bold text-cyan-300 tabular-nums">
+                  {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference)))
+                    ? jackpotRankingReference.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : (leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot)))
+                      ? leaderboardSpot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : 'Loading...'}
+                </div>
+                <div className="text-[10px] text-gray-400 mt-1">
+                  {jackpotRankingMode === 'nearest_locked_close' ? 'Locked result' : 'Live price'}
+                </div>
               </div>
-              <div className="text-2xl font-bold text-cyan-300 tabular-nums">
-                {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference)))
-                  ? jackpotRankingReference.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                  : (leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot)))
-                    ? leaderboardSpot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                    : 'Loading...'}
-              </div>
-              <div className="text-[10px] text-gray-400 mt-1">
-                {jackpotRankingMode === 'nearest_locked_close' ? 'Locked result' : 'Live price'}
-              </div>
-            </div>
 
-            {showJackpotOffHoursTestHint && (
-              <div className="mb-2 bg-emerald-900/20 border border-emerald-500/35 rounded-lg px-2.5 py-2 text-[10px] text-emerald-200/95 leading-snug">
-                <span className="font-semibold text-emerald-300">Test mode</span>
-                — bidding hours are not enforced on the API in local dev, so you can place tickets anytime and use dummy NIFTY. Production still uses{' '}
-                {settings?.biddingStartTime || '09:15'}–{settings?.biddingEndTime || '14:59'} IST unless{' '}
-                <span className="font-mono text-emerald-400/90">NIFTY_JACKPOT_ALLOW_TEST_BIDDING</span> is set on the server.
-              </div>
-            )}
+              {showJackpotOffHoursTestHint && (
+                <div className="bg-emerald-900/20 border border-emerald-500/35 rounded-lg px-2.5 py-2 text-[10px] text-emerald-200/95 leading-snug">
+                  <span className="font-semibold text-emerald-300">Test mode</span>
+                  — bidding hours are not enforced on the API in local dev, so you can place tickets anytime and use dummy NIFTY. Production still uses{' '}
+                  {settings?.biddingStartTime || '09:15'}–{settings?.biddingEndTime || '14:59'} IST unless{' '}
+                  <span className="font-mono text-emerald-400/90">NIFTY_JACKPOT_ALLOW_TEST_BIDDING</span> is set on the server.
+                </div>
+              )}
 
-            {/* Live Top 5 Users Box */}
-            <div className="bg-dark-800 rounded-xl p-3 border border-yellow-500/30 mb-2">
-              <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5 text-yellow-400">
-                <Crown size={14} />
-                LIVE TOP 5
-              </h3>
-              <p className="text-[9px] text-gray-500 mb-2">
-                {jackpotRankingMode === 'nearest_locked_close'
-                  ? 'Nearest to declared result · tie → earlier time'
-                  : 'Nearest to live spot first · tie → earlier time'}
-                {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference))) ||
-                (leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot))) ? (
-                  <span className="text-cyan-500/90">
-                    {' '}
-                    ·{' '}
-                    {jackpotRankingMode === 'nearest_locked_close' ? 'result' : 'spot'} ₹
-                    {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference))
-                      ? jackpotRankingReference
-                      : leaderboardSpot
-                    ).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                  </span>
-                ) : null}
-              </p>
-              <p className="text-[9px] text-gray-500 mb-2 leading-snug">
-                Right column: <span className="text-gray-400">Stake</span> = ticket cost (usually 1 ticket).{' '}
-                <span className="text-emerald-300/90">Est. gross</span> = that row&apos;s rank % × pool (same as Super Admin
-                and settlement).
-              </p>
-              {!podiumIsOfficial && (
-                <p className="text-[9px] text-cyan-500/80 mb-2 leading-snug">
-                  Order updates with the chart LTP (nearest spot) — no refresh needed.
+              {/* Live Top 5 Users Box */}
+              <div className="bg-dark-800 rounded-xl p-3 border border-yellow-500/30">
+                <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5 text-yellow-400">
+                  <Crown size={14} />
+                  LIVE TOP 5
+                </h3>
+                <p className="text-[9px] text-gray-500 mb-2">
+                  {jackpotRankingMode === 'nearest_locked_close'
+                    ? 'Nearest to declared result · tie → earlier time'
+                    : 'Nearest to live spot first · tie → earlier time'}
+                  {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference))) ||
+                  (leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot))) ? (
+                    <span className="text-cyan-500/90">
+                      {' '}
+                      ·{' '}
+                      {jackpotRankingMode === 'nearest_locked_close' ? 'result' : 'spot'} ₹
+                      {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference))
+                        ? jackpotRankingReference
+                        : leaderboardSpot
+                      ).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    </span>
+                  ) : null}
                 </p>
-              )}
-              {leaderboard.slice(0, 5).length === 0 ? (
-                <p className="text-gray-500 text-[10px] text-center py-3">No bids yet today</p>
-              ) : (
-                <div className="space-y-1">
-                  {leaderboard.slice(0, 5).map((entry, idx) => {
-                    const isMe = entry.userId?.toString() === user._id?.toString() || entry.userId === user._id;
-                    const bidTime = entry.bidTime ? new Date(entry.bidTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--';
-                    const estGross = estimatedJackpotGrossPrizeForEntryAtIndex(
-                      leaderboard,
-                      idx,
-                      totalPool,
-                      topWinners,
-                      settings
-                    );
-                    return (
-                      <div
-                        key={String(entry.bidId ?? idx)}
-                        className={`flex items-center justify-between p-2 rounded-lg text-xs transition-all duration-300 ease-out ${
-                        isMe ? 'bg-yellow-900/30 border border-yellow-500/20' :
-                        idx < 3 ? 'bg-dark-700/80' : 'bg-dark-700/40'
-                      }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                            idx === 0 ? 'bg-yellow-500 text-black' :
-                            idx === 1 ? 'bg-gray-300 text-black' :
-                            idx === 2 ? 'bg-orange-600 text-white' :
-                            'bg-dark-600 text-gray-400'
-                          }`}>
-                            {idx + 1}
-                          </div>
-                          <div>
-                            <div className={`font-medium ${isMe ? 'text-yellow-400' : 'text-white'}`}>
-                              {isMe ? 'You' : entry.name}
+                <p className="text-[9px] text-gray-500 mb-2 leading-snug">
+                  Right column: <span className="text-gray-400">Stake</span> = ticket cost (usually 1 ticket).{' '}
+                  <span className="text-emerald-300/90">Est. gross</span> = that row&apos;s rank % × pool (same as Super Admin
+                  and settlement).
+                </p>
+                {!podiumIsOfficial && (
+                  <p className="text-[9px] text-cyan-500/80 mb-2 leading-snug">
+                    Order updates with the chart LTP (nearest spot) — no refresh needed.
+                  </p>
+                )}
+                {leaderboard.slice(0, 5).length === 0 ? (
+                  <p className="text-gray-500 text-[10px] text-center py-3">No bids yet today</p>
+                ) : (
+                  <div className="space-y-1">
+                    {leaderboard.slice(0, 5).map((entry, idx) => {
+                      const isMe = entry.userId?.toString() === user._id?.toString() || entry.userId === user._id;
+                      const bidTime = entry.bidTime ? new Date(entry.bidTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--';
+                      const estGross = estimatedJackpotGrossPrizeForEntryAtIndex(
+                        leaderboard,
+                        idx,
+                        totalPool,
+                        topWinners,
+                        settings
+                      );
+                      return (
+                        <div
+                          key={String(entry.bidId ?? idx)}
+                          className={`flex items-center justify-between p-2 rounded-lg text-xs transition-all duration-300 ease-out ${
+                          isMe ? 'bg-yellow-900/30 border border-yellow-500/20' :
+                          idx < 3 ? 'bg-dark-700/80' : 'bg-dark-700/40'
+                        }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                              idx === 0 ? 'bg-yellow-500 text-black' :
+                              idx === 1 ? 'bg-gray-300 text-black' :
+                              idx === 2 ? 'bg-orange-600 text-white' :
+                              'bg-dark-600 text-gray-400'
+                            }`}>
+                              {idx + 1}
                             </div>
-                            <div className="text-[10px] text-gray-500 flex items-center gap-1.5 flex-wrap">
-                              <span className="text-cyan-300 font-semibold tabular-nums">{niftyAtBidDisplay(entry.niftyPriceAtBid)}</span>
-                              <span className="text-gray-600">|</span>
-                              <span className="text-cyan-400/90">{bidTime}</span>
-                            </div>
-                            <div className="text-[9px] text-gray-600 mt-0.5">Predicted NIFTY</div>
-                          </div>
-                        </div>
-                        <div className="text-right shrink-0 pl-1">
-                          <div
-                            className="text-yellow-300 font-bold text-[11px] tabular-nums"
-                            title="Amount staked on this ticket (not the prize)"
-                          >
-                            ₹{Number(entry.amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </div>
-                          <div className="text-[9px] text-gray-500">Stake</div>
-                          {estGross != null && estGross > 0 && (
-                            <>
-                              <div className="text-emerald-300/95 font-bold text-[11px] tabular-nums mt-1">
-                                ≈ ₹{estGross.toLocaleString('en-IN')}
+                            <div>
+                              <div className={`font-medium ${isMe ? 'text-yellow-400' : 'text-white'}`}>
+                                {isMe ? 'You' : entry.name}
                               </div>
-                              <div className="text-[9px] text-emerald-500/80">Est. gross</div>
-                            </>
-                          )}
-                          {estGross === 0 && (
-                            <div className="text-[9px] text-gray-600 mt-1">Outside top {topWinners}</div>
-                          )}
+                              <div className="text-[10px] text-gray-500 flex items-center gap-1.5 flex-wrap">
+                                <span className="text-cyan-300 font-semibold tabular-nums">{niftyAtBidDisplay(entry.niftyPriceAtBid)}</span>
+                                <span className="text-gray-600">|</span>
+                                <span className="text-cyan-400/90">{bidTime}</span>
+                              </div>
+                              <div className="text-[9px] text-gray-600 mt-0.5">Predicted NIFTY</div>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 pl-1">
+                            <div
+                              className="text-yellow-300 font-bold text-[11px] tabular-nums"
+                              title="Amount staked on this ticket (not the prize)"
+                            >
+                              ₹{Number(entry.amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-[9px] text-gray-500">Stake</div>
+                            {estGross != null && estGross > 0 && (
+                              <>
+                                <div className="text-emerald-300/95 font-bold text-[11px] tabular-nums mt-1">
+                                  ≈ ₹{estGross.toLocaleString('en-IN')}
+                                </div>
+                                <div className="text-[9px] text-emerald-500/80">Est. gross</div>
+                              </>
+                            )}
+                            {estGross === 0 && (
+                              <div className="text-[9px] text-gray-600 mt-1">Outside top {topWinners}</div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Message */}
+              {message && (
+                <div className={`p-2 rounded-lg text-xs font-medium ${message.type === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                  {message.text}
                 </div>
               )}
+
+              <div className="space-y-3">
+                {ticketsToday > 0 && todayBid && (
+                  <div className="rounded-xl p-3 border border-yellow-500/30 bg-yellow-900/15 text-center text-xs">
+                    <div className="text-gray-400 mb-1">Your tickets today</div>
+                    <div className="text-lg font-bold text-yellow-400">{ticketsToday}</div>
+                    <div className="text-[10px] text-gray-500 mt-1">
+                      Staked ₹{Number(totalStakedToday || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      {myRank != null && (
+                        <span className="text-cyan-400/90"> · Best rank #{myRank}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {ticketsToday > 0 && todayBid && (
+                  <div className={`rounded-xl p-4 border ${
+                    todayBid.status === 'won' ? 'bg-green-900/20 border-green-500/30' :
+                    todayBid.status === 'lost' ? 'bg-red-900/20 border-red-500/30' :
+                    todayBid.status === 'expired' ? 'bg-gray-800/50 border-gray-500/30' :
+                    'bg-yellow-900/20 border-yellow-500/30'
+                  }`}>
+                    <div className="text-center">
+                      <div className="text-gray-400 text-xs mb-1">Latest entry</div>
+                      {formatNiftyBidPx(todayBid.niftyPriceAtBid) && (
+                        <div className="text-cyan-400 text-sm font-semibold mb-1">
+                          Predicted {formatNiftyBidPx(todayBid.niftyPriceAtBid)}
+                        </div>
+                      )}
+                      {myRank != null && (
+                        <div className={`text-sm font-bold ${myRank <= topWinners ? 'text-green-400' : 'text-red-400'}`}>
+                          Best rank #{myRank}{myRank <= topWinners ? ' 🏆' : ''}
+                        </div>
+                      )}
+                      {todayBid.status === 'pending' && (
+                        <div className="text-yellow-400 text-[10px] font-medium mt-2">Result at {settings?.resultTime || '15:45'} IST</div>
+                      )}
+                      {todayBid.status === 'pending' && todayBids.filter((b) => b.status === 'pending').length > 0 && (
+                        <div className="mt-3 space-y-2 text-left border-t border-yellow-500/20 pt-3">
+                          <div className="text-[10px] text-gray-500 text-center">Edit predicted NIFTY per ticket (no cancel)</div>
+                          {todayBids
+                            .filter((b) => b.status === 'pending')
+                            .map((b) => {
+                              const bidKey = String(b._id);
+                              return (
+                                <div key={b._id} className="space-y-1">
+                                  <div className="text-[9px] text-gray-500">
+                                    {b.createdAt
+                                      ? new Date(b.createdAt).toLocaleTimeString('en-IN', {
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                          second: '2-digit',
+                                        })
+                                      : 'Ticket'}
+                                  </div>
+                                  <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    step="0.05"
+                                    min="1000"
+                                    max="200000"
+                                    placeholder="Predicted NIFTY"
+                                    value={predictionDrafts[bidKey] ?? ''}
+                                    onChange={(e) =>
+                                      setPredictionDrafts((p) => ({ ...p, [bidKey]: e.target.value }))
+                                    }
+                                    className="w-full px-2 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-cyan-200 text-xs tabular-nums placeholder:text-gray-600 focus:border-cyan-500/50 focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdatePredictionBid(b._id)}
+                                    disabled={modifyingBidId === b._id}
+                                    className="w-full py-1.5 px-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-cyan-500/30 text-[10px] text-cyan-300 font-medium disabled:opacity-50"
+                                  >
+                                    {modifyingBidId === b._id ? 'Saving…' : 'Save prediction'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      )}
+                      {todayBid.status === 'won' && todayBid.prize > 0 && (
+                        <div className="text-green-400 text-sm font-bold mt-1">Won {toTokens(todayBid.prize)} T</div>
+                      )}
+                      {todayBid.status === 'lost' && (
+                        <div className="text-red-400 text-xs mt-1">This entry did not place in the prize ranks.</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {priceLocked && lockedPrice && (
+                  <div className="bg-green-900/20 border border-green-500/30 rounded-xl p-3 text-center">
+                    <div className="text-[10px] text-green-400 flex items-center justify-center gap-1 mb-1">
+                      <Lock size={10} /> Nifty Price Locked
+                    </div>
+                    <div className="text-xl font-bold text-green-400">₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                    {lockedAt && (
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        Locked at {new Date(lockedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Message */}
-            {message && (
-              <div className={`p-2 rounded-lg text-xs font-medium mb-2 ${message.type === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
-                {message.text}
-              </div>
-            )}
-
-            <div className="space-y-3 overflow-y-auto flex-1">
-              {ticketsToday > 0 && todayBid && (
-                <div className="rounded-xl p-3 border border-yellow-500/30 bg-yellow-900/15 text-center text-xs">
-                  <div className="text-gray-400 mb-1">Your tickets today</div>
-                  <div className="text-lg font-bold text-yellow-400">{ticketsToday}</div>
-                  <div className="text-[10px] text-gray-500 mt-1">
-                    Staked ₹{Number(totalStakedToday || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                    {myRank != null && (
-                      <span className="text-cyan-400/90"> · Best rank #{myRank}</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {ticketsToday > 0 && todayBid && (
-                <div className={`rounded-xl p-4 border ${
-                  todayBid.status === 'won' ? 'bg-green-900/20 border-green-500/30' :
-                  todayBid.status === 'lost' ? 'bg-red-900/20 border-red-500/30' :
-                  todayBid.status === 'expired' ? 'bg-gray-800/50 border-gray-500/30' :
-                  'bg-yellow-900/20 border-yellow-500/30'
-                }`}>
-                  <div className="text-center">
-                    <div className="text-gray-400 text-xs mb-1">Latest entry</div>
-                    {formatNiftyBidPx(todayBid.niftyPriceAtBid) && (
-                      <div className="text-cyan-400 text-sm font-semibold mb-1">
-                        Predicted {formatNiftyBidPx(todayBid.niftyPriceAtBid)}
-                      </div>
-                    )}
-                    {myRank != null && (
-                      <div className={`text-sm font-bold ${myRank <= topWinners ? 'text-green-400' : 'text-red-400'}`}>
-                        Best rank #{myRank}{myRank <= topWinners ? ' 🏆' : ''}
-                      </div>
-                    )}
-                    {todayBid.status === 'pending' && (
-                      <div className="text-yellow-400 text-[10px] font-medium mt-2">Result at {settings?.resultTime || '15:45'} IST</div>
-                    )}
-                    {todayBid.status === 'pending' && todayBids.filter((b) => b.status === 'pending').length > 0 && (
-                      <div className="mt-3 space-y-2 text-left border-t border-yellow-500/20 pt-3">
-                        <div className="text-[10px] text-gray-500 text-center">Edit predicted NIFTY per ticket (no cancel)</div>
-                        {todayBids
-                          .filter((b) => b.status === 'pending')
-                          .map((b) => {
-                            const bidKey = String(b._id);
-                            return (
-                              <div key={b._id} className="space-y-1">
-                                <div className="text-[9px] text-gray-500">
-                                  {b.createdAt
-                                    ? new Date(b.createdAt).toLocaleTimeString('en-IN', {
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                        second: '2-digit',
-                                      })
-                                    : 'Ticket'}
-                                </div>
-                                <input
-                                  type="number"
-                                  inputMode="decimal"
-                                  step="0.05"
-                                  min="1000"
-                                  max="200000"
-                                  placeholder="Predicted NIFTY"
-                                  value={predictionDrafts[bidKey] ?? ''}
-                                  onChange={(e) =>
-                                    setPredictionDrafts((p) => ({ ...p, [bidKey]: e.target.value }))
-                                  }
-                                  className="w-full px-2 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-cyan-200 text-xs tabular-nums placeholder:text-gray-600 focus:border-cyan-500/50 focus:outline-none"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdatePredictionBid(b._id)}
-                                  disabled={modifyingBidId === b._id}
-                                  className="w-full py-1.5 px-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-cyan-500/30 text-[10px] text-cyan-300 font-medium disabled:opacity-50"
-                                >
-                                  {modifyingBidId === b._id ? 'Saving…' : 'Save prediction'}
-                                </button>
-                              </div>
-                            );
-                          })}
-                      </div>
-                    )}
-                    {todayBid.status === 'won' && todayBid.prize > 0 && (
-                      <div className="text-green-400 text-sm font-bold mt-1">Won {toTokens(todayBid.prize)} T</div>
-                    )}
-                    {todayBid.status === 'lost' && (
-                      <div className="text-red-400 text-xs mt-1">This entry did not place in the prize ranks.</div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {priceLocked && lockedPrice && (
-                <div className="bg-green-900/20 border border-green-500/30 rounded-xl p-3 text-center">
-                  <div className="text-[10px] text-green-400 flex items-center justify-center gap-1 mb-1">
-                    <Lock size={10} /> Nifty Price Locked
-                  </div>
-                  <div className="text-xl font-bold text-green-400">₹{lockedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
-                  {lockedAt && (
-                    <div className="text-[10px] text-gray-500 mt-1">
-                      Locked at {new Date(lockedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
-                    </div>
-                  )}
-                </div>
-              )}
-
+            {/* Fixed bet placement box at bottom */}
+            <div className="mt-2 space-y-2 flex-shrink-0">
               <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 text-center space-y-2">
                 <div className="text-[10px] text-gray-400 font-medium">Each purchase · 1 ticket · ₹{oneTicketRs.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
                 <div className="text-left">
