@@ -1757,10 +1757,19 @@ router.post('/demo/convert-to-real', protectUser, async (req, res) => {
     const Position = (await import('../models/Position.js')).default;
     const Order = (await import('../models/Order.js')).default;
     const Trade = (await import('../models/Trade.js')).default;
+    const WalletLedger = (await import('../models/WalletLedger.js')).default;
+    const FundRequest = (await import('../models/FundRequest.js')).default;
     
     await Position.deleteMany({ user: user._id });
     await Order.deleteMany({ user: user._id });
     await Trade.deleteMany({ user: user._id });
+    await Trade.deleteMany({ userId: user._id });
+    
+    // Delete wallet ledger entries
+    await WalletLedger.deleteMany({ ownerId: user._id, ownerType: 'USER' });
+    
+    // Delete fund requests
+    await FundRequest.deleteMany({ user: user._id });
     
     // Delete all game-related data
     const GameResult = (await import('../models/GameResult.js')).default;

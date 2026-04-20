@@ -353,6 +353,7 @@ const AdminDashboard = () => {
         { path: `${basePath}/patti-sharing`, icon: ArrowRightLeft, label: 'Patti Sharing' },
         { path: `${basePath}/game-settings`, icon: Gamepad2, label: 'Game Settings' },
         { path: `${basePath}/security-settings`, icon: Lock, label: 'Security Settings' },
+        { path: `${basePath}/referral-distribution`, icon: Share2, label: 'Referral Distribution' },
         { path: `${basePath}/transaction-slips`, icon: Receipt, label: 'Transaction Slips' },
         { path: `${basePath}/bank-management`, icon: Building2, label: 'Bank Settings' },
         { path: `${basePath}/profile`, icon: Settings, label: 'Profile' },
@@ -568,6 +569,7 @@ const AdminDashboard = () => {
           {isSuperAdmin && <Route path="patti-sharing" element={<PattiSharingManagement />} />}
           {isSuperAdmin && <Route path="game-settings" element={<GameSettingsManagement />} />}
           {isSuperAdmin && <Route path="security-settings" element={<SecuritySettings />} />}
+          {isSuperAdmin && <Route path="referral-distribution" element={<ReferralDistributionSettings />} />}
           {isSuperAdmin && <Route path="transaction-slips" element={<TransactionSlipsManagement />} />}
           {/* Admin Only Routes */}
           {!isSuperAdmin && <Route path="wallet" element={<AdminWallet />} />}
@@ -19195,6 +19197,179 @@ const SecuritySettings = () => {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// Referral Distribution Settings (Super Admin only)
+const ReferralDistributionSettings = () => {
+  const { admin } = useAuth();
+  const [settings, setSettings] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
+
+  const games = [
+    { key: 'niftyUpDown', name: 'Nifty Up/Down', icon: '📈' },
+    { key: 'btcUpDown', name: 'BTC Up/Down', icon: '₿' },
+    { key: 'niftyBracket', name: 'Nifty Bracket', icon: '🎯' },
+    { key: 'niftyNumber', name: 'Nifty Number', icon: '🔢' },
+    { key: 'niftyjackpot', name: 'Nifty Jackpot', icon: '🎰' }
+  ];
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    try {
+      setLoading(true);
+      const { data } = await axios.get('/api/admin/game-settings', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setSettings(data);
+    } catch (error) {
+      console.error('Error fetching settings:', error);
+      setMessage({ type: 'error', text: 'Failed to load settings' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateGameReferralSetting = async (gameKey, field, value) => {
+    try {
+      setSaving(true);
+      const updatedSettings = {
+        ...settings,
+        games: {
+          ...settings.games,
+          [gameKey]: {
+            ...settings.games?.[gameKey],
+            referralDistribution: {
+              ...settings.games?.[gameKey]?.referralDistribution,
+              [field]: value
+            }
+          }
+        }
+      };
+      setSettings(updatedSettings);
+
+      await axios.put('/api/admin/game-settings', updatedSettings, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+
+      setMessage({ type: 'success', text: 'Settings updated successfully' });
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+    } catch (error) {
+      console.error('Error updating settings:', error);
+      setMessage({ type: 'error', text: 'Failed to update settings' });
+      fetchSettings(); // Revert on error
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-gray-400">Loading referral distribution settings...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-bold flex items-center gap-3">
+            <Share2 className="text-purple-400" size={28} /> Referral Amount Distribution System
+          </h2>
+          <p className="text-gray-400 mt-1">Configure referral reward percentages for each game</p>
+        </div>
+        {message.text && (
+          <div className={`px-4 py-2 rounded-lg ${
+            message.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+          }`}>
+            {message.text}
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+        {games.map(game => (
+          <div key={game.key} className="bg-dark-800 rounded-lg p-6">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+              <span className="text-2xl">{game.icon}</span>
+              {game.name}
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">
+                  % of 1st Winning (According to Tickets)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={settings?.games?.[game.key]?.referralDistribution?.firstWinByTickets || 5}
+                  onChange={e => updateGameReferralSetting(game.key, 'firstWinByTickets', parseFloat(e.target.value))}
+                  disabled={saving}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Percentage of first winning to give to referrer based on tickets
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">
+                  % of 1st Winning (According to Time)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={settings?.games?.[game.key]?.referralDistribution?.firstWinByTime || 5}
+                  onChange={e => updateGameReferralSetting(game.key, 'firstWinByTime', parseFloat(e.target.value))}
+                  disabled={saving}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Percentage of first winning to give to referrer based on time
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">
+                  Minimum Winning Amount (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={settings?.games?.[game.key]?.referralDistribution?.minWinningAmount || 100}
+                  onChange={e => updateGameReferralSetting(game.key, 'minWinningAmount', parseFloat(e.target.value))}
+                  disabled={saving}
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Minimum winning amount required to trigger referral reward
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 p-4 rounded-lg bg-purple-900/20 border border-purple-500/30">
+        <h4 className="font-bold text-purple-300 mb-2">How Referral Distribution Works</h4>
+        <ul className="text-sm text-gray-300 space-y-1">
+          <li>• When a referred user wins for the first time in a game, the referrer gets a percentage of the winning amount</li>
+          <li>• Two calculation methods: based on tickets purchased or based on time of winning</li>
+          <li>• The higher of the two percentages will be used for the referral reward</li>
+          <li>• Minimum winning amount threshold ensures only meaningful wins trigger rewards</li>
+        </ul>
       </div>
     </div>
   );
