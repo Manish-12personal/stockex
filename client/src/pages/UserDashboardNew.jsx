@@ -1614,19 +1614,22 @@ const UserDashboardNew = () => {
     setConvertLoading(true);
     setConvertError('');
     try {
-      await axios.post('/api/user/demo/convert-to-real', {
+      const response = await axios.post('/api/user/demo/convert-to-real', {
         selectedBrokerCode: selectedBroker || null
       }, {
         headers: { Authorization: `Bearer ${user.token}` }
       });
-      
-      // Refresh user data to update isDemo status immediately
-      await refreshUserData();
-      
+
+      // Update user data directly from conversion response
+      const updatedUser = response.data.user;
+      const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+      const mergedUser = { ...currentUser, ...updatedUser, token: currentUser.token };
+      localStorage.setItem('user', JSON.stringify(mergedUser));
+
       alert('Account converted successfully! Your account is now a real account.');
       setShowConvertModal(false);
       setDemoInfo(null);
-      
+
       // Refresh the page to ensure all components pick up the new user data
       window.location.reload();
     } catch (error) {
