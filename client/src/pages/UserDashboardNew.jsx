@@ -1566,7 +1566,7 @@ const UserReferral = () => {
 
 // Main Dashboard Wrapper
 const UserDashboardNew = () => {
-  const { user, logoutUser, refreshUserData } = useAuth();
+  const { user, logoutUser, refreshUserData, updateUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1620,11 +1620,9 @@ const UserDashboardNew = () => {
         headers: { Authorization: `Bearer ${user.token}` }
       });
 
-      // Update user data directly from conversion response
+      // Update user data using AuthContext's updateUser function
       const updatedUser = response.data.user;
-      const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
-      const mergedUser = { ...currentUser, ...updatedUser, token: currentUser.token };
-      localStorage.setItem('user', JSON.stringify(mergedUser));
+      updateUser(updatedUser);
 
       alert('Account converted successfully! Your account is now a real account.');
       setShowConvertModal(false);
