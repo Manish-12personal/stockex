@@ -3328,14 +3328,17 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-dark-800 rounded-lg w-full max-w-md p-6">
-        <div className="flex justify-between mb-4">
-          <h2 className="text-xl font-bold">Create New {getRoleLabel(formData.role)}</h2>
-          <button onClick={onClose}><X size={24} /></button>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-dark-800 rounded-lg w-full max-w-md my-8">
+        <div className="sticky top-0 bg-dark-800 p-6 pb-4 border-b border-dark-700 rounded-t-lg z-10">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-bold">Create New {getRoleLabel(formData.role)}</h2>
+            <button onClick={onClose} className="hover:bg-dark-700 p-1 rounded"><X size={24} /></button>
+          </div>
         </div>
-        {error && <div className="bg-red-500/20 text-red-400 p-2 rounded mb-4">{error}</div>}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="p-6 pt-4 max-h-[calc(100vh-200px)] overflow-y-auto">
+          {error && <div className="bg-red-500/20 text-red-400 p-2 rounded mb-4">{error}</div>}
+          <form onSubmit={handleSubmit} className="space-y-4">
           {/* Role Selection */}
           {allowedRoles.length > 1 && (
             <div>
@@ -3493,13 +3496,14 @@ const CreateAdminModal = ({ token, onClose, onSuccess, creatorRole }) => {
             </div>
           </div>
           
-          <div className="flex gap-3">
+          <div className="flex gap-3 mt-4">
             <button type="button" onClick={onClose} className="flex-1 bg-dark-600 py-2 rounded">Cancel</button>
             <button type="submit" disabled={loading} className={`flex-1 ${getRoleBadgeColor(formData.role)} py-2 rounded`}>
               {loading ? 'Creating...' : `Create ${getRoleLabel(formData.role)}`}
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );
