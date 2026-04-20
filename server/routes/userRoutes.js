@@ -1634,15 +1634,26 @@ router.get('/demo/available-brokers', protectUser, async (req, res) => {
       return res.status(400).json({ message: 'This is not a demo account' });
     }
     
-    // Get all active admins/brokers/sub-brokers
+    // Get all active admins/brokers/sub-brokers with parent info
     const admins = await Admin.find({
       status: 'ACTIVE',
       role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] }
     })
-    .select('name username adminCode role')
+    .select('name username adminCode role parentId')
+    .populate('parentId', 'adminCode username')
     .sort({ role: 1, name: 1 });
     
-    res.json(admins);
+    // Add parent code for sub-brokers
+    const brokersWithParentCode = admins.map(admin => ({
+      _id: admin._id,
+      name: admin.name,
+      username: admin.username,
+      adminCode: admin.adminCode,
+      role: admin.role,
+      parentCode: admin.parentId?.adminCode || null
+    }));
+    
+    res.json(brokersWithParentCode);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

@@ -2160,11 +2160,16 @@ const UserDashboardNew = () => {
                   className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-2.5 focus:outline-none focus:border-green-500"
                 >
                   <option value="">No broker - Direct under Super Admin</option>
-                  {availableBrokers.map(broker => (
-                    <option key={broker._id} value={broker.adminCode}>
-                      {broker.name || broker.username} ({broker.adminCode}) - {broker.role}
-                    </option>
-                  ))}
+                  {availableBrokers.map(broker => {
+                    const displayText = broker.role === 'SUB_BROKER' 
+                      ? `${broker.adminCode}${broker.parentCode ? ` (${broker.parentCode})` : ''} - SUB_BROKER`
+                      : `${broker.adminCode} - ${broker.role}`;
+                    return (
+                      <option key={broker._id} value={broker.adminCode}>
+                        {displayText}
+                      </option>
+                    );
+                  })}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">
                   If you don't select a broker, your account will be under the Super Admin
