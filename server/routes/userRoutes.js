@@ -1682,7 +1682,7 @@ router.post('/demo/convert-to-real', protectUser, async (req, res) => {
     }
     
     // Clear demo data and convert to real account
-    // Reset wallet to zero
+    // Reset all wallets to zero
     user.wallet = {
       balance: 0,
       cashBalance: 0,
@@ -1696,12 +1696,38 @@ router.post('/demo/convert-to-real', protectUser, async (req, res) => {
       transactions: []
     };
     
-    // Reset crypto wallet
     user.cryptoWallet = {
       balance: 0,
       realizedPnL: 0,
       unrealizedPnL: 0,
       todayRealizedPnL: 0
+    };
+    
+    user.forexWallet = {
+      balance: 0,
+      usedMargin: 0,
+      realizedPnL: 0,
+      unrealizedPnL: 0,
+      todayRealizedPnL: 0,
+      todayUnrealizedPnL: 0
+    };
+    
+    user.mcxWallet = {
+      balance: 0,
+      usedMargin: 0,
+      realizedPnL: 0,
+      unrealizedPnL: 0,
+      todayRealizedPnL: 0,
+      todayUnrealizedPnL: 0
+    };
+    
+    user.gamesWallet = {
+      balance: 0,
+      usedMargin: 0,
+      realizedPnL: 0,
+      unrealizedPnL: 0,
+      todayRealizedPnL: 0,
+      todayUnrealizedPnL: 0
     };
     
     // Update user to real account
@@ -1735,6 +1761,24 @@ router.post('/demo/convert-to-real', protectUser, async (req, res) => {
     await Position.deleteMany({ user: user._id });
     await Order.deleteMany({ user: user._id });
     await Trade.deleteMany({ user: user._id });
+    
+    // Delete all game-related data
+    const GameResult = (await import('../models/GameResult.js')).default;
+    const GamesWalletLedger = (await import('../models/GamesWalletLedger.js')).default;
+    const NiftyJackpotBid = (await import('../models/NiftyJackpotBid.js')).default;
+    const NiftyBracketBid = (await import('../models/NiftyBracketBid.js')).default;
+    const NiftyNumberBid = (await import('../models/NiftyNumberBid.js')).default;
+    
+    // Delete game bids/tickets
+    await NiftyJackpotBid.deleteMany({ userId: user._id });
+    await NiftyBracketBid.deleteMany({ userId: user._id });
+    await NiftyNumberBid.deleteMany({ userId: user._id });
+    
+    // Delete games wallet ledger entries
+    await GamesWalletLedger.deleteMany({ userId: user._id });
+    
+    // Delete game results (if any user-specific results exist)
+    await GameResult.deleteMany({ userId: user._id });
     
     res.json({
       message: 'Account converted to real account successfully!',
