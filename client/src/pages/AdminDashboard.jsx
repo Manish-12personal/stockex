@@ -64,6 +64,7 @@ import {
   ChevronDown,
   Receipt,
   UserCog,
+  Share2,
 } from 'lucide-react';
 
 /** IST calendar YYYY-MM-DD (matches server `getTodayISTString` / jackpot `betDate`). */
