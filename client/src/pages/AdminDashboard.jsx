@@ -1688,19 +1688,21 @@ const AdminManagement = () => {
 
   return (
     <div className="p-4 md:p-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold">{getTitle()}</h1>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded-lg"
-        >
-          <Plus size={20} />
-          {getCreateLabel()}
-        </button>
-      </div>
+      {/* Sticky Header with Create Button */}
+      <div className="sticky top-0 bg-dark-900 z-20 pb-4 mb-4 -mx-4 md:-mx-6 px-4 md:px-6 border-b border-dark-700">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-4">
+          <h1 className="text-2xl font-bold">{getTitle()}</h1>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded-lg whitespace-nowrap"
+          >
+            <Plus size={20} />
+            {getCreateLabel()}
+          </button>
+        </div>
 
-      {/* Role Filter & Search */}
-      <div className="flex flex-col sm:flex-row gap-4 mb-6">
+        {/* Role Filter & Search */}
+        <div className="flex flex-col sm:flex-row gap-4 mt-4">
         {/* Role Filter Tabs */}
         {allowedRoles.length > 1 && (
           <div className="flex gap-2 flex-wrap">
@@ -1737,6 +1739,7 @@ const AdminManagement = () => {
             className="w-full bg-dark-700 border border-dark-600 rounded-lg pl-10 pr-4 py-2 focus:outline-none focus:border-yellow-500"
           />
         </div>
+      </div>
       </div>
 
       {/* Stats Summary */}
