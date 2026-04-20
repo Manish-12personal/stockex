@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock, Building2 } from 'lucide-react';
+import { Eye, EyeOff, BarChart2, Wallet, Zap, LineChart, Search, X, Users, Shield, Award, Lock, Building2, CheckCircle } from 'lucide-react';
 import axios from 'axios';
 
 const UserLogin = () => {
@@ -33,7 +33,18 @@ const UserLogin = () => {
   const [selectedBroker, setSelectedBroker] = useState(null);
   const [showBrokerModal, setShowBrokerModal] = useState(false);
   const [brokerSearch, setBrokerSearch] = useState('');
-  
+
+  // OTP verification state
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpValue, setOtpValue] = useState('');
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [otpError, setOtpError] = useState('');
+  const [otpSuccess, setOtpSuccess] = useState('');
+  const [resendDisabled, setResendDisabled] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+
   // Fetch admin branding and broker info if referral code exists
   useEffect(() => {
     const fetchBrandingAndBrokerInfo = async () => {
@@ -47,13 +58,15 @@ const UserLogin = () => {
             console.error('Failed to fetch branding:', err);
           }
 
-          // Fetch broker info including certificate
-          try {
-            const { data: brokerData } = await axios.get(`/api/user/broker-info/${refCode}`);
-            setBrokerInfo(brokerData);
-          } catch (err) {
-            console.error('Failed to fetch broker info:', err);
-            // Don't crash if broker info fails - it's optional for user referrals
+          // Only fetch broker info if it's not a user referral code (user codes start with REF)
+          if (!refCode.startsWith('REF')) {
+            try {
+              const { data: brokerData } = await axios.get(`/api/user/broker-info/${refCode}`);
+              setBrokerInfo(brokerData);
+            } catch (err) {
+              console.error('Failed to fetch broker info:', err);
+              // Don't crash if broker info fails - it's optional for user referrals
+            }
           }
         } catch (err) {
           console.error('Failed to fetch branding/broker info:', err);
@@ -150,6 +163,69 @@ const UserLogin = () => {
     return () => clearTimeout(timer);
   }, [formData.email, isRegister, fetchParentAdminInfo]);
 
+  // Countdown timer for resend OTP
+  useEffect(() => {
+    let timer;
+    if (countdown > 0) {
+      timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+    } else {
+      setResendDisabled(false);
+    }
+    return () => clearTimeout(timer);
+  }, [countdown]);
+
+  // Handle sending OTP
+  const handleSendOTP = async () => {
+    setOtpError('');
+    setOtpSuccess('');
+    setSendingOtp(true);
+
+    try {
+      const { data } = await axios.post('/api/user/send-otp', {
+        phone: formData.phone
+      });
+
+      if (data.success) {
+        setOtpSent(true);
+        setOtpSuccess(data.message);
+        setResendDisabled(true);
+        setCountdown(60); // 60 seconds countdown
+      } else {
+        setOtpError(data.message);
+      }
+    } catch (error) {
+      setOtpError(error.response?.data?.message || 'Failed to send OTP');
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  // Handle verifying OTP
+  const handleVerifyOTP = async () => {
+    setOtpError('');
+    setOtpSuccess('');
+    setVerifyingOtp(true);
+
+    try {
+      const { data } = await axios.post('/api/user/verify-otp', {
+        phone: formData.phone,
+        otp: otpValue
+      });
+
+      if (data.success) {
+        setPhoneVerified(true);
+        setOtpSuccess(data.message);
+        setOtpSent(false);
+      } else {
+        setOtpError(data.message);
+      }
+    } catch (error) {
+      setOtpError(error.response?.data?.message || 'Failed to verify OTP');
+    } finally {
+      setVerifyingOtp(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -158,7 +234,10 @@ const UserLogin = () => {
     try {
       if (isRegister) {
         // Include selected broker's adminCode if selected
-        const registrationData = { ...formData };
+        const registrationData = { 
+          ...formData,
+          phoneVerified 
+        };
         if (selectedBroker && !refCode) {
           registrationData.adminCode = selectedBroker.adminCode;
         }
@@ -285,14 +364,78 @@ const UserLogin = () => {
                   </div>
                   <div className="mb-4">
                     <label className="block text-sm text-gray-400 mb-2">Phone Number</label>
-                    <input
-                      type="tel"
-                      value={formData.phone}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      className="w-full bg-dark-700 border border-green-500/30 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition"
-                      placeholder="+91 9876543210"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="tel"
+                        value={formData.phone}
+                        onChange={(e) => {
+                          // Only allow numbers and max 10 digits
+                          const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                          setFormData({ ...formData, phone: value });
+                          // Reset OTP state if phone changes
+                          if (value !== formData.phone) {
+                            setPhoneVerified(false);
+                            setOtpSent(false);
+                            setOtpValue('');
+                            setOtpError('');
+                            setOtpSuccess('');
+                          }
+                        }}
+                        className="flex-1 bg-dark-700 border border-green-500/30 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition"
+                        placeholder="9876543210"
+                        maxLength={10}
+                        disabled={phoneVerified}
+                      />
+                      {!phoneVerified && formData.phone.length === 10 && (
+                        <button
+                          type="button"
+                          onClick={handleSendOTP}
+                          disabled={sendingOtp || resendDisabled}
+                          className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium transition whitespace-nowrap"
+                        >
+                          {sendingOtp ? 'Sending...' : countdown > 0 ? `Resend (${countdown}s)` : 'Send OTP'}
+                        </button>
+                      )}
+                      {phoneVerified && (
+                        <div className="flex items-center gap-2 text-green-400 px-4 py-3">
+                          <CheckCircle size={20} />
+                          <span>Verified</span>
+                        </div>
+                      )}
+                    </div>
+                    {formData.phone && formData.phone.length !== 10 && (
+                      <p className="text-xs text-red-400 mt-1">Phone number must be 10 digits</p>
+                    )}
                   </div>
+
+                  {otpSent && !phoneVerified && (
+                    <div className="mb-4">
+                      <label className="block text-sm text-gray-400 mb-2">Enter OTP</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={otpValue}
+                          onChange={(e) => {
+                            const value = e.target.value.replace(/\D/g, '').slice(0, 6);
+                            setOtpValue(value);
+                          }}
+                          className="flex-1 bg-dark-700 border border-green-500/30 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition"
+                          placeholder="Enter 6-digit OTP"
+                          maxLength={6}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleVerifyOTP}
+                          disabled={verifyingOtp || otpValue.length !== 6}
+                          className="bg-green-600 hover:bg-green-500 disabled:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium transition whitespace-nowrap"
+                        >
+                          {verifyingOtp ? 'Verifying...' : 'Verify'}
+                        </button>
+                      </div>
+                      {otpError && <p className="text-xs text-red-400 mt-1">{otpError}</p>}
+                      {otpSuccess && <p className="text-xs text-green-400 mt-1">{otpSuccess}</p>}
+                    </div>
+                  )}
                 </>
               )}
 
@@ -434,11 +577,16 @@ const UserLogin = () => {
 
               <button
                 type="submit"
-                disabled={loading || demoLoading}
+                disabled={loading || demoLoading || (isRegister && !phoneVerified)}
                 className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 py-3 rounded-lg font-semibold transition disabled:opacity-50 shadow-lg shadow-green-500/25"
               >
                 {loading ? 'Please wait...' : isRegister ? 'Create Account' : 'Start Trading'}
               </button>
+              {isRegister && !phoneVerified && (
+                <p className="text-center text-xs text-red-400 mt-2">
+                  Please verify your phone number to create an account
+                </p>
+              )}
               
               {/* Try Demo button - only show on registration */}
               {isRegister && (

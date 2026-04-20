@@ -5831,6 +5831,23 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
               </div>
             </div>
 
+            {/* Live Nifty Spot Price Box */}
+            <div className="bg-gradient-to-r from-cyan-900/40 to-blue-900/40 border border-cyan-500/30 rounded-xl p-3 mb-2 text-center">
+              <div className="text-[10px] text-cyan-300 font-medium mb-1 flex items-center justify-center gap-1">
+                <TrendingUp size={10} /> NIFTY SPOT
+              </div>
+              <div className="text-2xl font-bold text-cyan-300 tabular-nums">
+                {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference)))
+                  ? jackpotRankingReference.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  : (leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot)))
+                    ? leaderboardSpot.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : 'Loading...'}
+              </div>
+              <div className="text-[10px] text-gray-400 mt-1">
+                {jackpotRankingMode === 'nearest_locked_close' ? 'Locked result' : 'Live price'}
+              </div>
+            </div>
+
             {showJackpotOffHoursTestHint && (
               <div className="mb-2 bg-emerald-900/20 border border-emerald-500/35 rounded-lg px-2.5 py-2 text-[10px] text-emerald-200/95 leading-snug">
                 <span className="font-semibold text-emerald-300">Test mode</span>
@@ -5850,14 +5867,18 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 {jackpotRankingMode === 'nearest_locked_close'
                   ? 'Nearest to declared result · tie → earlier time'
                   : 'Nearest to live spot first · tie → earlier time'}
-                {jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference)) && (
+                {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference))) ||
+                (leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot))) ? (
                   <span className="text-cyan-500/90">
                     {' '}
                     ·{' '}
                     {jackpotRankingMode === 'nearest_locked_close' ? 'result' : 'spot'} ₹
-                    {jackpotRankingReference.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                    {(jackpotRankingReference != null && Number.isFinite(Number(jackpotRankingReference))
+                      ? jackpotRankingReference
+                      : leaderboardSpot
+                    ).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                   </span>
-                )}
+                ) : null}
               </p>
               <p className="text-[9px] text-gray-500 mb-2 leading-snug">
                 Right column: <span className="text-gray-400">Stake</span> = ticket cost (usually 1 ticket).{' '}

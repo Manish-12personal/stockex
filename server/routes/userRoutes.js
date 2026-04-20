@@ -48,6 +48,7 @@ import {
 import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate, atomicGamesWalletDebit } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger, GAMES_WALLET_GAME_LABELS } from '../utils/gamesWalletLedger.js';
 import GamesWalletLedger from '../models/GamesWalletLedger.js';
+import { sendOTP, verifyOTP } from '../services/otpService.js';
 import WalletTransferService from '../services/walletTransferService.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
 import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
@@ -158,7 +159,7 @@ router.get('/certified-brokers', async (req, res) => {
 // User Registration
 router.post('/register', async (req, res) => {
   try {
-    const { username, email, password, fullName, phone, adminCode, referralCode } = req.body;
+    const { username, email, password, fullName, phone, phoneVerified, adminCode, referralCode } = req.body;
     
     let admin;
     let referrerUser = null;
@@ -234,6 +235,7 @@ router.post('/register', async (req, res) => {
       password,
       fullName,
       phone,
+      phoneVerified: phoneVerified || false,
       admin: admin._id,
       adminCode: admin.adminCode,
       referralCode: userReferralCode,
@@ -4379,9 +4381,14 @@ router.get('/nifty-jackpot/leaderboard', protectUser, async (req, res) => {
         ? Number(req.query.spot)
         : await resolveNiftyJackpotSpotPrice();
 
+    // Fallback: if referenceSpot is still null, use a default value to ensure ranking works
+    if (referenceSpot == null || !Number.isFinite(Number(referenceSpot)) || Number(referenceSpot) <= 0) {
+      console.warn('[nifty-jackpot/leaderboard] No valid spot price resolved, using fallback');
+    }
+
     const useLockedForRanking =
       resultDeclared && lockedPriceNum != null && lockedPriceNum > 0;
-    const rankingRef = useLockedForRanking ? lockedPriceNum : Number(referenceSpot);
+    const rankingRef = useLockedForRanking ? lockedPriceNum : (Number(referenceSpot) || 24050.07);
 
     const bids = sortJackpotBidsByDistanceToReference(rawBids, rankingRef);
     const uniquePlayerIds = new Set(
@@ -4563,6 +4570,54 @@ router.get('/nifty-jackpot/locked-price', protectUser, async (req, res) => {
       resultDeclared: result?.resultDeclared || false
     });
   } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Send OTP to phone number
+router.post('/send-otp', async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ message: 'Phone number is required' });
+    }
+
+    // Validate phone format (10 digits)
+    const phoneRegex = /^[0-9]{10}$/;
+    if (!phoneRegex.test(phone)) {
+      return res.status(400).json({ message: 'Invalid phone number. Must be 10 digits.' });
+    }
+
+    // Check if phone already exists
+    const existingUser = await User.findOne({ phone });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Phone number already registered' });
+    }
+
+    // Send OTP
+    const result = await sendOTP(phone);
+    res.json(result);
+  } catch (error) {
+    console.error('Error sending OTP:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Verify OTP
+router.post('/verify-otp', async (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+
+    if (!phone || !otp) {
+      return res.status(400).json({ message: 'Phone number and OTP are required' });
+    }
+
+    // Verify OTP
+    const result = verifyOTP(phone, otp);
+    res.json(result);
+  } catch (error) {
+    console.error('Error verifying OTP:', error);
     res.status(500).json({ message: error.message });
   }
 });
