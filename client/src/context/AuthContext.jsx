@@ -168,6 +168,22 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('user', JSON.stringify(updatedUser));
   };
 
+  // Function to refresh user data from server (e.g., after demo conversion)
+  const refreshUserData = async () => {
+    if (!user?.token) return null;
+    try {
+      const { data } = await axios.get('/api/user/me', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setUser(data);
+      localStorage.setItem('user', JSON.stringify(data));
+      return data;
+    } catch (error) {
+      console.error('Failed to refresh user data:', error);
+      return null;
+    }
+  };
+
   const value = {
     user,
     admin,
@@ -181,7 +197,8 @@ export const AuthProvider = ({ children }) => {
     logoutUser,
     logoutAdmin,
     updateAdmin,
-    updateUser
+    updateUser,
+    refreshUserData
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

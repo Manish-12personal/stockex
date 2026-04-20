@@ -1566,7 +1566,7 @@ const UserReferral = () => {
 
 // Main Dashboard Wrapper
 const UserDashboardNew = () => {
-  const { user, logoutUser } = useAuth();
+  const { user, logoutUser, refreshUserData } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1620,11 +1620,15 @@ const UserDashboardNew = () => {
         headers: { Authorization: `Bearer ${user.token}` }
       });
       
-      // Clear local storage and redirect to login
-      alert('Account converted successfully! Please login again.');
-      localStorage.removeItem('userToken');
-      localStorage.removeItem('userData');
-      window.location.href = '/login';
+      // Refresh user data to update isDemo status immediately
+      await refreshUserData();
+      
+      alert('Account converted successfully! Your account is now a real account.');
+      setShowConvertModal(false);
+      setDemoInfo(null);
+      
+      // Refresh the page to ensure all components pick up the new user data
+      window.location.reload();
     } catch (error) {
       setConvertError(error.response?.data?.message || 'Failed to convert account');
     } finally {
