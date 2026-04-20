@@ -315,6 +315,14 @@ router.post('/demo-register', async (req, res) => {
         todayUnrealizedPnL: 0,
         transactions: []
       },
+      gamesWallet: {
+        balance: 1000000,
+        usedMargin: 0,
+        realizedPnL: 0,
+        unrealizedPnL: 0,
+        todayRealizedPnL: 0,
+        todayUnrealizedPnL: 0
+      },
       settings: {
         isDemo: true,
         isActivated: true
@@ -1700,7 +1708,13 @@ router.post('/demo/convert-to-real', protectUser, async (req, res) => {
     user.isDemo = false;
     user.demoExpiresAt = null;
     user.demoCreatedAt = null;
-    user.settings.isDemo = false;
+    user.convertedToRealAt = new Date();
+    
+    // Safely update settings if it exists
+    if (user.settings) {
+      user.settings.isDemo = false;
+    }
+    
     user.admin = admin._id;
     user.adminCode = admin.adminCode;
     user.hierarchyPath = hierarchyPath;
@@ -1961,6 +1975,21 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
       if (!vN.ok) {
         return res.status(400).json({ message: vN.message });
       }
+    }
+
+    // Ensure gamesWallet exists for demo accounts (legacy compatibility)
+    const userDoc = await User.findById(userId);
+    if (!userDoc.gamesWallet) {
+      await User.findByIdAndUpdate(userId, {
+        gamesWallet: {
+          balance: userDoc.isDemo ? 1000000 : 0,
+          usedMargin: 0,
+          realizedPnL: 0,
+          unrealizedPnL: 0,
+          todayRealizedPnL: 0,
+          todayUnrealizedPnL: 0
+        }
+      });
     }
 
     // Atomic debit — balance check + deduction in one MongoDB op (race-safe)
