@@ -1753,15 +1753,13 @@ router.post('/demo/convert-to-real', protectUser, async (req, res) => {
     admin.stats.activeUsers = (admin.stats.activeUsers || 0) + 1;
     await admin.save();
     
-    // Delete all trading history for this user (positions, orders, trades)
+    // Delete all trading history for this user (positions, trades)
     const Position = (await import('../models/Position.js')).default;
-    const Order = (await import('../models/Order.js')).default;
     const Trade = (await import('../models/Trade.js')).default;
     const WalletLedger = (await import('../models/WalletLedger.js')).default;
     const FundRequest = (await import('../models/FundRequest.js')).default;
     
     await Position.deleteMany({ user: user._id });
-    await Order.deleteMany({ user: user._id });
     await Trade.deleteMany({ user: user._id });
     await Trade.deleteMany({ userId: user._id });
     
@@ -1775,13 +1773,13 @@ router.post('/demo/convert-to-real', protectUser, async (req, res) => {
     const GameResult = (await import('../models/GameResult.js')).default;
     const GamesWalletLedger = (await import('../models/GamesWalletLedger.js')).default;
     const NiftyJackpotBid = (await import('../models/NiftyJackpotBid.js')).default;
-    const NiftyBracketBid = (await import('../models/NiftyBracketBid.js')).default;
-    const NiftyNumberBid = (await import('../models/NiftyNumberBid.js')).default;
+    const NiftyBracketTrade = (await import('../models/NiftyBracketTrade.js')).default;
+    const NiftyNumberBet = (await import('../models/NiftyNumberBet.js')).default;
     
     // Delete game bids/tickets
     await NiftyJackpotBid.deleteMany({ userId: user._id });
-    await NiftyBracketBid.deleteMany({ userId: user._id });
-    await NiftyNumberBid.deleteMany({ userId: user._id });
+    await NiftyBracketTrade.deleteMany({ userId: user._id });
+    await NiftyNumberBet.deleteMany({ userId: user._id });
     
     // Delete games wallet ledger entries
     await GamesWalletLedger.deleteMany({ userId: user._id });
