@@ -17835,7 +17835,8 @@ const GameSettingsManagement = () => {
         {[
           { id: 'games', label: 'Individual Games', icon: Gamepad2 },
           { id: 'bonuses', label: 'Bonuses & Rewards', icon: Gift },
-          { id: 'risk', label: 'Risk Management', icon: Shield }
+          { id: 'risk', label: 'Risk Management', icon: Shield },
+          { id: 'security', label: 'Security', icon: Lock }
         ].map(tab => (
           <button
             key={tab.id}
@@ -19065,6 +19066,48 @@ const GameSettingsManagement = () => {
                   className="w-5 h-5"
                 />
               </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Security Tab */}
+      {activeTab === 'security' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-dark-800 rounded-lg p-6">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+              <Lock className="text-cyan-400" size={20} /> Phone Verification
+            </h3>
+            <div className="space-y-4">
+              <label className="flex items-center justify-between p-3 bg-dark-700 rounded cursor-pointer">
+                <div>
+                  <span className="block">Enable Phone Verification</span>
+                  <span className="text-xs text-gray-500">Require users to verify phone number during registration</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings?.phoneVerification?.enabled !== false}
+                  onChange={e => updateNestedSetting('phoneVerification', 'enabled', e.target.checked)}
+                  className="w-5 h-5"
+                />
+              </label>
+              <label className="flex items-center justify-between p-3 bg-dark-700 rounded cursor-pointer">
+                <div>
+                  <span className="block">Require for Registration</span>
+                  <span className="text-xs text-gray-500">Phone must be verified before account creation</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings?.phoneVerification?.requireForRegistration !== false}
+                  onChange={e => updateNestedSetting('phoneVerification', 'requireForRegistration', e.target.checked)}
+                  className="w-5 h-5"
+                />
+              </label>
+              <div className="p-3 rounded-lg bg-cyan-900/20 border border-cyan-500/30">
+                <p className="text-xs text-cyan-300">
+                  <strong>Note:</strong> When enabled, users must verify their phone number via OTP before they can create an account. Make sure Twilio is configured in server environment variables.
+                </p>
+              </div>
             </div>
           </div>
         </div>

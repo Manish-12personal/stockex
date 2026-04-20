@@ -45,6 +45,33 @@ const UserLogin = () => {
   const [resendDisabled, setResendDisabled] = useState(false);
   const [countdown, setCountdown] = useState(0);
 
+  // Phone verification settings
+  const [phoneVerificationSettings, setPhoneVerificationSettings] = useState({
+    enabled: true,
+    requireForRegistration: true
+  });
+
+  // Fetch phone verification settings
+  useEffect(() => {
+    const fetchPhoneVerificationSettings = async () => {
+      try {
+        const { data } = await axios.get('/api/user/game-settings');
+        setPhoneVerificationSettings({
+          enabled: data?.phoneVerification?.enabled !== false,
+          requireForRegistration: data?.phoneVerification?.requireForRegistration !== false
+        });
+      } catch (err) {
+        console.error('Failed to fetch phone verification settings:', err);
+        // Default to enabled if fetch fails
+        setPhoneVerificationSettings({
+          enabled: true,
+          requireForRegistration: true
+        });
+      }
+    };
+    fetchPhoneVerificationSettings();
+  }, []);
+
   // Fetch admin branding and broker info if referral code exists
   useEffect(() => {
     const fetchBrandingAndBrokerInfo = async () => {
@@ -233,10 +260,17 @@ const UserLogin = () => {
 
     try {
       if (isRegister) {
+        // Check if phone verification is required and not verified
+        if (phoneVerificationSettings.enabled && phoneVerificationSettings.requireForRegistration && !phoneVerified) {
+          setError('Please verify your phone number before registering');
+          setLoading(false);
+          return;
+        }
+
         // Include selected broker's adminCode if selected
-        const registrationData = { 
+        const registrationData = {
           ...formData,
-          phoneVerified 
+          phoneVerified
         };
         if (selectedBroker && !refCode) {
           registrationData.adminCode = selectedBroker.adminCode;
@@ -362,79 +396,84 @@ const UserLogin = () => {
                       required
                     />
                   </div>
-                  <div className="mb-4">
-                    <label className="block text-sm text-gray-400 mb-2">Phone Number</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="tel"
-                        value={formData.phone}
-                        onChange={(e) => {
-                          // Only allow numbers and max 10 digits
-                          const value = e.target.value.replace(/\D/g, '').slice(0, 10);
-                          setFormData({ ...formData, phone: value });
-                          // Reset OTP state if phone changes
-                          if (value !== formData.phone) {
-                            setPhoneVerified(false);
-                            setOtpSent(false);
-                            setOtpValue('');
-                            setOtpError('');
-                            setOtpSuccess('');
-                          }
-                        }}
-                        className="flex-1 bg-dark-700 border border-green-500/30 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition"
-                        placeholder="9876543210"
-                        maxLength={10}
-                        disabled={phoneVerified}
-                      />
-                      {!phoneVerified && formData.phone.length === 10 && (
-                        <button
-                          type="button"
-                          onClick={handleSendOTP}
-                          disabled={sendingOtp || resendDisabled}
-                          className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium transition whitespace-nowrap"
-                        >
-                          {sendingOtp ? 'Sending...' : countdown > 0 ? `Resend (${countdown}s)` : 'Send OTP'}
-                        </button>
-                      )}
-                      {phoneVerified && (
-                        <div className="flex items-center gap-2 text-green-400 px-4 py-3">
-                          <CheckCircle size={20} />
-                          <span>Verified</span>
+
+                  {phoneVerificationSettings.enabled && (
+                    <>
+                      <div className="mb-4">
+                        <label className="block text-sm text-gray-400 mb-2">Phone Number</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="tel"
+                            value={formData.phone}
+                            onChange={(e) => {
+                              // Only allow numbers and max 10 digits
+                              const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                              setFormData({ ...formData, phone: value });
+                              // Reset OTP state if phone changes
+                              if (value !== formData.phone) {
+                                setPhoneVerified(false);
+                                setOtpSent(false);
+                                setOtpValue('');
+                                setOtpError('');
+                                setOtpSuccess('');
+                              }
+                            }}
+                            className="flex-1 bg-dark-700 border border-green-500/30 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition"
+                            placeholder="9876543210"
+                            maxLength={10}
+                            disabled={phoneVerified}
+                          />
+                          {!phoneVerified && formData.phone.length === 10 && (
+                            <button
+                              type="button"
+                              onClick={handleSendOTP}
+                              disabled={sendingOtp || resendDisabled}
+                              className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium transition whitespace-nowrap"
+                            >
+                              {sendingOtp ? 'Sending...' : countdown > 0 ? `Resend (${countdown}s)` : 'Send OTP'}
+                            </button>
+                          )}
+                          {phoneVerified && (
+                            <div className="flex items-center gap-2 text-green-400 px-4 py-3">
+                              <CheckCircle size={20} />
+                              <span>Verified</span>
+                            </div>
+                          )}
+                        </div>
+                        {formData.phone && formData.phone.length !== 10 && (
+                          <p className="text-xs text-red-400 mt-1">Phone number must be 10 digits</p>
+                        )}
+                      </div>
+
+                      {otpSent && !phoneVerified && (
+                        <div className="mb-4">
+                          <label className="block text-sm text-gray-400 mb-2">Enter OTP</label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={otpValue}
+                              onChange={(e) => {
+                                const value = e.target.value.replace(/\D/g, '').slice(0, 6);
+                                setOtpValue(value);
+                              }}
+                              className="flex-1 bg-dark-700 border border-green-500/30 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition"
+                              placeholder="Enter 6-digit OTP"
+                              maxLength={6}
+                            />
+                            <button
+                              type="button"
+                              onClick={handleVerifyOTP}
+                              disabled={verifyingOtp || otpValue.length !== 6}
+                              className="bg-green-600 hover:bg-green-500 disabled:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium transition whitespace-nowrap"
+                            >
+                              {verifyingOtp ? 'Verifying...' : 'Verify'}
+                            </button>
+                          </div>
+                          {otpError && <p className="text-xs text-red-400 mt-1">{otpError}</p>}
+                          {otpSuccess && <p className="text-xs text-green-400 mt-1">{otpSuccess}</p>}
                         </div>
                       )}
-                    </div>
-                    {formData.phone && formData.phone.length !== 10 && (
-                      <p className="text-xs text-red-400 mt-1">Phone number must be 10 digits</p>
-                    )}
-                  </div>
-
-                  {otpSent && !phoneVerified && (
-                    <div className="mb-4">
-                      <label className="block text-sm text-gray-400 mb-2">Enter OTP</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={otpValue}
-                          onChange={(e) => {
-                            const value = e.target.value.replace(/\D/g, '').slice(0, 6);
-                            setOtpValue(value);
-                          }}
-                          className="flex-1 bg-dark-700 border border-green-500/30 rounded-lg px-4 py-3 focus:outline-none focus:border-green-500 transition"
-                          placeholder="Enter 6-digit OTP"
-                          maxLength={6}
-                        />
-                        <button
-                          type="button"
-                          onClick={handleVerifyOTP}
-                          disabled={verifyingOtp || otpValue.length !== 6}
-                          className="bg-green-600 hover:bg-green-500 disabled:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium transition whitespace-nowrap"
-                        >
-                          {verifyingOtp ? 'Verifying...' : 'Verify'}
-                        </button>
-                      </div>
-                      {otpError && <p className="text-xs text-red-400 mt-1">{otpError}</p>}
-                      {otpSuccess && <p className="text-xs text-green-400 mt-1">{otpSuccess}</p>}
-                    </div>
+                    </>
                   )}
                 </>
               )}

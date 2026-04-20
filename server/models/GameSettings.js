@@ -231,6 +231,12 @@ const gameSettingsSchema = new mongoose.Schema({
     refereeBonus: { type: Number, default: 50 }, // Amount new user gets
     minDepositRequired: { type: Number, default: 500 } // Min deposit to activate bonus
   },
+
+  // Phone Verification Settings
+  phoneVerification: {
+    enabled: { type: Boolean, default: true }, // Enable/disable phone verification for registration
+    requireForRegistration: { type: Boolean, default: true } // Require phone verification before account creation
+  },
   
   // First Deposit Bonus
   firstDepositBonus: {
