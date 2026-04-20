@@ -19101,7 +19101,7 @@ const SecuritySettings = () => {
   const fetchSettings = async () => {
     try {
       setLoading(true);
-      const { data } = await axios.get('/api/admin/game-settings', {
+      const { data } = await axios.get('/api/admin/manage/game-settings', {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
       setSettings(data);
@@ -19125,7 +19125,7 @@ const SecuritySettings = () => {
       };
       setSettings(updatedSettings);
 
-      await axios.put('/api/admin/game-settings', updatedSettings, {
+      await axios.put('/api/admin/manage/game-settings', updatedSettings, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
 
@@ -19233,7 +19233,7 @@ const ReferralDistributionSettings = () => {
   const fetchSettings = async () => {
     try {
       setLoading(true);
-      const { data } = await axios.get('/api/admin/game-settings', {
+      const { data } = await axios.get('/api/admin/manage/game-settings', {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
       setSettings(data);
@@ -19263,7 +19263,7 @@ const ReferralDistributionSettings = () => {
       };
       setSettings(updatedSettings);
 
-      await axios.put('/api/admin/game-settings', updatedSettings, {
+      await axios.put('/api/admin/manage/game-settings', updatedSettings, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
 
