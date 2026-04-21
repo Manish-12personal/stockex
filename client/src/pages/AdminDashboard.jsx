@@ -7490,7 +7490,7 @@ const LedgerView = () => {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-400">
-                    {entry.transactionSlip?.userName || entry.relatedToName || '—'}
+                    {entry.transactionSlip?.userName || entry.userName || '—'}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-400">
                     <div>{entry.reason}</div>

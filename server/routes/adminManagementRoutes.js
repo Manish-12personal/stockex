@@ -3092,10 +3092,10 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(100);
 
-    // Enrich with transaction slip information for game profit entries and relatedTo entity names
+    // Enrich with transaction slip information for game profit entries and user names
     const enrichedLedger = await Promise.all(ledger.map(async (entry) => {
       let transactionSlipInfo = null;
-      let relatedToName = null;
+      let userName = null;
       
       // Check if this is a game profit entry with transaction metadata
       if (entry.reason === 'GAME_PROFIT' && entry.meta?.transactionId) {
@@ -3104,12 +3104,12 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
           const slip = await findTransactionSlipByTransactionId(entry.meta.transactionId);
           if (slip) {
             // Fetch user details to get the name
-            let userName = null;
+            let slipUserName = null;
             if (slip.userId) {
               const User = (await import('../models/User.js')).default;
               const user = await User.findById(slip.userId).select('fullName username');
               if (user) {
-                userName = user.fullName || user.username;
+                slipUserName = user.fullName || user.username;
               }
             }
 
@@ -3121,40 +3121,46 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
               status: slip.status,
               gameIds: slip.gameIds,
               userCode: slip.userCode,
-              userName: userName,
+              userName: slipUserName,
               createdAt: slip.createdAt
             };
+            userName = slipUserName;
           }
         } catch (error) {
           console.warn('Failed to fetch transaction slip for admin ledger entry:', error);
         }
       }
 
-      // Fetch relatedTo entity name for other transaction types
-      if (entry.relatedTo && entry.relatedToType) {
+      // For game profit entries without transaction slip, use meta.relatedUserId
+      if (entry.reason === 'GAME_PROFIT' && entry.meta?.relatedUserId && !userName) {
         try {
-          if (entry.relatedToType === 'USER') {
-            const User = (await import('../models/User.js')).default;
-            const user = await User.findById(entry.relatedTo).select('fullName username');
-            if (user) {
-              relatedToName = user.fullName || user.username;
-            }
-          } else if (entry.relatedToType === 'ADMIN') {
-            const Admin = (await import('../models/Admin.js')).default;
-            const admin = await Admin.findById(entry.relatedTo).select('name username adminCode');
-            if (admin) {
-              relatedToName = admin.name || admin.username;
-            }
+          const User = (await import('../models/User.js')).default;
+          const user = await User.findById(entry.meta.relatedUserId).select('fullName username');
+          if (user) {
+            userName = user.fullName || user.username;
           }
         } catch (error) {
-          console.warn('Failed to fetch relatedTo entity name:', error);
+          console.warn('Failed to fetch user name from meta.relatedUserId:', error);
+        }
+      }
+
+      // For other transaction types, try to get user name from reference
+      if (!userName && entry.reference?.id && entry.reference?.type === 'FundRequest') {
+        try {
+          const FundRequest = (await import('../models/FundRequest.js')).default;
+          const fundRequest = await FundRequest.findById(entry.reference.id).select('user').populate('user', 'fullName username');
+          if (fundRequest?.user) {
+            userName = fundRequest.user.fullName || fundRequest.user.username;
+          }
+        } catch (error) {
+          console.warn('Failed to fetch user name from fund request:', error);
         }
       }
       
       return {
         ...entry.toObject(),
         transactionSlip: transactionSlipInfo,
-        relatedToName: relatedToName
+        userName: userName
       };
     }));
 
