@@ -591,6 +591,19 @@ const adminSchema = new mongoose.Schema({
     allowFutures: { type: Boolean, default: true },
     allowCommodity: { type: Boolean, default: true },
     allowCrypto: { type: Boolean, default: true }
+  },
+
+  // Soft delete - timestamp when admin was deleted (moved to archive)
+  deletedAt: {
+    type: Date,
+    default: null
+  },
+
+  // Who deleted this admin (for audit trail)
+  deletedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Admin',
+    default: null
   }
 }, { timestamps: true });
 

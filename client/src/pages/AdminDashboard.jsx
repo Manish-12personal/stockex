@@ -65,6 +65,7 @@ import {
   Receipt,
   UserCog,
   Share2,
+  Archive,
 } from 'lucide-react';
 
 /** IST calendar YYYY-MM-DD (matches server `getTodayISTString` / jackpot `betDate`). */
@@ -338,6 +339,7 @@ const AdminDashboard = () => {
         { path: `${basePath}/restrictions`, icon: Lock, label: 'Restrictions' },
         { path: `${basePath}/demo-brokers`, icon: Play, label: 'Demo Brokers' },
         { path: `${basePath}/all-users`, icon: Users, label: 'All Users' },
+        { path: `${basePath}/archive`, icon: Archive, label: 'Archive Management' },
         { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
         { path: `${basePath}/all-trades`, icon: FileText, label: 'All Trades' },
         { path: `${basePath}/net-positions`, icon: Layers, label: 'Net Positions' },
@@ -554,6 +556,7 @@ const AdminDashboard = () => {
           {isSuperAdmin && <Route path="admins/*" element={<AdminManagement />} />}
           {isSuperAdmin && <Route path="demo-brokers" element={<DemoBrokersManagement />} />}
           {isSuperAdmin && <Route path="all-users" element={<AllUsersManagement />} />}
+          {isSuperAdmin && <Route path="archive" element={<ArchiveManagement />} />}
           {isSuperAdmin && <Route path="all-trades" element={<SuperAdminAllTrades />} />}
           {isSuperAdmin && <Route path="all-fund-requests" element={<SuperAdminAllFundRequests />} />}
           {isSuperAdmin && <Route path="create-user" element={<SuperAdminCreateUser />} />}
@@ -1339,6 +1342,7 @@ const AdminManagement = () => {
   const [showHierarchyModal, setShowHierarchyModal] = useState(false);
   const [hierarchyData, setHierarchyData] = useState(null);
   const [showIndividualPattiModal, setShowIndividualPattiModal] = useState(false);
+  const [showExtraChargesModal, setShowExtraChargesModal] = useState(false);
   const [loadingHierarchy, setLoadingHierarchy] = useState(false);
   const [expandedBrokers, setExpandedBrokers] = useState({});
   const [expandedSubBrokers, setExpandedSubBrokers] = useState({});
@@ -1953,6 +1957,15 @@ const AdminManagement = () => {
                       className="px-3 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm flex items-center gap-1"
                     >
                       <Shield size={16} /> Role
+                    </button>
+                  )}
+                  {isSuperAdmin && (
+                    <button
+                      onClick={() => { setSelectedAdmin(adm); setShowExtraChargesModal(true); }}
+                      className="px-3 py-2 bg-rose-600 hover:bg-rose-700 rounded text-sm flex items-center gap-1"
+                      title="Take brokerage or give incentive"
+                    >
+                      <DollarSign size={16} /> Extra Charges
                     </button>
                   )}
                   {isSuperAdmin && (
@@ -27463,6 +27476,270 @@ const RestrictionModal = ({ admin, parentRestrictions, onSave, onClose, loading 
           </form>
         </div>
       </div>
+    </div>
+  );
+};
+
+// Archive Management (Super Admin only) - View and restore/archived admins and users
+const ArchiveManagement = () => {
+  const { admin } = useAuth();
+  const [archivedAdmins, setArchivedAdmins] = useState([]);
+  const [archivedUsers, setArchivedUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('admins');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    fetchArchivedData();
+  }, [activeTab]);
+
+  const fetchArchivedData = async () => {
+    setLoading(true);
+    try {
+      const { data } = await axios.get('/api/admin/manage/archive', {
+        headers: { Authorization: `Bearer ${admin.token}` },
+        params: { type: activeTab }
+      });
+      if (activeTab === 'admins') {
+        setArchivedAdmins(data.admins || []);
+      } else {
+        setArchivedUsers(data.users || []);
+      }
+    } catch (error) {
+      console.error('Error fetching archived data:', error);
+      alert('Error fetching archived data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRestoreAdmin = async (adminId, adminName) => {
+    if (!confirm(`Restore "${adminName}"?`)) return;
+    try {
+      await axios.post(`/api/admin/manage/archive/restore/admins/${adminId}`, {}, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert('Admin restored successfully');
+      fetchArchivedData();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error restoring admin');
+    }
+  };
+
+  const handleRestoreUser = async (userId, userName) => {
+    if (!confirm(`Restore "${userName}"?`)) return;
+    try {
+      await axios.post(`/api/admin/manage/archive/restore/users/${userId}`, {}, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert('User restored successfully');
+      fetchArchivedData();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error restoring user');
+    }
+  };
+
+  const handlePermanentDeleteAdmin = async (adminId, adminName) => {
+    if (!confirm(`⚠️ PERMANENT DELETE\n\nAre you sure you want to permanently delete "${adminName}"?\n\nThis action CANNOT be undone!`)) return;
+    if (!confirm(`FINAL CONFIRMATION: This will permanently delete "${adminName}" and all their data. Type OK to proceed.`)) return;
+    try {
+      const { data } = await axios.delete(`/api/admin/manage/archive/permanent/admins/${adminId}`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert(`✓ ${data.message}\n\nDeleted subordinates: ${data.deletedSubordinates}, Deleted users: ${data.deletedUsers}`);
+      fetchArchivedData();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error permanently deleting admin');
+    }
+  };
+
+  const handlePermanentDeleteUser = async (userId, userName) => {
+    if (!confirm(`⚠️ PERMANENT DELETE\n\nAre you sure you want to permanently delete "${userName}"?\n\nThis action CANNOT be undone!`)) return;
+    try {
+      await axios.delete(`/api/admin/manage/archive/permanent/users/${userId}`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert('User permanently deleted');
+      fetchArchivedData();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error permanently deleting user');
+    }
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '-';
+    return new Date(dateString).toLocaleString('en-IN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const filteredAdmins = archivedAdmins.filter(admin =>
+    (admin.username?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+    (admin.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+    (admin.adminCode?.toLowerCase() || '').includes(searchTerm.toLowerCase())
+  );
+
+  const filteredUsers = archivedUsers.filter(user =>
+    (user.username?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+    (user.fullName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+    (user.email?.toLowerCase() || '').includes(searchTerm.toLowerCase())
+  );
+
+  return (
+    <div className="p-4 md:p-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+        <h1 className="text-2xl font-bold mb-4 md:mb-0">Archive Management</h1>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            placeholder="Search..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="bg-dark-700 border border-dark-600 rounded-lg px-4 py-2 text-sm w-64"
+          />
+        </div>
+      </div>
+
+      <div className="flex gap-2 mb-6">
+        <button
+          onClick={() => setActiveTab('admins')}
+          className={`px-4 py-2 rounded-lg font-medium ${
+            activeTab === 'admins'
+              ? 'bg-purple-600 text-white'
+              : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+          }`}
+        >
+          Archived Admins ({archivedAdmins.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('users')}
+          className={`px-4 py-2 rounded-lg font-medium ${
+            activeTab === 'users'
+              ? 'bg-purple-600 text-white'
+              : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+          }`}
+        >
+          Archived Users ({archivedUsers.length})
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-gray-500">Loading...</div>
+      ) : (
+        <div className="bg-dark-800 rounded-lg border border-dark-600 overflow-hidden">
+          {activeTab === 'admins' ? (
+            filteredAdmins.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">No archived admins found</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-dark-700">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Name/Username</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Role</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Admin Code</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Deleted By</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Deleted At</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-dark-600">
+                    {filteredAdmins.map((admin) => (
+                      <tr key={admin._id} className="hover:bg-dark-700/50">
+                        <td className="px-4 py-3">
+                          <div className="font-medium">{admin.name || admin.username}</div>
+                          <div className="text-xs text-gray-500">{admin.username}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            admin.role === 'ADMIN' ? 'bg-blue-500/20 text-blue-400' :
+                            admin.role === 'BROKER' ? 'bg-purple-500/20 text-purple-400' :
+                            'bg-green-500/20 text-green-400'
+                          }`}>
+                            {admin.role}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-sm">{admin.adminCode || '-'}</td>
+                        <td className="px-4 py-3 text-sm">{admin.deletedBy?.name || admin.deletedBy?.adminCode || '-'}</td>
+                        <td className="px-4 py-3 text-sm text-gray-400">{formatDate(admin.deletedAt)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleRestoreAdmin(admin._id, admin.name || admin.username)}
+                              className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-xs font-medium"
+                            >
+                              Restore
+                            </button>
+                            <button
+                              onClick={() => handlePermanentDeleteAdmin(admin._id, admin.name || admin.username)}
+                              className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-medium"
+                            >
+                              Delete Permanently
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          ) : (
+            filteredUsers.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">No archived users found</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-dark-700">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Name/Username</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Email</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Admin Code</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Deleted By</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Deleted At</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-dark-600">
+                    {filteredUsers.map((user) => (
+                      <tr key={user._id} className="hover:bg-dark-700/50">
+                        <td className="px-4 py-3">
+                          <div className="font-medium">{user.fullName || user.username}</div>
+                          <div className="text-xs text-gray-500">{user.username}</div>
+                        </td>
+                        <td className="px-4 py-3 text-sm">{user.email}</td>
+                        <td className="px-4 py-3 font-mono text-sm">{user.adminCode || '-'}</td>
+                        <td className="px-4 py-3 text-sm">{user.deletedBy?.name || user.deletedBy?.adminCode || '-'}</td>
+                        <td className="px-4 py-3 text-sm text-gray-400">{formatDate(user.deletedAt)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleRestoreUser(user._id, user.fullName || user.username)}
+                              className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-xs font-medium"
+                            >
+                              Restore
+                            </button>
+                            <button
+                              onClick={() => handlePermanentDeleteUser(user._id, user.fullName || user.username)}
+                              className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-medium"
+                            >
+                              Delete Permanently
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </div>
+      )}
     </div>
   );
 };

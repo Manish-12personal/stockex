@@ -6267,6 +6267,347 @@ router.delete('/users/:id/permanent', protectAdmin, superAdminOnly, async (req, 
   }
 });
 
+// ============================================================================
+// SOFT DELETE ADMIN (Move to Archive)
+// ============================================================================
+
+/**
+ * DELETE /admins/:id
+ * Soft delete an admin/broker/sub-broker (move to archive)
+ * Validation: Only allow archiving if no users have active trades or pending games
+ */
+router.delete('/admins/:id', protectAdmin, async (req, res) => {
+  try {
+    const adminToArchive = await Admin.findById(req.params.id);
+    if (!adminToArchive) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+
+    // Cannot delete Super Admin
+    if (adminToArchive.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Cannot delete Super Admin' });
+    }
+
+    // Check permissions
+    const parentAdmin = req.admin;
+    if (!parentAdmin.canManage(adminToArchive.role)) {
+      return res.status(403).json({ message: 'You do not have permission to delete this admin' });
+    }
+
+    // Get all users under this admin (including sub-admins' users)
+    const allAdminIds = await Admin.find({
+      $or: [
+        { _id: adminToArchive._id },
+        { hierarchyPath: adminToArchive._id }
+      ]
+    }).select('_id');
+
+    const adminIdList = allAdminIds.map(a => a._id);
+
+    // Check for active trades for any users under this admin
+    const activeTrades = await Trade.countDocuments({
+      admin: { $in: adminIdList },
+      status: { $in: ['OPEN', 'PENDING'] }
+    });
+
+    if (activeTrades > 0) {
+      return res.status(400).json({
+        message: `Cannot archive ${adminToArchive.role}. There are ${activeTrades} active trade(s) under this admin. Please close all trades before archiving.`
+      });
+    }
+
+    // Check for pending games for any users under this admin
+    const GameTransactionSlip = require('../models/GameTransactionSlip');
+    const pendingGames = await GameTransactionSlip.countDocuments({
+      adminCode: adminToArchive.adminCode,
+      status: { $in: ['PENDING', 'PARTIALLY_SETTLED'] }
+    });
+
+    if (pendingGames > 0) {
+      return res.status(400).json({
+        message: `Cannot archive ${adminToArchive.role}. There are ${pendingGames} pending game(s) with results yet to come under this admin. Please wait for game results before archiving.`
+      });
+    }
+
+    // Soft delete - set deletedAt and deletedBy
+    adminToArchive.deletedAt = new Date();
+    adminToArchive.deletedBy = parentAdmin._id;
+    adminToArchive.status = 'INACTIVE';
+    adminToArchive.isActive = false;
+    await adminToArchive.save();
+
+    res.json({
+      message: `${adminToArchive.role} moved to archive`,
+      archivedAdmin: adminToArchive.name || adminToArchive.username
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * DELETE /users/:id
+ * Soft delete a user (move to archive)
+ * Validation: Only allow archiving if no active trades and no pending games
+ */
+router.delete('/users/:id', protectAdmin, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check for active trades (OPEN or PENDING status)
+    const activeTrades = await Trade.countDocuments({
+      user: user._id,
+      status: { $in: ['OPEN', 'PENDING'] }
+    });
+
+    if (activeTrades > 0) {
+      return res.status(400).json({
+        message: `Cannot archive user. User has ${activeTrades} active trade(s). Please close all trades before archiving.`
+      });
+    }
+
+    // Check for pending games (PENDING or PARTIALLY_SETTLED status)
+    const GameTransactionSlip = require('../models/GameTransactionSlip');
+    const pendingGames = await GameTransactionSlip.countDocuments({
+      userId: user._id,
+      status: { $in: ['PENDING', 'PARTIALLY_SETTLED'] }
+    });
+
+    if (pendingGames > 0) {
+      return res.status(400).json({
+        message: `Cannot archive user. User has ${pendingGames} pending game(s) with results yet to come. Please wait for game results before archiving.`
+      });
+    }
+
+    // Soft delete - set deletedAt and deletedBy
+    user.deletedAt = new Date();
+    user.deletedBy = req.admin._id;
+    user.tradingStatus = 'BLOCKED';
+    user.isActive = false;
+    await user.save();
+
+    res.json({
+      message: 'User moved to archive',
+      archivedUser: user.username || user.email
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ============================================================================
+// ARCHIVE MANAGEMENT
+// ============================================================================
+
+/**
+ * GET /archive
+ * Get all archived admins and users (Super Admin only)
+ */
+router.get('/archive', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { type } = req.query;
+
+    let archivedAdmins = [];
+    let archivedUsers = [];
+
+    if (!type || type === 'admins') {
+      archivedAdmins = await Admin.find({ deletedAt: { $ne: null } })
+        .populate('deletedBy', 'name adminCode')
+        .populate('parentId', 'name adminCode')
+        .sort({ deletedAt: -1 });
+    }
+
+    if (!type || type === 'users') {
+      archivedUsers = await User.find({ deletedAt: { $ne: null } })
+        .populate('deletedBy', 'name adminCode')
+        .populate('admin', 'name adminCode')
+        .sort({ deletedAt: -1 });
+    }
+
+    res.json({
+      admins: archivedAdmins,
+      users: archivedUsers
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * POST /archive/restore/admins/:id
+ * Restore an archived admin (Super Admin only)
+ */
+router.post('/archive/restore/admins/:id', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+
+    if (!admin.deletedAt) {
+      return res.status(400).json({ message: 'This admin is not archived' });
+    }
+
+    // Restore - clear deletedAt and deletedBy
+    admin.deletedAt = null;
+    admin.deletedBy = null;
+    admin.status = 'ACTIVE';
+    admin.isActive = true;
+    await admin.save();
+
+    res.json({
+      message: `${admin.role} restored successfully`,
+      restoredAdmin: admin.name || admin.username
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * POST /archive/restore/users/:id
+ * Restore an archived user (Super Admin only)
+ */
+router.post('/archive/restore/users/:id', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.deletedAt) {
+      return res.status(400).json({ message: 'This user is not archived' });
+    }
+
+    // Restore - clear deletedAt and deletedBy
+    user.deletedAt = null;
+    user.deletedBy = null;
+    user.tradingStatus = 'ACTIVE';
+    user.isActive = true;
+    await user.save();
+
+    res.json({
+      message: 'User restored successfully',
+      restoredUser: user.username || user.email
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * DELETE /archive/permanent/admins/:id
+ * Permanently delete an archived admin (Super Admin only)
+ */
+router.delete('/archive/permanent/admins/:id', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+
+    if (!admin.deletedAt) {
+      return res.status(400).json({ message: 'This admin is not archived. Use regular delete first.' });
+    }
+
+    if (admin.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Cannot delete Super Admin' });
+    }
+
+    // Delete all subordinate admins (if any)
+    const subordinateAdmins = await Admin.find({
+      hierarchyPath: admin._id,
+      deletedAt: { $ne: null }
+    });
+
+    const adminIds = [admin._id, ...subordinateAdmins.map(a => a._id)];
+
+    // Delete all users under these admins
+    const deletedUsersResult = await User.deleteMany({
+      admin: { $in: adminIds },
+      deletedAt: { $ne: null }
+    });
+
+    // Delete trading data
+    try {
+      await Trade.deleteMany({ admin: { $in: adminIds } });
+      await Position.deleteMany({ admin: { $in: adminIds } });
+    } catch (err) {
+      console.log('Error deleting trades/positions:', err.message);
+    }
+
+    // Delete all subordinate admins
+    await Admin.deleteMany({
+      hierarchyPath: admin._id,
+      deletedAt: { $ne: null }
+    });
+
+    // Delete the admin itself
+    await Admin.findByIdAndDelete(admin._id);
+
+    res.json({
+      message: `${admin.role} permanently deleted from archive`,
+      deletedAdmin: admin.name || admin.username,
+      deletedSubordinates: subordinateAdmins.length,
+      deletedUsers: deletedUsersResult.deletedCount
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * DELETE /archive/permanent/users/:id
+ * Permanently delete an archived user (Super Admin only)
+ */
+router.delete('/archive/permanent/users/:id', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.deletedAt) {
+      return res.status(400).json({ message: 'This user is not archived. Use regular delete first.' });
+    }
+
+    // Delete user's trading data
+    try {
+      await Trade.deleteMany({ user: user._id });
+      await Position.deleteMany({ user: user._id });
+    } catch (err) {
+      console.log('Error deleting user trades/positions:', err.message);
+    }
+
+    // Delete wallet ledger entries
+    try {
+      await WalletLedger.deleteMany({ ownerId: user._id, ownerType: 'USER' });
+    } catch (err) {
+      console.log('Error deleting wallet ledger:', err.message);
+    }
+
+    // Delete fund requests
+    try {
+      await FundRequest.deleteMany({ user: user._id });
+    } catch (err) {
+      console.log('Error deleting fund requests:', err.message);
+    }
+
+    // Delete the user
+    await User.findByIdAndDelete(user._id);
+
+    res.json({
+      message: 'User permanently deleted from archive',
+      deletedUser: user.username || user.email
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // ==================== NIFTY NUMBER GAME (Admin) ====================
 
 // Get all Nifty Number bets for a date

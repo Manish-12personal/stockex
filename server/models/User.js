@@ -745,6 +745,19 @@ const userSchema = new mongoose.Schema({
       type: Number,
       default: 0
     }
+  },
+
+  // Soft delete - timestamp when user was deleted (moved to archive)
+  deletedAt: {
+    type: Date,
+    default: null
+  },
+
+  // Who deleted this user (for audit trail)
+  deletedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Admin',
+    default: null
   }
 }, { timestamps: true });
 
