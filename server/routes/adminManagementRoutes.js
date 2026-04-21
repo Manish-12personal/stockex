@@ -3143,6 +3143,9 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
           console.warn('Failed to fetch user name from meta.relatedUserId:', error);
         }
       }
+
+      // For old GAME_PROFIT entries without user data, show N/A
+      // (New transactions will have meta.relatedUserId populated)
       
       return {
         ...entry.toObject(),
