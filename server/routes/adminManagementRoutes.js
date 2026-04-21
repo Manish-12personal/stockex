@@ -18,6 +18,7 @@ import NiftyNumberBet from '../models/NiftyNumberBet.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
+import GameTransactionSlip from '../models/GameTransactionSlip.js';
 import { resolveNiftyBracketTrade } from '../services/niftyBracketResolve.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
 import WalletTransferService from '../services/walletTransferService.js';
@@ -6400,7 +6401,6 @@ router.delete('/users/:id', protectAdmin, async (req, res) => {
     }
 
     // Check for pending games (PENDING or PARTIALLY_SETTLED status)
-    const GameTransactionSlip = require('../models/GameTransactionSlip');
     const pendingGames = await GameTransactionSlip.countDocuments({
       userId: user._id,
       status: { $in: ['PENDING', 'PARTIALLY_SETTLED'] }
