@@ -1,4 +1,4 @@
-import { CircleDollarSign, Globe, Shield, Clock, Lock, Zap } from "lucide-react"
+import { CircleDollarSign, Globe, Shield, Timer, Lock, Zap } from "lucide-react"
 
 const benefits = [
   {
@@ -17,7 +17,7 @@ const benefits = [
     description: "Encrypted transactions",
   },
   {
-    icon: Clock,
+    icon: Timer,
     title: "Transparent Processing",
     description: "Clear timeframes",
   },

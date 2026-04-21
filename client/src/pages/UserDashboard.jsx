@@ -10,7 +10,7 @@ import {
   ChevronDown, ChevronRight, Settings, Bell, User, X,
   BarChart2, History, ListOrdered, UserCircle, Menu,
   ArrowDownCircle, ArrowUpCircle, CreditCard, Copy, Check, Building2,
-  Home, ArrowLeft, ClipboardList, Star, Info, ArrowRightLeft, Share2
+  Home, ArrowLeft, ClipboardList, Star, Info, ArrowRightLeft, Share2, Timer
 } from 'lucide-react';
 import MarketWatch from '../components/MarketWatch';
 import ClosedInstrumentsTicker from '../components/ClosedInstrumentsTicker';
@@ -4156,7 +4156,7 @@ const TradingPanel = ({
             <div className="mb-3 p-3 bg-dark-700 rounded border border-dark-600">
               <label className="flex items-center justify-between cursor-pointer">
                 <div className="flex items-center gap-2">
-                  <Clock size={16} className="text-orange-400" />
+                  <Timer size={16} className="text-orange-400" />
                   <span className="text-sm font-medium">Intraday Only</span>
                 </div>
                 <input

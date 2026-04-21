@@ -1,7 +1,7 @@
 import { Navbar } from "@/components/landing/navbar"
 import { Footer } from "@/components/landing/footer"
 import { Button } from "@/components/landing/ui/button"
-import { Briefcase, MapPin, Clock, Users, Zap, Heart, Award, ArrowRight } from "lucide-react"
+import { Briefcase, MapPin, Timer, Users, Zap, Heart, Award, ArrowRight } from "lucide-react"
 import { TalkToTeamDialog } from "@/components/landing/auth-dialogs"
 
 const benefits = [
@@ -126,7 +126,7 @@ export default function Careers() {
                             {job.location}
                           </span>
                           <span className="flex items-center gap-1">
-                            <Clock className="w-4 h-4" />
+                            <Timer className="w-4 h-4" />
                             {job.type}
                           </span>
                         </div>

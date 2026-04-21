@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
-import { 
+import {
   Home, ArrowLeft, RefreshCw, Calendar, Filter, Download,
-  TrendingUp, TrendingDown, Clock, CheckCircle, XCircle, AlertCircle,
+  TrendingUp, TrendingDown, Timer, CheckCircle, XCircle, AlertCircle,
   X, ChevronRight, Scissors
 } from 'lucide-react';
 import { 
@@ -237,7 +237,7 @@ const UserOrders = () => {
 
   const tabs = [
     { id: 'positions', label: 'Open Positions', count: positions.length, icon: TrendingUp, color: 'text-blue-400' },
-    { id: 'pending', label: 'Pending Orders', count: pendingOrders.length, icon: Clock, color: 'text-yellow-400' },
+    { id: 'pending', label: 'Pending Orders', count: pendingOrders.length, icon: Timer, color: 'text-yellow-400' },
     { id: 'closed', label: 'Closed Trades', count: closedTrades.length, icon: CheckCircle, color: 'text-green-400' },
     { id: 'cancelled', label: 'Cancelled', count: cancelledOrders.length, icon: XCircle, color: 'text-red-400' },
   ];

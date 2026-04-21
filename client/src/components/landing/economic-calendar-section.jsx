@@ -1,6 +1,6 @@
 
 import { useState } from "react"
-import { Calendar, Clock, TrendingUp, TrendingDown, Minus, ChevronDown } from "lucide-react"
+import { Calendar, Timer, TrendingUp, TrendingDown, Minus, ChevronDown } from "lucide-react"
 
 const impactConfig = {
   High:   { color: "text-yellow-400",    dot: "bg-yellow-accent",    badge: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" },
@@ -117,7 +117,7 @@ export function EconomicCalendarSection() {
                 {/* Desktop Row */}
                 <div className="hidden md:grid grid-cols-[80px_1fr_110px_100px_100px] gap-4 items-center px-6 py-4 hover:bg-white/5 transition-colors">
                   <div className="flex items-center gap-1.5 text-sm font-mono text-white">
-                    <Clock className="w-3.5 h-3.5 text-white/60" />
+                    <Timer className="w-3.5 h-3.5 text-white/60" />
                     {event.time}
                   </div>
                   <span className="text-sm font-medium text-white">{event.event}</span>

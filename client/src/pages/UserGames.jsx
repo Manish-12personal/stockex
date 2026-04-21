@@ -13,11 +13,11 @@ import {
   currentTotalSecondsIST as currentTotalSecondsISTLib,
   btcResultRefSecForUiWindow,
 } from '../../../lib/btcUpDownWindows.js';
-import { 
-  ArrowLeft, TrendingUp, TrendingDown, Hash, Trophy, Target, 
-  Clock, Users, Coins, Gamepad2, Zap, Star, Gift, ChevronRight,
+import {
+  ArrowLeft, TrendingUp, TrendingDown, Hash, Trophy, Target,
+  Timer, Users, Coins, Gamepad2, Zap, Star, Gift, ChevronRight,
   ArrowUpCircle, ArrowDownCircle, RefreshCw, X, Check, AlertCircle, Bitcoin,
-  Info, Lock, Timer, BookOpen, Award, Crown, HelpCircle, ChevronDown, BarChart3, History
+  Info, Lock, BookOpen, Award, Crown, HelpCircle, ChevronDown, BarChart3, History
 } from 'lucide-react';
 
 // Map frontend game IDs to backend GameSettings keys
@@ -638,7 +638,7 @@ const UserGames = () => {
                       })()}
                     </span>
                     <span className="flex items-center gap-1">
-                      <Clock size={12} />
+                      <Timer size={12} />
                       {game.timeframe}
                     </span>
                   </div>
@@ -780,7 +780,7 @@ const UserGames = () => {
                       </ul>
                     </div>
                     <div>
-                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Clock size={12} /> Trading Window</h3>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Timer size={12} /> Trading Window</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Market hours: <span className="text-cyan-400 font-bold">{gs.startTime || '09:15'} - {gs.endTime || '15:30'} IST</span> (Mon-Fri).</li>
                         <li>2. Window 1: <span className="text-cyan-400 font-bold">12:00:00 – 12:14:59</span> → LTP <span className="text-cyan-400 font-bold">12:15:00</span> → Result <span className="text-purple-400 font-bold">12:30:00</span> (same spot as Window 2 LTP)</li>
@@ -833,7 +833,7 @@ const UserGames = () => {
                       </ul>
                     </div>
                     <div>
-                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Clock size={12} /> Trading Windows</h3>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Timer size={12} /> Trading Windows</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Each window is <span className="text-cyan-400 font-bold">15 minutes</span> long (e.g. 00:00–00:14:59, 00:15–00:29:59, ...).</li>
                         <li>2. The official <span className="text-purple-400 font-bold">result</span> is published <span className="text-purple-400 font-bold">15 minutes after</span> the trading window ends.</li>
@@ -883,7 +883,7 @@ const UserGames = () => {
                       </ul>
                     </div>
                     <div>
-                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Clock size={12} /> Timing</h3>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Timer size={12} /> Timing</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Betting opens: <span className="text-cyan-400 font-bold">{gs.startTime || '09:15'} IST</span>.</li>
                         <li>2. Last bet time: <span className="text-cyan-400 font-bold">{gs.maxBidTime || '15:40'} IST</span>.</li>
@@ -935,7 +935,7 @@ const UserGames = () => {
                       </ul>
                     </div>
                     <div>
-                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Clock size={12} /> Timing</h3>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Timer size={12} /> Timing</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Market hours: <span className="text-cyan-400 font-bold">{gs.startTime || '09:15'} - {gs.endTime || '15:45'} IST</span>.</li>
                         <li>2. Trade resolves immediately if the bracket level is hit.</li>
@@ -987,7 +987,7 @@ const UserGames = () => {
                       </ul>
                     </div>
                     <div>
-                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Clock size={12} /> Bidding Window</h3>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Timer size={12} /> Bidding Window</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Bidding opens at <span className="text-cyan-400 font-bold">{gs.biddingStartTime || gs.startTime || '09:15'} IST</span>.</li>
                         <li>2. Bidding closes at <span className="text-cyan-400 font-bold">{gs.biddingEndTime || '14:59'} IST</span>.</li>
@@ -1410,7 +1410,7 @@ const InstructionsModal = ({ onClose, gameId }) => {
           {/* Trading Window Schedule */}
           <div>
             <h3 className="font-bold text-green-400 mb-2 flex items-center gap-2">
-              <Clock size={16} />
+              <Timer size={16} />
               Trading Window Schedule
             </h3>
             <div className="bg-dark-700 rounded-xl p-4 space-y-2 text-sm">
@@ -2847,7 +2847,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       return (
         <div className="bg-blue-900/20 border border-blue-500/30 rounded-xl p-4 mb-4">
           <div className="flex items-center gap-2 mb-2">
-            <Clock size={16} className="text-blue-400" />
+            <Timer size={16} className="text-blue-400" />
             <span className="text-blue-400 font-bold text-sm">PRE-MARKET</span>
           </div>
           <div className="flex items-center justify-between">
@@ -3150,7 +3150,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       return (
         <div className="bg-dark-800 rounded-xl p-4 border border-dark-600 mb-3">
           <h3 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-1.5">
-            <Clock size={12} className="text-blue-400" />
+            <Timer size={12} className="text-blue-400" />
             Last 1 Hour LTPs
           </h3>
           <p className="text-gray-500 text-sm text-center py-3">
@@ -3163,7 +3163,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     return (
       <div className="bg-dark-800 rounded-xl p-4 border border-dark-600 mb-3">
         <h3 className="text-xs font-bold text-gray-400 mb-3 flex items-center gap-1.5">
-          <Clock size={12} className="text-blue-400" />
+          <Timer size={12} className="text-blue-400" />
           Last 1 Hour LTPs ({ltpHistory.length} windows)
         </h3>
         <div className="space-y-2">
@@ -3661,7 +3661,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                           </div>
                           {result.betPlacedAt ? (
                             <div className="mt-2 rounded-lg bg-black/20 border border-white/5 px-2.5 py-2 text-[10px] text-gray-400 flex items-center gap-1.5">
-                              <Clock size={12} className="shrink-0 text-gray-500" aria-hidden />
+                              <Timer size={12} className="shrink-0 text-gray-500" aria-hidden />
                               <span>
                                 <span className="text-gray-500 uppercase tracking-wide mr-1">Placed</span>
                                 {formatBetPlacedAtIST(result.betPlacedAt)}
@@ -3884,7 +3884,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
               {upDownMergedHistory.length === 0 && openUpDownTrades.length === 0 ? (
                 <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 text-center">
-                  <Clock size={16} className="mx-auto mb-1.5 text-gray-600" />
+                  <Timer size={16} className="mx-auto mb-1.5 text-gray-600" />
                   <p className="text-[10px] text-gray-500">No trades yet. Place your first trade!</p>
                 </div>
               ) : upDownMergedHistory.length === 0 ? null : (
@@ -4405,7 +4405,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
             {/* Bet History */}
             <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 mt-3">
               <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
-                <Clock size={12} className="text-gray-400" />
+                <Timer size={12} className="text-gray-400" />
                 History
               </h3>
               {betHistory.length === 0 ? (
@@ -5046,7 +5046,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
             {/* Trade History */}
             <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 mt-3">
               <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
-                <Clock size={12} className="text-gray-400" />
+                <Timer size={12} className="text-gray-400" />
                 History
                 {activeTrades.length > 0 && (
                   <span className="text-yellow-400 text-[9px] ml-auto">({activeTrades.length} active)</span>
@@ -5754,7 +5754,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
             {/* Bid History */}
             <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
               <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
-                <Clock size={12} className="text-gray-400" />
+                <Timer size={12} className="text-gray-400" />
                 Your History
               </h3>
               {bidHistory.length === 0 ? (

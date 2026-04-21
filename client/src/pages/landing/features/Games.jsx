@@ -4,9 +4,9 @@ import { Footer } from "@/components/landing/footer"
 import { Button } from "@/components/landing/ui/button"
 import { Link } from "react-router-dom"
 import {
-  TrendingUp, TrendingDown, Hash, Trophy, Target, Clock, Users, Coins,
+  TrendingUp, TrendingDown, Hash, Trophy, Target, Timer, Users, Coins,
   Gamepad2, Zap, Star, Gift, ChevronRight, Bitcoin, Info, Crown, Award,
-  HelpCircle, X, ArrowRight, Shield, Timer
+  HelpCircle, X, ArrowRight, Shield
 } from "lucide-react"
 
 const games = [
@@ -144,7 +144,7 @@ export default function GamesPage() {
                     {game.players} playing
                   </span>
                   <span className="flex items-center gap-1">
-                    <Clock size={12} />
+                    <Timer size={12} />
                     {game.timeframe}
                   </span>
                 </div>
@@ -242,7 +242,7 @@ export default function GamesPage() {
                   <Li>Correct prediction wins <B color="text-yellow-600">1.95x</B> your bet amount.</Li>
                   <Li>Once placed, bets <B color="text-red-500">cannot be changed, modified or cancelled</B>.</Li>
                 </Section>
-                <Section title="Trading Window" icon={Clock} color="text-blue-500">
+                <Section title="Trading Window" icon={Timer} color="text-blue-500">
                   <Li>Market hours: <B color="text-blue-600">09:15 – 15:30 IST</B> (Mon–Fri).</Li>
                   <Li>Window 1: <B color="text-blue-600">9:15 - 9:30</B> → LTP at 9:30 → Result at 9:45</Li>
                   <Li>Window 2: <B color="text-blue-600">9:30 - 9:45</B> → LTP at 9:45 → Result at 10:00</Li>
@@ -311,7 +311,7 @@ export default function GamesPage() {
                   <Li>Correct guess wins a <B color="text-green-600">fixed profit of ₹4,000</B>.</Li>
                   <Li>You can place up to <B color="text-blue-600">10 bets per day</B> on different numbers.</Li>
                 </Section>
-                <Section title="Timing" icon={Clock} color="text-blue-500">
+                <Section title="Timing" icon={Timer} color="text-blue-500">
                   <Li>Betting opens: <B color="text-blue-600">09:15 IST</B>.</Li>
                   <Li>Last bet time: <B color="text-blue-600">15:40 IST</B>.</Li>
                   <Li>Result declared at: <B color="text-green-600">15:30 IST</B> (based on Nifty closing price).</Li>
@@ -346,7 +346,7 @@ export default function GamesPage() {
                   <Li>If your target is hit before expiry → <B color="text-green-600">WIN 2x</B>!</Li>
                   <Li>If time expires without hitting target → <B color="text-red-500">You lose</B>.</Li>
                 </Section>
-                <Section title="Timing" icon={Clock} color="text-blue-500">
+                <Section title="Timing" icon={Timer} color="text-blue-500">
                   <Li>Market hours: <B color="text-blue-600">09:15 – 15:45 IST</B>.</Li>
                   <Li>Each trade has a <B color="text-blue-600">5 minute</B> expiry timer.</Li>
                   <Li>Trade resolves immediately if the bracket level is hit, or at expiry.</Li>
@@ -380,7 +380,7 @@ export default function GamesPage() {
                   <Li>Top <B color="text-yellow-600">10</B> ranked users win prizes from the Kitty.</Li>
                   <Li>Only <B color="text-red-500">1 bid per day</B> is allowed per user.</Li>
                 </Section>
-                <Section title="Bidding Window" icon={Clock} color="text-blue-500">
+                <Section title="Bidding Window" icon={Timer} color="text-blue-500">
                   <Li>Bidding opens at <B color="text-blue-600">09:15 IST</B>.</Li>
                   <Li>Bidding closes at <B color="text-blue-600">14:59 IST</B>.</Li>
                   <Li>Results declared at <B color="text-green-600">15:30 IST</B>.</Li>

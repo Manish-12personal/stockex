@@ -13,7 +13,7 @@ import {
   ChevronRight,
   Download,
   Mail,
-  Clock,
+  Timer,
   Send,
   Facebook,
   Twitter,
@@ -864,7 +864,7 @@ const LandingPage = () => {
                 </div>
 
                 <div className="flex items-start gap-4 bg-dark-800 border border-dark-600 rounded-xl p-6">
-                  <Clock className="w-6 h-6 text-green-400 flex-shrink-0" />
+                  <Timer className="w-6 h-6 text-green-400 flex-shrink-0" />
                   <div>
                     <h4 className="font-semibold mb-1">Business Hours</h4>
                     <p className="text-gray-400">Monday - Friday: 9:00 AM - 6:00 PM IST</p>

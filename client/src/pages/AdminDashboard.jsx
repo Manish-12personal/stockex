@@ -52,7 +52,7 @@ import {
   Target,
   Hash,
   Bitcoin,
-  Clock,
+  Timer,
   Percent,
   AlertTriangle,
   Gift,
@@ -16478,7 +16478,7 @@ const DemoBrokersManagement = () => {
                       onClick={() => openExpiryModal(broker)}
                       className="px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded text-sm flex items-center gap-1"
                     >
-                      <Clock size={16} /> Set Expiry
+                      <Timer size={16} /> Set Expiry
                     </button>
                     <button
                       onClick={() => handleConvertToNormal(broker._id, broker.name || broker.username)}
@@ -16511,7 +16511,7 @@ const DemoBrokersManagement = () => {
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-dark-800 rounded-lg p-6 w-full max-w-md">
             <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <Clock className="text-purple-400" size={24} />
+              <Timer className="text-purple-400" size={24} />
               Set Demo Expiry
             </h3>
             
@@ -17830,7 +17830,7 @@ const GameSettingsManagement = () => {
             )}
             {zerodhaStatus.connected && !isNseCashMarketOpen() && settings?.gamesEnabled && (
               <span className="text-blue-400 text-sm flex items-center gap-1">
-                <Clock size={14} /> NSE Market Closed (Opens 9:15 AM)
+                <Timer size={14} /> NSE Market Closed (Opens 9:15 AM)
               </span>
             )}
             {settings?.maintenanceMode && (

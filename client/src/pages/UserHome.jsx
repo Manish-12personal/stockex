@@ -4,7 +4,7 @@ import axios from 'axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import {
   Wallet, TrendingUp, TrendingDown, Calendar, ChevronLeft, ChevronRight,
-  RefreshCw, ExternalLink, Clock, DollarSign, BarChart3, PieChart,
+  RefreshCw, ExternalLink, Timer, DollarSign, BarChart3, PieChart,
   ArrowUpRight, ArrowDownRight, Newspaper, Globe
 } from 'lucide-react';
 
@@ -515,7 +515,7 @@ const UserHome = () => {
             <span>{currentTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
           </div>
           <div className="flex items-center gap-2 text-sm">
-            <Clock size={16} className="text-gray-400" />
+            <Timer size={16} className="text-gray-400" />
             <span className="font-mono">{currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
           </div>
         </div>

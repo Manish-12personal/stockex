@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import axios from 'axios';
-import { Briefcase, Eye, EyeOff, Users, TrendingUp, Wallet, Lock, Play, Clock, X, Building2 } from 'lucide-react';
+import { Briefcase, Eye, EyeOff, Users, TrendingUp, Wallet, Lock, Play, Timer, X, Building2 } from 'lucide-react';
 
 const BrokerLogin = () => {
   const [formData, setFormData] = useState({ email: '', password: '' });
@@ -398,7 +398,7 @@ const BrokerLogin = () => {
               >
                 {demoLoading ? (
                   <>
-                    <Clock className="animate-spin" size={20} />
+                    <Timer className="animate-spin" size={20} />
                     Creating Account...
                   </>
                 ) : (
