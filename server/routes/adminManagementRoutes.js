@@ -31,7 +31,7 @@ import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.j
 import { closingPriceToDecimalPart } from '../utils/niftyNumberResult.js';
 import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
-import { matchAdminLedgerGameKey } from '../utils/walletLedgerGameFilter.js';
+import { matchAdminLedgerGameKey, WALLET_LEDGER_GAME_OPTIONS } from '../utils/walletLedgerGameFilter.js';
 import {
   sortJackpotBidsByDistanceToReference,
   resolveNiftyJackpotSpotPrice,
@@ -3141,19 +3141,6 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
           }
         } catch (error) {
           console.warn('Failed to fetch user name from meta.relatedUserId:', error);
-        }
-      }
-
-      // For other transaction types, try to get user name from reference
-      if (!userName && entry.reference?.id && entry.reference?.type === 'FundRequest') {
-        try {
-          const FundRequest = (await import('../models/FundRequest.js')).default;
-          const fundRequest = await FundRequest.findById(entry.reference.id).select('user').populate('user', 'fullName username');
-          if (fundRequest?.user) {
-            userName = fundRequest.user.fullName || fundRequest.user.username;
-          }
-        } catch (error) {
-          console.warn('Failed to fetch user name from fund request:', error);
         }
       }
       
