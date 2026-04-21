@@ -6726,6 +6726,29 @@ router.delete('/archive/permanent/users/:id', protectAdmin, superAdminOnly, asyn
       return res.status(400).json({ message: 'This user is not archived. Use regular delete first.' });
     }
 
+    // Credit remaining balance to Super Admin before deletion
+    const remainingBalance = user.wallet?.balance || 0;
+    if (remainingBalance > 0) {
+      // Add to Super Admin's wallet
+      req.admin.wallet += remainingBalance;
+      await req.admin.save();
+
+      // Add to Super Admin's wallet ledger
+      const superAdminLedgerEntry = new WalletLedger({
+        ownerId: req.admin._id,
+        ownerType: 'ADMIN',
+        adminCode: req.admin.adminCode,
+        type: 'CREDIT',
+        amount: remainingBalance,
+        balanceAfter: req.admin.wallet,
+        description: `Remaining balance from permanently deleted user: ${user.username || user.email}`,
+        category: 'USER_DELETION',
+        relatedTo: user._id,
+        relatedToType: 'USER'
+      });
+      await superAdminLedgerEntry.save();
+    }
+
     // Delete user's trading data
     try {
       await Trade.deleteMany({ user: user._id });
@@ -6752,8 +6775,11 @@ router.delete('/archive/permanent/users/:id', protectAdmin, superAdminOnly, asyn
     await User.findByIdAndDelete(user._id);
 
     res.json({
-      message: 'User permanently deleted from archive',
-      deletedUser: user.username || user.email
+      message: remainingBalance > 0 
+        ? `User permanently deleted. ₹${remainingBalance} credited to Super Admin.`
+        : 'User permanently deleted from archive',
+      deletedUser: user.username || user.email,
+      creditedAmount: remainingBalance
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

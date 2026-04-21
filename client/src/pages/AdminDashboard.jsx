@@ -21618,6 +21618,8 @@ const AllUsersManagement = () => {
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showCryptoWalletModal, setShowCryptoWalletModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState(null);
   const [targetAdminId, setTargetAdminId] = useState('');
   const [targetUserId, setTargetUserId] = useState('');
   const [transferAdminFilter, setTransferAdminFilter] = useState(''); // Filter admins in transfer modal
@@ -21813,18 +21815,39 @@ const AllUsersManagement = () => {
     }
   };
 
-  const handleDeleteUser = async (userId, username) => {
-    if (!confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
-      return;
-    }
+  const handleDeleteUser = (userId, username) => {
+    setUserToDelete({ id: userId, name: username });
+    setShowDeleteConfirmModal(true);
+  };
+
+  const handleArchiveUser = async () => {
+    if (!userToDelete) return;
     try {
-      await axios.delete(`/api/admin/users/${userId}`, {
+      await axios.delete(`/api/admin/manage/users/${userToDelete.id}`, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
-      alert('User deleted successfully');
+      alert('User moved to archive successfully');
+      setShowDeleteConfirmModal(false);
+      setUserToDelete(null);
       fetchAllUsers();
     } catch (error) {
-      alert(error.response?.data?.message || 'Error deleting user');
+      alert(error.response?.data?.message || 'Error archiving user');
+    }
+  };
+
+  const handlePermanentDeleteUser = async () => {
+    if (!userToDelete) return;
+    if (!confirm(`⚠️ PERMANENT DELETE\n\nAre you sure you want to permanently delete "${userToDelete.name}"?\n\nThis action CANNOT be undone! The user's remaining balance will be credited to Super Admin.`)) return;
+    try {
+      await axios.delete(`/api/admin/manage/users/${userToDelete.id}/permanent`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert('User permanently deleted. Remaining balance credited to Super Admin.');
+      setShowDeleteConfirmModal(false);
+      setUserToDelete(null);
+      fetchAllUsers();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error permanently deleting user');
     }
   };
 
@@ -24588,8 +24611,7 @@ const UserManagement = () => {
                   <button onClick={() => { setSelectedUser(user); setShowWalletModal(true); }} className="p-2 bg-dark-700 rounded text-green-400" title="Manage INR Wallet"><Wallet size={16} /></button>
                   {isSuperAdmin && <button onClick={() => handleLoginAsUser(user._id)} className="p-2 bg-dark-700 rounded text-indigo-400" title="Login As User"><Eye size={16} /></button>}
                   {isSuperAdmin && <button onClick={() => handleForceLogoutUser(user._id, user.fullName || user.username)} className="p-2 bg-dark-700 rounded text-orange-400" title="Force Logout"><LogOut size={16} /></button>}
-                  <button onClick={() => handleDelete(user._id)} className="p-2 bg-dark-700 rounded text-red-400"><Trash2 size={16} /></button>
-                  {isSuperAdmin && <button onClick={() => handlePermanentDeleteUser(user._id, user.fullName || user.username)} className="p-2 bg-dark-700 rounded text-red-600" title="Permanent Delete"><Trash2 size={16} /></button>}
+                  <button onClick={() => handleDeleteUser(user._id, user.fullName || user.username)} className="p-2 bg-dark-700 rounded text-red-400" title="Delete User"><Trash2 size={16} /></button>
                 </div>
               </div>
             </div>
@@ -24701,21 +24723,12 @@ const UserManagement = () => {
                         </button>
                       )}
                       <button
-                        onClick={() => handleDelete(user._id)}
+                        onClick={() => handleDeleteUser(user._id, user.fullName || user.username)}
                         className="p-2 hover:bg-dark-600 rounded transition text-red-400"
                         title="Delete User"
                       >
                         <Trash2 size={16} />
                       </button>
-                      {isSuperAdmin && (
-                        <button
-                          onClick={() => handlePermanentDeleteUser(user._id, user.fullName || user.username)}
-                          className="p-2 hover:bg-dark-600 rounded transition text-red-600"
-                          title="Permanent Delete User"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      )}
                     </div>
                   </td>
                 </tr>
@@ -24823,6 +24836,58 @@ const UserManagement = () => {
                 className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white py-2 rounded-lg"
               >
                 {copying ? 'Copying...' : 'Copy Settings'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirmModal && userToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-dark-800 rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold">Delete User</h2>
+              <button
+                onClick={() => {
+                  setShowDeleteConfirmModal(false);
+                  setUserToDelete(null);
+                }}
+                className="text-gray-400 hover:text-white"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="mb-4 p-3 bg-dark-700 rounded-lg">
+              <div className="text-sm text-gray-400">User</div>
+              <div className="font-medium">{userToDelete.name}</div>
+            </div>
+
+            <div className="mb-4 p-3 bg-blue-900/20 border border-blue-600/50 rounded-lg">
+              <div className="text-sm text-blue-400">
+                <strong>Archive:</strong> Moves user to archive. Can be restored later. User will have no active trades or pending games.
+              </div>
+            </div>
+
+            <div className="mb-4 p-3 bg-red-900/20 border border-red-600/50 rounded-lg">
+              <div className="text-sm text-red-400">
+                <strong>Delete Permanently:</strong> Permanently deletes user and all data. User's remaining balance will be credited to Super Admin. This action CANNOT be undone.
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleArchiveUser}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg"
+              >
+                Put into Archive
+              </button>
+              <button
+                onClick={handlePermanentDeleteUser}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg"
+              >
+                Delete Permanently
               </button>
             </div>
           </div>
