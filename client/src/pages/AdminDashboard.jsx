@@ -7471,6 +7471,7 @@ const LedgerView = () => {
               <tr>
                 <th className="text-left px-4 py-3 text-gray-400">Date</th>
                 <th className="text-left px-4 py-3 text-gray-400">Type</th>
+                <th className="text-left px-4 py-3 text-gray-400">User/Client</th>
                 <th className="text-left px-4 py-3 text-gray-400">Reason</th>
                 <th className="text-right px-4 py-3 text-gray-400" title="Your share of the user loss pool, win brokerage, or gross fee (game profit only)">
                   Share %
@@ -7489,12 +7490,10 @@ const LedgerView = () => {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-400">
+                    {entry.transactionSlip?.userName || entry.relatedToName || '—'}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-400">
                     <div>{entry.reason}</div>
-                    {entry.relatedToName && !entry.transactionSlip && (
-                      <div className="text-xs text-purple-400 mt-1">
-                        From: {entry.relatedToName}
-                      </div>
-                    )}
                     {entry.transactionSlip && (
                       <div className="text-[10px] text-purple-400/90 mt-1 p-1.5 bg-purple-900/20 rounded border border-purple-700/30">
                         <div className="flex items-center gap-1 mb-1">
