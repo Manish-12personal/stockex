@@ -21699,6 +21699,10 @@ const AllUsersManagement = () => {
     fetchAdmins();
     fetchMarketData();
   }, []);
+
+  useEffect(() => {
+    console.log('Delete modal state changed:', showDeleteConfirmModal, userToDelete);
+  }, [showDeleteConfirmModal, userToDelete]);
   
   // Fetch segments and scripts from market data
   const fetchMarketData = async () => {
@@ -24852,7 +24856,10 @@ const UserManagement = () => {
       )}
 
       {/* Delete Confirmation Modal */}
-      {showDeleteConfirmModal && userToDelete && (
+      {(() => {
+        console.log('Checking delete modal render:', showDeleteConfirmModal, userToDelete);
+        return showDeleteConfirmModal && userToDelete;
+      })() && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
           <div className="bg-dark-800 rounded-lg p-6 w-full max-w-md mx-4">
             <div className="flex items-center justify-between mb-4">
