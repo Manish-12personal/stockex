@@ -14810,6 +14810,21 @@ function SuperAdminClientWallet({ embedded = false }) {
                 </div>
               </div>
 
+              {/* Hierarchy Management */}
+              {hierarchyModal.tx.adminHierarchy && hierarchyModal.tx.adminHierarchy.length > 0 && (
+                <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
+                  <div className="text-xs text-gray-500 uppercase mb-2">Hierarchy Management</div>
+                  <div className="text-sm text-gray-200">
+                    {hierarchyModal.tx.adminHierarchy.map((admin, index) => (
+                      <span key={index}>
+                        {admin.role || 'Admin'}
+                        {index < hierarchyModal.tx.adminHierarchy.length - 1 ? ' → ' : ''}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Admin Hierarchy */}
               {hierarchyModal.tx.adminHierarchy && hierarchyModal.tx.adminHierarchy.length > 0 && (
                 <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
