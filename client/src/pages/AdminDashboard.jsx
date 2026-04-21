@@ -21823,6 +21823,7 @@ const AllUsersManagement = () => {
     console.log('Delete user clicked:', userId, username);
     setUserToDelete({ id: userId, name: username });
     setShowDeleteConfirmModal(true);
+    console.log('Modal state set to true, userToDelete:', { id: userId, name: username });
   };
 
   const handleArchiveUser = async () => {
@@ -24852,7 +24853,7 @@ const UserManagement = () => {
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirmModal && userToDelete && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
           <div className="bg-dark-800 rounded-lg p-6 w-full max-w-md mx-4">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold">Delete User</h2>
