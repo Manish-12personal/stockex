@@ -66,6 +66,7 @@ import {
   UserCog,
   Share2,
   Archive,
+  Info,
 } from 'lucide-react';
 
 /** IST calendar YYYY-MM-DD (matches server `getTodayISTString` / jackpot `betDate`). */
@@ -14179,6 +14180,7 @@ function SuperAdminClientWallet({ embedded = false }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
   const [rowSearch, setRowSearch] = useState('');
+  const [hierarchyModal, setHierarchyModal] = useState({ open: false, tx: null });
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedUserSearch(userSearch.trim()), 450);
@@ -14697,6 +14699,7 @@ function SuperAdminClientWallet({ embedded = false }) {
                   Your account
                 </th>
                 <th className="text-right px-3 py-2 text-gray-400">Balance</th>
+                <th className="text-center px-3 py-2 text-gray-400">Info</th>
               </tr>
             </thead>
             <tbody>
@@ -14752,10 +14755,155 @@ function SuperAdminClientWallet({ embedded = false }) {
                   >
                     ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
                   </td>
+                  <td className="px-3 py-2 text-center">
+                    <button
+                      onClick={() => setHierarchyModal({ open: true, tx })}
+                      className="inline-flex items-center justify-center w-7 h-7 rounded-full hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 transition-colors"
+                      title="View hierarchy"
+                    >
+                      <Info size={16} />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Hierarchy Modal */}
+      {hierarchyModal.open && hierarchyModal.tx && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-xl border border-dark-600 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div className="sticky top-0 bg-dark-800 border-b border-dark-600 px-4 py-3 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-200">Transaction Hierarchy</h3>
+              <button
+                onClick={() => setHierarchyModal({ open: false, tx: null })}
+                className="text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              {/* Transaction ID */}
+              <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
+                <div className="text-xs text-gray-500 uppercase mb-1">Transaction ID</div>
+                <div className="font-mono text-sm text-gray-200">{hierarchyModal.tx._id}</div>
+              </div>
+
+              {/* Client Details */}
+              <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
+                <div className="text-xs text-gray-500 uppercase mb-2">Client</div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Name:</span>
+                    <span className="text-sm text-gray-200">{hierarchyModal.tx.ownerFullName || '—'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Username:</span>
+                    <span className="text-sm text-gray-200 font-mono">@{hierarchyModal.tx.ownerUsername || '—'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Code:</span>
+                    <span className="text-sm text-yellow-400 font-mono">{hierarchyModal.tx.adminCode || '—'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Admin Hierarchy */}
+              {hierarchyModal.tx.adminHierarchy && hierarchyModal.tx.adminHierarchy.length > 0 && (
+                <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
+                  <div className="text-xs text-gray-500 uppercase mb-2">Admin Hierarchy</div>
+                  <div className="space-y-2">
+                    {hierarchyModal.tx.adminHierarchy.map((admin, index) => (
+                      <div
+                        key={index}
+                        className="flex items-start gap-3 p-2 bg-dark-800 rounded border border-dark-500"
+                      >
+                        <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-xs font-semibold">
+                          {index + 1}
+                        </div>
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">Role:</span>
+                            <span className="text-sm text-blue-300 font-semibold">{admin.role || '—'}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">Name:</span>
+                            <span className="text-sm text-gray-200">{admin.name || '—'}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">Username:</span>
+                            <span className="text-sm text-gray-200 font-mono">@{admin.username || '—'}</span>
+                          </div>
+                          {admin.code && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500">Code:</span>
+                              <span className="text-sm text-yellow-400 font-mono">{admin.code}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Transaction Details */}
+              <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
+                <div className="text-xs text-gray-500 uppercase mb-2">Transaction Details</div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Date:</span>
+                    <span className="text-sm text-gray-200">{new Date(hierarchyModal.tx.createdAt).toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Type:</span>
+                    <span className="text-sm text-gray-200">{hierarchyModal.tx.type || '—'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Amount:</span>
+                    <span className="text-sm text-gray-200">₹{Number(hierarchyModal.tx.amount || 0).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Reason:</span>
+                    <span className="text-sm text-gray-200">{hierarchyModal.tx.reason || '—'}</span>
+                  </div>
+                  {hierarchyModal.tx.description && (
+                    <div className="flex items-start gap-2">
+                      <span className="text-xs text-gray-500">Description:</span>
+                      <span className="text-sm text-gray-200">{hierarchyModal.tx.description}</span>
+                    </div>
+                  )}
+                  {hierarchyModal.tx.game && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500">Game:</span>
+                      <span className="text-sm text-cyan-300">{hierarchyModal.tx.game}</span>
+                    </div>
+                  )}
+                  {hierarchyModal.tx.performedBy && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500">Performed By:</span>
+                      <span className="text-sm text-gray-200">
+                        {hierarchyModal.tx.performedBy.name || hierarchyModal.tx.performedBy.username || '—'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Balance Info */}
+              <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
+                <div className="text-xs text-gray-500 uppercase mb-2">Balance</div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Balance After:</span>
+                    <span className="text-sm text-gray-200">₹{Number(hierarchyModal.tx.balanceAfter || 0).toLocaleString('en-IN')}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
