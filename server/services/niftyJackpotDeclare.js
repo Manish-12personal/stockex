@@ -72,11 +72,12 @@ export async function declareNiftyJackpotResult(date) {
    * Prize ladder by sorted list position (same as Super Admin "Proj. Prize"):
    * index 0 → rank 1 → full % for rank 1; equal distance → order by earlier `createdAt`
    * (sortJackpotBidsByDistanceToReference). No merged-rank % split across tied distances.
+   * Prize distribution goes to top 20 based on prize ladder (ranks 1-20 get prizes).
    */
   const bidPrizeMap = new Map();
   for (let i = 0; i < pendingBids.length; i++) {
     const listRank = i + 1;
-    const pct = listRank <= topWinners ? getPrizePercent(listRank) : 0;
+    const pct = getPrizePercent(listRank); // Get prize % for this rank (0 if rank > 20)
     const bid = pendingBids[i];
     bidPrizeMap.set(bid._id.toString(), {
       displayRank: listRank,
