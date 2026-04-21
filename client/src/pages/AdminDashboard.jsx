@@ -14289,6 +14289,41 @@ function SuperAdminClientWallet({ embedded = false }) {
     };
   }, [summary, txKind, rowsMatchingYourWalletChip]);
 
+  // Calculate game-specific earnings and brokerage distribution
+  const gameStats = useMemo(() => {
+    if (walletScope !== 'games' || !gamesGameId) {
+      return { earnings: 0, brokerage: 0 };
+    }
+
+    let totalCredits = 0;
+    let totalDebits = 0;
+    let totalBrokerage = 0;
+
+    for (const tx of transactions) {
+      // Filter by selected game
+      if (gamesGameId && tx.meta?.gameKey !== gamesGameId && tx.meta?.gameId !== gamesGameId) {
+        continue;
+      }
+
+      const amount = Number(tx.amount) || 0;
+      if (tx.entryType === 'credit') {
+        totalCredits += amount;
+      } else if (tx.entryType === 'debit') {
+        totalDebits += amount;
+      }
+
+      // Calculate brokerage from meta.brokerageDeducted
+      if (tx.meta?.brokerageDeducted) {
+        totalBrokerage += Number(tx.meta.brokerageDeducted) || 0;
+      }
+    }
+
+    return {
+      earnings: totalCredits - totalDebits,
+      brokerage: totalBrokerage,
+    };
+  }, [transactions, walletScope, gamesGameId]);
+
   const filteredRows = useMemo(() => {
     if (!rowSearch.trim()) return rowsMatchingYourWalletChip;
     const q = rowSearch.trim().toLowerCase();
@@ -14456,6 +14491,35 @@ function SuperAdminClientWallet({ embedded = false }) {
               <div className="text-[10px] text-gray-600">Up to 1000 rows · narrow dates if needed</div>
             </div>
           </div>
+
+          {/* Game-specific stats boxes */}
+          {walletScope === 'games' && gamesGameId && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+              <div className="rounded-lg border border-purple-500/25 bg-purple-950/15 px-3 py-2">
+                <div className="text-[10px] text-gray-500 uppercase">Today's Earnings (cr − dr)</div>
+                <div
+                  className={`text-base font-bold tabular-nums ${
+                    Number(gameStats.earnings || 0) >= 0 ? 'text-purple-300' : 'text-orange-300'
+                  }`}
+                >
+                  {Number(gameStats.earnings || 0) >= 0 ? '+' : ''}₹
+                  {Number(gameStats.earnings || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-gray-600">
+                  {ALL_TX_GAMES_WALLET_OPTIONS.find(g => g.id === gamesGameId)?.label || gamesGameId}
+                </div>
+              </div>
+              <div className="rounded-lg border border-yellow-500/25 bg-yellow-950/15 px-3 py-2">
+                <div className="text-[10px] text-gray-500 uppercase">Total Brokerage Distribution</div>
+                <div className="text-base font-bold text-yellow-300 tabular-nums">
+                  ₹{Number(gameStats.brokerage || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-gray-600">
+                  {ALL_TX_GAMES_WALLET_OPTIONS.find(g => g.id === gamesGameId)?.label || gamesGameId}
+                </div>
+              </div>
+            </div>
+          )}
           {(txKind === 'CREDIT' || txKind === 'DEBIT') && (
             <p className="text-[11px] text-amber-200/90 bg-amber-950/25 border border-amber-500/25 rounded-lg px-3 py-2">
               Tip: pick <span className="font-semibold text-amber-100">All lines</span> for both sides. The chips filter
