@@ -21699,10 +21699,6 @@ const AllUsersManagement = () => {
     fetchAdmins();
     fetchMarketData();
   }, []);
-
-  useEffect(() => {
-    console.log('Delete modal state changed:', showDeleteConfirmModal, userToDelete);
-  }, [showDeleteConfirmModal, userToDelete]);
   
   // Fetch segments and scripts from market data
   const fetchMarketData = async () => {
@@ -21824,10 +21820,8 @@ const AllUsersManagement = () => {
   };
 
   const handleDeleteUser = (userId, username) => {
-    console.log('Delete user clicked:', userId, username);
     setUserToDelete({ id: userId, name: username });
     setShowDeleteConfirmModal(true);
-    console.log('Modal state set to true, userToDelete:', { id: userId, name: username });
   };
 
   const handleArchiveUser = async () => {
@@ -23548,6 +23542,58 @@ const AllUsersManagement = () => {
           isSuperAdmin={true}
         />
       )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirmModal && userToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
+          <div className="bg-dark-800 rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold">Delete User</h2>
+              <button
+                onClick={() => {
+                  setShowDeleteConfirmModal(false);
+                  setUserToDelete(null);
+                }}
+                className="text-gray-400 hover:text-white"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="mb-4 p-3 bg-dark-700 rounded-lg">
+              <div className="text-sm text-gray-400">User</div>
+              <div className="font-medium">{userToDelete.name}</div>
+            </div>
+
+            <div className="mb-4 p-3 bg-blue-900/20 border border-blue-600/50 rounded-lg">
+              <div className="text-sm text-blue-400">
+                <strong>Archive:</strong> Moves user to archive. Can be restored later. User will have no active trades or pending games.
+              </div>
+            </div>
+
+            <div className="mb-4 p-3 bg-red-900/20 border border-red-600/50 rounded-lg">
+              <div className="text-sm text-red-400">
+                <strong>Delete Permanently:</strong> Permanently deletes user and all data. User's remaining balance will be credited to Super Admin. This action CANNOT be undone.
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleArchiveUser}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg"
+              >
+                Put into Archive
+              </button>
+              <button
+                onClick={handlePermanentDeleteUser}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg"
+              >
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -24856,10 +24902,7 @@ const UserManagement = () => {
       )}
 
       {/* Delete Confirmation Modal */}
-      {(() => {
-        console.log('Checking delete modal render:', showDeleteConfirmModal, userToDelete);
-        return showDeleteConfirmModal && userToDelete;
-      })() && (
+      {showDeleteConfirmModal && userToDelete && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
           <div className="bg-dark-800 rounded-lg p-6 w-full max-w-md mx-4">
             <div className="flex items-center justify-between mb-4">
