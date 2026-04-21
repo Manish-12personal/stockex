@@ -6559,6 +6559,158 @@ router.delete('/archive/permanent/admins/:id', protectAdmin, superAdminOnly, asy
   }
 });
 
+// ============================================================================
+// EXTRA CHARGES MANAGEMENT
+// ============================================================================
+
+/**
+ * POST /admins/:id/take-brokerage
+ * Take brokerage from admin (Super Admin only)
+ */
+router.post('/admins/:id/take-brokerage', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const targetAdmin = await Admin.findById(req.params.id);
+    if (!targetAdmin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+
+    if (targetAdmin.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Cannot take brokerage from Super Admin' });
+    }
+
+    const { amount, description } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Please enter a valid amount' });
+    }
+
+    // Check if admin has sufficient wallet balance
+    if (targetAdmin.wallet < amount) {
+      return res.status(400).json({ message: `Insufficient wallet balance. Current balance: ₹${targetAdmin.wallet}` });
+    }
+
+    // Deduct amount from admin's wallet
+    targetAdmin.wallet -= amount;
+    await targetAdmin.save();
+
+    // Add to wallet ledger
+    const ledgerEntry = new WalletLedger({
+      ownerId: targetAdmin._id,
+      ownerType: 'ADMIN',
+      adminCode: targetAdmin.adminCode,
+      type: 'DEBIT',
+      amount: amount,
+      balanceAfter: targetAdmin.wallet,
+      description: description || 'Brokerage taken by Super Admin',
+      category: 'EXTRA_CHARGE',
+      relatedTo: req.admin._id,
+      relatedToType: 'ADMIN'
+    });
+    await ledgerEntry.save();
+
+    // Add to Super Admin's wallet
+    req.admin.wallet += amount;
+    await req.admin.save();
+
+    // Add to Super Admin's wallet ledger
+    const superAdminLedgerEntry = new WalletLedger({
+      ownerId: req.admin._id,
+      ownerType: 'ADMIN',
+      adminCode: req.admin.adminCode,
+      type: 'CREDIT',
+      amount: amount,
+      balanceAfter: req.admin.wallet,
+      description: `Brokerage taken from ${targetAdmin.name || targetAdmin.username}`,
+      category: 'EXTRA_CHARGE',
+      relatedTo: targetAdmin._id,
+      relatedToType: 'ADMIN'
+    });
+    await superAdminLedgerEntry.save();
+
+    res.json({
+      message: `Successfully took ₹${amount} brokerage from ${targetAdmin.name || targetAdmin.username}`,
+      amount: amount,
+      adminBalance: targetAdmin.wallet
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * POST /admins/:id/give-incentive
+ * Give incentive to admin (Super Admin only)
+ */
+router.post('/admins/:id/give-incentive', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const targetAdmin = await Admin.findById(req.params.id);
+    if (!targetAdmin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+
+    if (targetAdmin.role === 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Cannot give incentive to Super Admin' });
+    }
+
+    const { amount, description } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: 'Please enter a valid amount' });
+    }
+
+    // Check if Super Admin has sufficient wallet balance
+    if (req.admin.wallet < amount) {
+      return res.status(400).json({ message: `Insufficient wallet balance. Current balance: ₹${req.admin.wallet}` });
+    }
+
+    // Deduct from Super Admin's wallet
+    req.admin.wallet -= amount;
+    await req.admin.save();
+
+    // Add to Super Admin's wallet ledger
+    const superAdminLedgerEntry = new WalletLedger({
+      ownerId: req.admin._id,
+      ownerType: 'ADMIN',
+      adminCode: req.admin.adminCode,
+      type: 'DEBIT',
+      amount: amount,
+      balanceAfter: req.admin.wallet,
+      description: `Incentive given to ${targetAdmin.name || targetAdmin.username}`,
+      category: 'EXTRA_CHARGE',
+      relatedTo: targetAdmin._id,
+      relatedToType: 'ADMIN'
+    });
+    await superAdminLedgerEntry.save();
+
+    // Add to target admin's wallet
+    targetAdmin.wallet += amount;
+    await targetAdmin.save();
+
+    // Add to target admin's wallet ledger
+    const ledgerEntry = new WalletLedger({
+      ownerId: targetAdmin._id,
+      ownerType: 'ADMIN',
+      adminCode: targetAdmin.adminCode,
+      type: 'CREDIT',
+      amount: amount,
+      balanceAfter: targetAdmin.wallet,
+      description: description || 'Incentive given by Super Admin',
+      category: 'EXTRA_CHARGE',
+      relatedTo: req.admin._id,
+      relatedToType: 'ADMIN'
+    });
+    await ledgerEntry.save();
+
+    res.json({
+      message: `Successfully gave ₹${amount} incentive to ${targetAdmin.name || targetAdmin.username}`,
+      amount: amount,
+      adminBalance: targetAdmin.wallet
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 /**
  * DELETE /archive/permanent/users/:id
  * Permanently delete an archived user (Super Admin only)

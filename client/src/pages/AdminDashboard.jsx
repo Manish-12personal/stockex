@@ -2772,6 +2772,15 @@ const AdminManagement = () => {
           onClose={() => { setShowIndividualPattiModal(false); setSelectedAdmin(null); }}
         />
       )}
+
+      {/* Extra Charges Modal */}
+      {showExtraChargesModal && selectedAdmin && (
+        <ExtraChargesModal
+          admin={admin}
+          targetAdmin={selectedAdmin}
+          onClose={() => { setShowExtraChargesModal(false); setSelectedAdmin(null); }}
+        />
+      )}
     </div>
   );
 };
@@ -3006,6 +3015,169 @@ const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
             className="flex-1 px-4 py-2 bg-pink-600 hover:bg-pink-700 rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? 'Saving...' : 'Save Configuration'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Extra Charges Modal - Take brokerage or give incentive to admin
+const ExtraChargesModal = ({ admin, targetAdmin, onClose }) => {
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState('take'); // 'take' or 'give'
+  const [formData, setFormData] = useState({
+    amount: '',
+    description: ''
+  });
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  const handleTakeBrokerage = async () => {
+    if (!formData.amount || parseFloat(formData.amount) <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+    
+    setSaving(true);
+    setError('');
+    try {
+      await axios.post(`/api/admin/manage/admins/${targetAdmin._id}/take-brokerage`, {
+        amount: parseFloat(formData.amount),
+        description: formData.description
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setSuccess(`Successfully took ₹${formData.amount} brokerage from ${targetAdmin.name || targetAdmin.username}`);
+      setFormData({ amount: '', description: '' });
+      setTimeout(() => {
+        onClose();
+      }, 1500);
+    } catch (error) {
+      setError(error.response?.data?.message || 'Error taking brokerage');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGiveIncentive = async () => {
+    if (!formData.amount || parseFloat(formData.amount) <= 0) {
+      setError('Please enter a valid amount');
+      return;
+    }
+    
+    setSaving(true);
+    setError('');
+    try {
+      await axios.post(`/api/admin/manage/admins/${targetAdmin._id}/give-incentive`, {
+        amount: parseFloat(formData.amount),
+        description: formData.description
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setSuccess(`Successfully gave ₹${formData.amount} incentive to ${targetAdmin.name || targetAdmin.username}`);
+      setFormData({ amount: '', description: '' });
+      setTimeout(() => {
+        onClose();
+      }, 1500);
+    } catch (error) {
+      setError(error.response?.data?.message || 'Error giving incentive');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-lg p-6 w-full max-w-md">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h2 className="text-xl font-bold">Extra Charges</h2>
+            <p className="text-sm text-gray-400">{targetAdmin.name || targetAdmin.username} ({targetAdmin.role})</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24} /></button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={() => { setActiveTab('take'); setError(''); setSuccess(''); }}
+            className={`flex-1 px-4 py-2 rounded-lg font-medium ${
+              activeTab === 'take'
+                ? 'bg-rose-600 text-white'
+                : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+            }`}
+          >
+            Take Brokerage
+          </button>
+          <button
+            onClick={() => { setActiveTab('give'); setError(''); setSuccess(''); }}
+            className={`flex-1 px-4 py-2 rounded-lg font-medium ${
+              activeTab === 'give'
+                ? 'bg-green-600 text-white'
+                : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
+            }`}
+          >
+            Give Incentive
+          </button>
+        </div>
+
+        {/* Form */}
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">
+              {activeTab === 'take' ? 'Amount to Take (₹)' : 'Incentive Amount (₹)'}
+            </label>
+            <input
+              type="number"
+              value={formData.amount}
+              onChange={(e) => setFormData(prev => ({ ...prev, amount: e.target.value }))}
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-2"
+              placeholder="Enter amount"
+              min="0"
+              step="0.01"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-1">Description (Optional)</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-2 h-20 resize-none"
+              placeholder="Enter description..."
+            />
+          </div>
+
+          {/* Error/Success Messages */}
+          {error && (
+            <div className="bg-red-500/20 border border-red-500 text-red-400 px-3 py-2 rounded text-sm">
+              {error}
+            </div>
+          )}
+          {success && (
+            <div className="bg-green-500/20 border border-green-500 text-green-400 px-3 py-2 rounded text-sm">
+              {success}
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-dark-600 flex gap-3 mt-4">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 bg-dark-600 hover:bg-dark-500 rounded"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={activeTab === 'take' ? handleTakeBrokerage : handleGiveIncentive}
+            disabled={saving || !formData.amount}
+            className={`flex-1 px-4 py-2 rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
+              activeTab === 'take' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-green-600 hover:bg-green-700'
+            }`}
+          >
+            {saving ? 'Processing...' : activeTab === 'take' ? 'Take Brokerage' : 'Give Incentive'}
           </button>
         </div>
       </div>
