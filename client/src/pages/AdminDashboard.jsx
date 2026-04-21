@@ -14291,7 +14291,7 @@ function SuperAdminClientWallet({ embedded = false }) {
 
   // Calculate game-specific earnings and brokerage distribution
   const gameStats = useMemo(() => {
-    if (walletScope !== 'games' || !gamesGameId) {
+    if (scope !== 'games' || !gamesGameId) {
       return { earnings: 0, brokerage: 0 };
     }
 
@@ -14322,7 +14322,7 @@ function SuperAdminClientWallet({ embedded = false }) {
       earnings: totalCredits - totalDebits,
       brokerage: totalBrokerage,
     };
-  }, [transactions, walletScope, gamesGameId]);
+  }, [transactions, scope, gamesGameId]);
 
   const filteredRows = useMemo(() => {
     if (!rowSearch.trim()) return rowsMatchingYourWalletChip;
@@ -14493,7 +14493,7 @@ function SuperAdminClientWallet({ embedded = false }) {
           </div>
 
           {/* Game-specific stats boxes */}
-          {walletScope === 'games' && gamesGameId && (
+          {scope === 'games' && gamesGameId && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
               <div className="rounded-lg border border-purple-500/25 bg-purple-950/15 px-3 py-2">
                 <div className="text-[10px] text-gray-500 uppercase">Today's Earnings (cr − dr)</div>
