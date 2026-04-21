@@ -3092,9 +3092,10 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(100);
 
-    // Enrich with transaction slip information for game profit entries
+    // Enrich with transaction slip information for game profit entries and relatedTo entity names
     const enrichedLedger = await Promise.all(ledger.map(async (entry) => {
       let transactionSlipInfo = null;
+      let relatedToName = null;
       
       // Check if this is a game profit entry with transaction metadata
       if (entry.reason === 'GAME_PROFIT' && entry.meta?.transactionId) {
@@ -3102,6 +3103,16 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
           const { findTransactionSlipByTransactionId } = await import('../services/gameTransactionSlipService.js');
           const slip = await findTransactionSlipByTransactionId(entry.meta.transactionId);
           if (slip) {
+            // Fetch user details to get the name
+            let userName = null;
+            if (slip.userId) {
+              const User = (await import('../models/User.js')).default;
+              const user = await User.findById(slip.userId).select('fullName username');
+              if (user) {
+                userName = user.fullName || user.username;
+              }
+            }
+
             transactionSlipInfo = {
               transactionId: slip.transactionId,
               totalDebitAmount: slip.totalDebitAmount,
@@ -3110,6 +3121,7 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
               status: slip.status,
               gameIds: slip.gameIds,
               userCode: slip.userCode,
+              userName: userName,
               createdAt: slip.createdAt
             };
           }
@@ -3117,10 +3129,32 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
           console.warn('Failed to fetch transaction slip for admin ledger entry:', error);
         }
       }
+
+      // Fetch relatedTo entity name for other transaction types
+      if (entry.relatedTo && entry.relatedToType) {
+        try {
+          if (entry.relatedToType === 'USER') {
+            const User = (await import('../models/User.js')).default;
+            const user = await User.findById(entry.relatedTo).select('fullName username');
+            if (user) {
+              relatedToName = user.fullName || user.username;
+            }
+          } else if (entry.relatedToType === 'ADMIN') {
+            const Admin = (await import('../models/Admin.js')).default;
+            const admin = await Admin.findById(entry.relatedTo).select('name username adminCode');
+            if (admin) {
+              relatedToName = admin.name || admin.username;
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to fetch relatedTo entity name:', error);
+        }
+      }
       
       return {
         ...entry.toObject(),
-        transactionSlip: transactionSlipInfo
+        transactionSlip: transactionSlipInfo,
+        relatedToName: relatedToName
       };
     }));
 
