@@ -3455,6 +3455,34 @@ router.get('/all-transactions', protectAdmin, superAdminOnly, async (req, res) =
       .populate('performedBy', 'username name')
       .lean();
 
+    // Build admin hierarchy for each transaction
+    for (const tx of transactions) {
+      if (tx.ownerType === 'USER' && tx.ownerId) {
+        const user = await User.findById(tx.ownerId).populate('admin').lean();
+        if (user && user.admin) {
+          const hierarchy = [];
+          let currentAdmin = user.admin;
+          
+          while (currentAdmin) {
+            hierarchy.push({
+              role: currentAdmin.role,
+              name: currentAdmin.name,
+              username: currentAdmin.username,
+              code: currentAdmin.adminCode,
+            });
+            
+            if (currentAdmin.parentAdmin) {
+              currentAdmin = await Admin.findById(currentAdmin.parentAdmin).lean();
+            } else {
+              break;
+            }
+          }
+          
+          tx.adminHierarchy = hierarchy;
+        }
+      }
+    }
+
     if (wantSummary) {
       return res.json({ transactions, summary });
     }
