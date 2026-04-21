@@ -8,7 +8,7 @@ import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.j
 import { adminReceivesHierarchyBrokerage } from '../utils/adminBrokerageEligibility.js';
 
 /** Ledger meta: your % of the distribution base (user loss pool, win-side brokerage, or gross fee). */
-function gameProfitLedgerMeta(shareAmount, baseAmount, profitKind, gameKey, transactionId = null) {
+function gameProfitLedgerMeta(shareAmount, baseAmount, profitKind, gameKey, transactionId = null, userId = null) {
   const gk = gameKey && typeof gameKey === 'string' ? gameKey : undefined;
   const s = Number(shareAmount);
   const b = Number(baseAmount);
@@ -16,6 +16,10 @@ function gameProfitLedgerMeta(shareAmount, baseAmount, profitKind, gameKey, tran
   
   if (transactionId) {
     meta.transactionId = transactionId;
+  }
+  
+  if (userId) {
+    meta.relatedUserId = userId;
   }
   
   if (!Number.isFinite(s) || !Number.isFinite(b) || b === 0) {
@@ -165,7 +169,7 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
         balanceAfter: admin.wallet.balance,
         description: `${gameName} profit share - ${role} (${((shareAmount / amount) * 100).toFixed(1)}% of ₹${amount.toFixed(2)})`,
         reference: refId ? { type: 'Manual', id: null } : undefined,
-        meta: gameProfitLedgerMeta(shareAmount, amount, 'USER_LOSS_POOL', gameKey),
+        meta: gameProfitLedgerMeta(shareAmount, amount, 'USER_LOSS_POOL', gameKey, null, user._id),
       });
 
       totalDistributed += shareAmount;
@@ -190,7 +194,7 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
           balanceAfter: saDoc.wallet.balance,
           description: `${gameName} profit — diverted from company employees (₹${divertedToSuperAdmin.toFixed(2)})`,
           reference: refId ? { type: 'Manual', id: null } : undefined,
-          meta: gameProfitLedgerMeta(divertedToSuperAdmin, amount, 'USER_LOSS_POOL', gameKey),
+          meta: gameProfitLedgerMeta(divertedToSuperAdmin, amount, 'USER_LOSS_POOL', gameKey, null, user._id),
         });
         totalDistributed += divertedToSuperAdmin;
       }
@@ -344,7 +348,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
             amount: lumpNoChain,
             balanceAfter: saDoc.wallet.balance,
             description: `${gameName} win brokerage (no user hierarchy → Super Admin)`,
-            meta: gameProfitLedgerMeta(lumpNoChain, T, 'WIN_BROKERAGE', gameKey, transactionId),
+            meta: gameProfitLedgerMeta(lumpNoChain, T, 'WIN_BROKERAGE', gameKey, transactionId, userId),
           });
           totalDistributed += lumpNoChain;
         }
@@ -400,7 +404,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
         amount: shareAmount,
         balanceAfter: admin.wallet.balance,
         description: `${gameName} win brokerage — ${role} (₹${shareAmount.toFixed(2)})`,
-        meta: gameProfitLedgerMeta(shareAmount, T, 'WIN_BROKERAGE', gameKey, transactionId),
+        meta: gameProfitLedgerMeta(shareAmount, T, 'WIN_BROKERAGE', gameKey, transactionId, userId),
       });
       totalDistributed += shareAmount;
       if (role === 'SUPER_ADMIN') superAdminCreditedInChain = true;
@@ -425,7 +429,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
           amount: divertedWinBrokerageToSuperAdmin,
           balanceAfter: saDoc.wallet.balance,
           description: `${gameName} win brokerage — diverted from company employees (₹${divertedWinBrokerageToSuperAdmin.toFixed(2)})`,
-          meta: gameProfitLedgerMeta(divertedWinBrokerageToSuperAdmin, T, 'WIN_BROKERAGE', gameKey, transactionId),
+          meta: gameProfitLedgerMeta(divertedWinBrokerageToSuperAdmin, T, 'WIN_BROKERAGE', gameKey, transactionId, userId),
         });
         totalDistributed += divertedWinBrokerageToSuperAdmin;
         if (String(saDoc.role) === 'SUPER_ADMIN') superAdminCreditedInChain = true;
@@ -447,7 +451,7 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
           amount: saAmt,
           balanceAfter: saDoc.wallet.balance,
           description: `${gameName} win brokerage — Super Admin remainder (₹${saAmt.toFixed(2)})`,
-          meta: gameProfitLedgerMeta(saAmt, T, 'WIN_BROKERAGE', gameKey, transactionId),
+          meta: gameProfitLedgerMeta(saAmt, T, 'WIN_BROKERAGE', gameKey, transactionId, userId),
         });
         totalDistributed += saAmt;
       }
@@ -611,7 +615,7 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
             amount: lumpNoChain,
             balanceAfter: saDoc.wallet.balance,
             description: `${gameLabel} win brokerage — Super Admin remainder (no hierarchy, ₹${lumpNoChain.toFixed(2)})`,
-            meta: gameProfitLedgerMeta(lumpNoChain, T, 'JACKPOT_GROSS_FEE', gameKey),
+            meta: gameProfitLedgerMeta(lumpNoChain, T, 'JACKPOT_GROSS_FEE', gameKey, null, userId),
           });
           totalDistributed += lumpNoChain;
         }
@@ -660,7 +664,7 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
               ? `${gameLabel} win brokerage — ${role} (${pct.toFixed(1)}% of ₹${gp.toFixed(2)} = ₹${shareAmount.toFixed(2)})`
               : `${gameLabel} win brokerage — ${role} (₹${shareAmount.toFixed(2)})`;
           })(),
-        meta: gameProfitLedgerMeta(shareAmount, Number(breakdown.grossPrize) || 0, 'JACKPOT_GROSS_FEE', gameKey),
+        meta: gameProfitLedgerMeta(shareAmount, Number(breakdown.grossPrize) || 0, 'JACKPOT_GROSS_FEE', gameKey, null, userId),
       });
       totalDistributed += shareAmount;
       if (role === 'SUPER_ADMIN') superAdminCreditedInChain = true;
@@ -690,7 +694,9 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
             totalSuperAdminAmount,
             Number(breakdown.grossPrize) || 0,
             'JACKPOT_GROSS_FEE',
-            gameKey
+            gameKey,
+            null,
+            userId
           ),
         });
         totalDistributed += totalSuperAdminAmount;

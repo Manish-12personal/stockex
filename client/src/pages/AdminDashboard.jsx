@@ -21820,6 +21820,7 @@ const AllUsersManagement = () => {
   };
 
   const handleDeleteUser = (userId, username) => {
+    console.log('Delete user clicked:', userId, username);
     setUserToDelete({ id: userId, name: username });
     setShowDeleteConfirmModal(true);
   };
@@ -22204,7 +22205,10 @@ const AllUsersManagement = () => {
                         </button>
                       )}
                       <button
-                        onClick={() => handleDeleteUser(user._id, user.username)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteUser(user._id, user.fullName || user.username);
+                        }}
                         className="p-2 hover:bg-dark-600 rounded transition text-red-400"
                         title="Delete User"
                       >
