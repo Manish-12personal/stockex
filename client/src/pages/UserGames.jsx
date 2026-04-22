@@ -4687,6 +4687,8 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [sessionClearing, setSessionClearing] = useState(null);
   const [bidAsk, setBidAsk] = useState({ bid: null, ask: null });
   const [priceUpdateTick, setPriceUpdateTick] = useState(0);
+  const [last5DaysLTP, setLast5DaysLTP] = useState([]);
+  const [showLast5DaysLTP, setShowLast5DaysLTP] = useState(false);
   const resolveCheckRef = useRef(null);
 
   const fetchActiveTrades = useCallback(async () => {
@@ -4711,6 +4713,17 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
     }
   }, [user?.token]);
 
+  const fetchLast5DaysLTP = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/user/nifty-bracket/last-5-days', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setLast5DaysLTP(data || []);
+    } catch (error) {
+      console.error('Error fetching last 5 days LTP:', error);
+    }
+  }, [user?.token]);
+
   // Debug: Monitor currentPrice changes
   useEffect(() => {
     console.log('NiftyBracket currentPrice changed to:', currentPrice);
@@ -4721,6 +4734,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
     console.log('[DEBUG] GameScreen useEffect triggered for game:', game.id);
     fetchActiveTrades();
     fetchHistory();
+    fetchLast5DaysLTP();
   }, [game.id, user?.token, fetchActiveTrades, fetchHistory]);
 
   // Instructions Modal */interval to check currentPrice periodically
@@ -4945,6 +4959,48 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
           {/* LEFT COLUMN - Game Info + Active Trades */}
           <div className="lg:w-[260px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
+
+            {/* Watch Previous LTPs Button */}
+            {last5DaysLTP.length > 0 && !showLast5DaysLTP && (
+              <button
+                onClick={() => setShowLast5DaysLTP(true)}
+                className="w-full bg-dark-800 rounded-xl p-3 border border-dark-600 hover:border-cyan-500/50 transition-colors mb-3"
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <TrendingUp size={14} className="text-cyan-400" />
+                  <span className="text-xs font-medium text-cyan-400">Watch Previous LTPs</span>
+                </div>
+              </button>
+            )}
+
+            {/* Last 5 Days Closing LTP Card (shown when button clicked) */}
+            {showLast5DaysLTP && last5DaysLTP.length > 0 && (
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 mb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-xs flex items-center gap-1.5">
+                    <TrendingUp size={12} className="text-cyan-400" />
+                    Last 5 Days Closing LTP
+                  </h3>
+                  <button
+                    onClick={() => setShowLast5DaysLTP(false)}
+                    className="text-gray-400 hover:text-white transition"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {last5DaysLTP.map((item, idx) => (
+                    <div key={idx} className="flex justify-between items-center py-1.5 border-b border-dark-600 last:border-0">
+                      <span className="text-xs text-gray-400">{item.date}</span>
+                      <span className="text-sm font-bold text-cyan-400">
+                        ₹{Number(item.closingLTP).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Bracket Info */}
             {currentPrice && (
               <div className="bg-dark-800 rounded-xl p-3 border border-cyan-500/30 mb-3">
@@ -5216,31 +5272,25 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
               {/* Bracket Display + BUY/SELL */}
               <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
-                <label className="block text-sm text-gray-400 mb-3 text-center">Pick Your Side</label>
+                {/* Large Real-time LTP Display */}
                 {!currentPrice || currentPrice <= 0 ? (
-                  <div className="text-center py-4">
+                  <div className="text-center py-4 mb-3">
                     <RefreshCw className="animate-spin text-cyan-400 mx-auto mb-2" size={20} />
                     <p className="text-xs text-gray-500">Waiting for price (live or demo)…</p>
                   </div>
                 ) : (
-                  <>
-                    {/* Current LTP Display */}
-                    <div key={`ltp-${priceUpdateTick}`} className={`rounded-xl p-3 mb-3 text-center border ${
-                      lockedDisplayPrice ? 'bg-green-900/30 border-green-500/50' : 'bg-dark-700 border-cyan-500/30'
-                    }`}>
-                      <div className={`text-[10px] mb-1 flex items-center justify-center gap-1 ${
-                        lockedDisplayPrice ? 'text-green-400' : 'text-cyan-400'
-                      }`}>
-                        {lockedDisplayPrice && <Lock size={10} />}
-                        {lockedDisplayPrice ? `${lockedDisplayPrice === upperTarget ? 'BUY TARGET (Locked)' : 'LTP'}` : 'NIFTY 50 LTP'}
-                      </div>
-                      <div className="text-lg sm:text-xl" key={currentPrice}>
-                        {renderInrRedPaise(lockedDisplayPrice || sessionClearing || currentPrice, 'text-lg sm:text-xl text-cyan-300')}
-                      </div>
-                      <div className="text-[10px] text-gray-500 mt-1">
-                        {lockedDisplayPrice ? `Target locked for result at 3:30 PM` : `Bracket: ±${bracketGap} points`}
-                      </div>
+                  <div key={`ltp-${priceUpdateTick}`} className="text-center mb-3 pb-3 border-b border-dark-600">
+                    <div className="text-xs text-cyan-400 mb-1">NIFTY 50 LTP</div>
+                    <div className="text-3xl font-bold text-cyan-300" key={currentPrice}>
+                      ₹{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
+                    <div className="text-[10px] text-gray-500 mt-1">Bracket: ±{bracketGap} points</div>
+                  </div>
+                )}
+                
+                <label className="block text-sm text-gray-400 mb-3 text-center">Pick Your Side</label>
+                {currentPrice && currentPrice > 0 && (
+                  <>
 
                     {/* BUY Button - Green - Price Goes UP */}
                     <button
@@ -5410,6 +5460,8 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [lockedAt, setLockedAt] = useState(null);
   const [predictedPriceInput, setPredictedPriceInput] = useState('');
   const [predictionDrafts, setPredictionDrafts] = useState({});
+  const [last5DaysData, setLast5DaysData] = useState([]);
+  const [showLast5Days, setShowLast5Days] = useState(false);
   const spotPrefillDoneRef = useRef(false);
   /** Same LTP as center chart — sent as `?spot=` so LIVE TOP 5 ranks move with ticks (no full page refresh). */
   const jackpotChartSpotRef = useRef(null);
@@ -5471,6 +5523,17 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
     });
   }, [todayBids]);
 
+  const fetchLast5Days = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/user/nifty-jackpot/last-5-days', {
+        headers: { Authorization: `Bearer ${user.token}` }
+      });
+      setLast5DaysData(data || []);
+    } catch (error) {
+      console.error('Error fetching last 5 days data:', error);
+    }
+  }, [user?.token]);
+
   const fetchLeaderboard = useCallback(async () => {
     try {
       const spot = jackpotChartSpotRef.current;
@@ -5523,6 +5586,7 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
     fetchLeaderboard();
     fetchHistory();
     fetchLockedPrice();
+    fetchLast5Days();
     const interval = setInterval(fetchLeaderboard, 8000);
     const priceInterval = setInterval(fetchLockedPrice, 30000);
     return () => {
@@ -5724,6 +5788,47 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
           {/* LEFT COLUMN - Game Info + Achievements + History */}
           <div className="lg:w-[280px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto space-y-3">
+
+            {/* Watch Previous LTPs Button */}
+            {last5DaysData.length > 0 && !showLast5Days && (
+              <button
+                onClick={() => setShowLast5Days(true)}
+                className="w-full bg-dark-800 rounded-xl p-3 border border-dark-600 hover:border-cyan-500/50 transition-colors"
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <TrendingUp size={14} className="text-cyan-400" />
+                  <span className="text-xs font-medium text-cyan-400">Watch Previous LTPs</span>
+                </div>
+              </button>
+            )}
+
+            {/* Last 5 Days Closing Prices Card (shown when button clicked) */}
+            {showLast5Days && last5DaysData.length > 0 && (
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-bold text-xs flex items-center gap-1.5">
+                    <TrendingUp size={12} className="text-cyan-400" />
+                    Last 5 Days Closing Prices
+                  </h3>
+                  <button
+                    onClick={() => setShowLast5Days(false)}
+                    className="text-gray-400 hover:text-white transition"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {last5DaysData.map((item, idx) => (
+                    <div key={idx} className="flex justify-between items-center py-1.5 border-b border-dark-600 last:border-0">
+                      <span className="text-xs text-gray-400">{item.resultDate}</span>
+                      <span className="text-sm font-bold text-cyan-400">
+                        ₹{Number(item.lockedPrice).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Prize Structure */}
             <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">

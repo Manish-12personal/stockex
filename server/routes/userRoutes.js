@@ -4682,6 +4682,48 @@ router.get('/nifty-jackpot/locked-price', protectUser, async (req, res) => {
   }
 });
 
+// Get last 5 days closing prices for Nifty Jackpot
+router.get('/nifty-jackpot/last-5-days', protectUser, async (req, res) => {
+  try {
+    const results = await NiftyJackpotResult.find({
+      lockedPrice: { $exists: true, $ne: null }
+    })
+      .sort({ resultDate: -1 })
+      .limit(5)
+      .select('resultDate lockedPrice lockedAt resultDeclared')
+      .lean();
+    
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get last 5 days closing LTP for Nifty Bracket
+router.get('/nifty-bracket/last-5-days', protectUser, async (req, res) => {
+  try {
+    // Fetch last 5 days of Nifty Jackpot results as they contain the closing prices
+    const results = await NiftyJackpotResult.find({
+      lockedPrice: { $exists: true, $ne: null }
+    })
+      .sort({ resultDate: -1 })
+      .limit(5)
+      .select('resultDate lockedPrice lockedAt')
+      .lean();
+    
+    // Format for Nifty Bracket display
+    const formattedResults = results.map(r => ({
+      date: r.resultDate,
+      closingLTP: r.lockedPrice,
+      closedAt: r.lockedAt
+    }));
+    
+    res.json(formattedResults);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Send OTP to phone number
 router.post('/send-otp', async (req, res) => {
   try {
