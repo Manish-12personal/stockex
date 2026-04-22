@@ -73,6 +73,17 @@ const LiveChart = ({
       crosshair: {
         mode: 1,
       },
+      localization: {
+        timeFormatter: (time) => {
+          const date = new Date(time * 1000);
+          return date.toLocaleTimeString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          });
+        },
+      },
     });
 
     const candleSeries = chart.addCandlestickSeries({
