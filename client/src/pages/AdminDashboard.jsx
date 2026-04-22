@@ -8075,8 +8075,8 @@ const LedgerView = () => {
     setShowInfoModal(true);
     setLoadingHierarchy(true);
     
-    // Get user code from entry
-    const userCode = entry.transactionSlip?.userCode || entry.userCode;
+    // Get user code or username from entry
+    const userCode = entry.transactionSlip?.userCode || entry.userCode || entry.userName || entry.transactionSlip?.userName;
     
     if (!userCode) {
       setLoadingHierarchy(false);
@@ -8085,6 +8085,7 @@ const LedgerView = () => {
     }
     
     try {
+      // Try to fetch hierarchy by userCode first, then by username
       const { data } = await axios.get(`/api/admin/manage/user-hierarchy/${userCode}`, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
@@ -15200,6 +15201,8 @@ function SuperAdminClientWallet({ embedded = false }) {
   const [loading, setLoading] = useState(false);
   const [rowSearch, setRowSearch] = useState('');
   const [hierarchyModal, setHierarchyModal] = useState({ open: false, tx: null });
+  const [clientHierarchy, setClientHierarchy] = useState(null);
+  const [loadingClientHierarchy, setLoadingClientHierarchy] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedUserSearch(userSearch.trim()), 450);
@@ -15218,6 +15221,39 @@ function SuperAdminClientWallet({ embedded = false }) {
       setMainGameKey('');
     }
   }, [scope]);
+
+  // Fetch client hierarchy when modal opens
+  useEffect(() => {
+    const fetchClientHierarchy = async () => {
+      if (!hierarchyModal.open || !hierarchyModal.tx) {
+        setClientHierarchy(null);
+        return;
+      }
+      
+      setLoadingClientHierarchy(true);
+      const userIdentifier = hierarchyModal.tx.adminCode || hierarchyModal.tx.ownerUsername || hierarchyModal.tx.ownerFullName;
+      
+      if (!userIdentifier) {
+        setLoadingClientHierarchy(false);
+        setClientHierarchy(null);
+        return;
+      }
+      
+      try {
+        const { data } = await axios.get(`/api/admin/manage/user-hierarchy/${userIdentifier}`, {
+          headers: { Authorization: `Bearer ${admin.token}` }
+        });
+        setClientHierarchy(data);
+      } catch (error) {
+        console.error('Error fetching client hierarchy:', error);
+        setClientHierarchy(null);
+      } finally {
+        setLoadingClientHierarchy(false);
+      }
+    };
+    
+    fetchClientHierarchy();
+  }, [hierarchyModal.open, hierarchyModal.tx, admin.token]);
 
   const fetchFeed = useCallback(async () => {
     if (!admin?.token) return;
@@ -15707,11 +15743,10 @@ function SuperAdminClientWallet({ embedded = false }) {
                 <th className="text-left px-3 py-2 text-gray-400">When</th>
                 <th className="text-left px-3 py-2 text-gray-400">Client</th>
                 <th className="text-left px-3 py-2 text-gray-400">Code</th>
-                <th className="text-left px-3 py-2 text-gray-400">Hierarchy</th>
                 <th className="text-left px-3 py-2 text-gray-400">Reason</th>
                 <th className="text-left px-3 py-2 text-gray-400">Game</th>
                 <th className="text-left px-3 py-2 text-gray-400">Ref</th>
-                <th className="text-left px-3 py-2 text-gray-400">By</th>
+                <th className="text-right px-3 py-2 text-gray-400" title="Brokerage amount split to your account">Brokerage Distribution</th>
                 <th
                   className="text-right px-3 py-2 text-gray-400"
                   title="Effect on the platform wallet for this line (same rupees as the client line, opposite sign)."
@@ -15735,20 +15770,6 @@ function SuperAdminClientWallet({ embedded = false }) {
                     )}
                   </td>
                   <td className="px-3 py-2 font-mono text-yellow-400/90 text-[11px]">{tx.adminCode || '—'}</td>
-                  <td className="px-3 py-2 text-[11px] max-w-[180px]">
-                    {tx.adminHierarchy && tx.adminHierarchy.length > 0 ? (
-                      <div className="truncate text-gray-300">
-                        {tx.adminHierarchy.map((admin, index) => (
-                          <span key={index}>
-                            {admin.role}
-                            {index < tx.adminHierarchy.length - 1 ? ' → ' : ''}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-gray-500">—</span>
-                    )}
-                  </td>
                   <td className="px-3 py-2 text-gray-400 max-w-[200px]">
                     <div className="truncate text-gray-200 text-[12px]">
                       {tx.gamesWallet
@@ -15765,8 +15786,8 @@ function SuperAdminClientWallet({ embedded = false }) {
                   <td className="px-3 py-2 font-mono text-[10px] text-gray-500 whitespace-nowrap">
                     {formatAllTxReference(tx)}
                   </td>
-                  <td className="px-3 py-2 text-[11px] text-gray-500">
-                    {tx.performedBy?.name || tx.performedBy?.username || '—'}
+                  <td className="px-3 py-2 text-right text-[11px] text-purple-400 font-semibold tabular-nums">
+                    {tx.amount && tx.type === 'DEBIT' ? `₹${Number(tx.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
                   </td>
                   <td className="px-3 py-2 text-right text-[11px] whitespace-nowrap">
                     {(() => {
@@ -15844,27 +15865,17 @@ function SuperAdminClientWallet({ embedded = false }) {
                 </div>
               </div>
 
-              {/* Hierarchy Management */}
-              {hierarchyModal.tx.adminHierarchy && hierarchyModal.tx.adminHierarchy.length > 0 && (
-                <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
-                  <div className="text-xs text-gray-500 uppercase mb-2">Hierarchy Management</div>
-                  <div className="text-sm text-gray-200">
-                    {hierarchyModal.tx.adminHierarchy.map((admin, index) => (
-                      <span key={index}>
-                        {admin.role || 'Admin'}
-                        {index < hierarchyModal.tx.adminHierarchy.length - 1 ? ' → ' : ''}
-                      </span>
-                    ))}
+              {/* Client Hierarchy */}
+              <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
+                <div className="text-xs text-gray-500 uppercase mb-2">Client Hierarchy</div>
+                {loadingClientHierarchy ? (
+                  <div className="flex items-center justify-center py-4">
+                    <RefreshCw className="animate-spin text-blue-400" size={24} />
+                    <span className="ml-2 text-sm text-gray-400">Loading hierarchy...</span>
                   </div>
-                </div>
-              )}
-
-              {/* Admin Hierarchy */}
-              {hierarchyModal.tx.adminHierarchy && hierarchyModal.tx.adminHierarchy.length > 0 && (
-                <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
-                  <div className="text-xs text-gray-500 uppercase mb-2">Admin Hierarchy</div>
+                ) : clientHierarchy && clientHierarchy.hierarchy && clientHierarchy.hierarchy.length > 0 ? (
                   <div className="space-y-2">
-                    {hierarchyModal.tx.adminHierarchy.map((admin, index) => (
+                    {clientHierarchy.hierarchy.map((admin, index) => (
                       <div
                         key={index}
                         className="flex items-start gap-3 p-2 bg-dark-800 rounded border border-dark-500"
@@ -15881,22 +15892,20 @@ function SuperAdminClientWallet({ embedded = false }) {
                             <span className="text-xs text-gray-500">Name:</span>
                             <span className="text-sm text-gray-200">{admin.name || '—'}</span>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500">Username:</span>
-                            <span className="text-sm text-gray-200 font-mono">@{admin.username || '—'}</span>
-                          </div>
-                          {admin.code && (
+                          {admin.adminCode && (
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-gray-500">Code:</span>
-                              <span className="text-sm text-yellow-400 font-mono">{admin.code}</span>
+                              <span className="text-sm text-yellow-400 font-mono">{admin.adminCode}</span>
                             </div>
                           )}
                         </div>
                       </div>
                     ))}
                   </div>
-                </div>
-              )}
+                ) : (
+                  <div className="text-sm text-gray-400 text-center py-4">No hierarchy information available</div>
+                )}  
+              </div>
 
               {/* Transaction Details */}
               <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">

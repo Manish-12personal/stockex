@@ -1512,13 +1512,23 @@ router.get('/brokerage-tracking/user-hierarchy/:trackingId', protectAdmin, async
   }
 });
 
-// Get user hierarchy by userCode for ledger transactions
+// Get user hierarchy by userCode or username for ledger transactions
 router.get('/manage/user-hierarchy/:userCode', protectAdmin, async (req, res) => {
   try {
     const { userCode } = req.params;
     
-    // Find user by userCode
-    const user = await User.findOne({ userCode }).populate('createdBy', 'adminCode name username role parentId');
+    // Find user by userCode or username or fullName
+    let user = await User.findOne({ userCode }).populate('createdBy', 'adminCode name username role parentId');
+    
+    // If not found by userCode, try username
+    if (!user) {
+      user = await User.findOne({ username: userCode }).populate('createdBy', 'adminCode name username role parentId');
+    }
+    
+    // If still not found, try fullName
+    if (!user) {
+      user = await User.findOne({ fullName: userCode }).populate('createdBy', 'adminCode name username role parentId');
+    }
     
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
