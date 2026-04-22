@@ -2932,7 +2932,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     windowInfo.windowNumber > 1 ? windowInfo.windowNumber - 1 : null;
   const prevPrevWindowNumber =
     windowInfo.windowNumber > 2 ? windowInfo.windowNumber - 2 : null;
-  const trackerWindowNumbers = [prevPrevWindowNumber, prevWindowNumber].filter(
+  const trackerWindowNumbers = [windowInfo.windowNumber, prevPrevWindowNumber, prevWindowNumber].filter(
     (n) => n != null
   );
 
@@ -3007,13 +3007,19 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
     if (server) {
       const resultWhen = btcRefClock(btcResultRefSecForUiWindow(winNum));
-      // Show result if available in gameResults
+      // For BTC, check if result time has passed to show resolved or pending
+      const nowSec = currentTotalSecondsISTLib();
+      const resultSec = btcResultRefSecForUiWindow(winNum);
+      const isResultReady = nowSec >= resultSec;
+      
       return {
         ltp: server.openPrice,
         ltpWhen: server.ltpTime || '', // Show when LTP was captured
-        resolved: true,
-        resultPrice: server.closePrice,
-        marketDirection: server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE',
+        resolved: isResultReady,
+        resultPrice: isResultReady ? server.closePrice : null,
+        marketDirection: isResultReady 
+          ? (server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE')
+          : null,
         resultWhen,
         resultAt: resultWhen,
       };
