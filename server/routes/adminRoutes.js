@@ -131,16 +131,28 @@ router.post('/parent-info', async (req, res) => {
       return res.status(404).json({ message: 'Admin not found' });
     }
     
-    if (!admin.parentId) {
-      return res.json({ parentAdmin: null, currentRole: admin.role });
+    // Build full hierarchy chain
+    const hierarchy = [];
+    let currentAdmin = admin;
+    
+    while (currentAdmin) {
+      hierarchy.unshift({
+        adminCode: currentAdmin.adminCode,
+        name: currentAdmin.name || currentAdmin.username,
+        role: currentAdmin.role
+      });
+      
+      // Fetch parent if exists
+      if (currentAdmin.parentId) {
+        currentAdmin = await Admin.findById(currentAdmin.parentId).select('adminCode name username role parentId');
+      } else {
+        currentAdmin = null;
+      }
     }
     
     res.json({
-      parentAdmin: {
-        adminCode: admin.parentId.adminCode,
-        name: admin.parentId.name || admin.parentId.username,
-        role: admin.parentId.role
-      },
+      parentAdmin: hierarchy[hierarchy.length - 1] || null,
+      hierarchy: hierarchy,
       currentRole: admin.role
     });
   } catch (error) {

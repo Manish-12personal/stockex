@@ -439,18 +439,22 @@ router.post('/parent-info', async (req, res) => {
     const hierarchy = [];
     let currentAdmin = user.createdBy;
     
-    while (currentAdmin) {
-      hierarchy.unshift({
-        adminCode: currentAdmin.adminCode,
-        name: currentAdmin.name || currentAdmin.username,
-        role: currentAdmin.role
-      });
-      
-      // Fetch parent if exists
-      if (currentAdmin.parentId) {
-        currentAdmin = await Admin.findById(currentAdmin.parentId).select('adminCode name username role parentId');
-      } else {
-        currentAdmin = null;
+    // Start with the admin who created the user
+    hierarchy.push({
+      adminCode: currentAdmin.adminCode,
+      name: currentAdmin.name || currentAdmin.username,
+      role: currentAdmin.role
+    });
+    
+    // Traverse up the hierarchy chain
+    while (currentAdmin.parentId) {
+      currentAdmin = await Admin.findById(currentAdmin.parentId).select('adminCode name username role parentId');
+      if (currentAdmin) {
+        hierarchy.push({
+          adminCode: currentAdmin.adminCode,
+          name: currentAdmin.name || currentAdmin.username,
+          role: currentAdmin.role
+        });
       }
     }
     

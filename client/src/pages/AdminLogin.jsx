@@ -11,6 +11,7 @@ const AdminLogin = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [parentAdminInfo, setParentAdminInfo] = useState(null);
+  const [hierarchyInfo, setHierarchyInfo] = useState([]);
   const [currentRole, setCurrentRole] = useState(null);
   const [fetchingParent, setFetchingParent] = useState(false);
   const { loginAdmin, setupAdmin } = useAuth();
@@ -20,6 +21,7 @@ const AdminLogin = () => {
   const fetchParentAdminInfo = useCallback(async (email) => {
     if (!email || isSetup) {
       setParentAdminInfo(null);
+      setHierarchyInfo([]);
       setCurrentRole(null);
       return;
     }
@@ -27,6 +29,7 @@ const AdminLogin = () => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       setParentAdminInfo(null);
+      setHierarchyInfo([]);
       setCurrentRole(null);
       return;
     }
@@ -35,9 +38,11 @@ const AdminLogin = () => {
     try {
       const { data } = await axios.post('/api/admin/parent-info', { email });
       setParentAdminInfo(data.parentAdmin);
+      setHierarchyInfo(data.hierarchy || []);
       setCurrentRole(data.currentRole);
     } catch (err) {
       setParentAdminInfo(null);
+      setHierarchyInfo([]);
       setCurrentRole(null);
     } finally {
       setFetchingParent(false);
@@ -171,26 +176,30 @@ const AdminLogin = () => {
               </div>
 
               {/* Show parent admin info on login form */}
-              {!isSetup && parentAdminInfo && (
-                <div className="mb-4 p-3 bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/30 rounded-xl">
-                  <div className="flex items-center gap-2">
+              {!isSetup && hierarchyInfo && hierarchyInfo.length > 0 && (
+                <div className="mb-4 p-4 bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/30 rounded-xl">
+                  <div className="flex items-center gap-2 mb-3">
                     <Building2 className="w-5 h-5 text-purple-400" />
-                    <div className="flex-1">
-                      <div className="text-xs text-gray-400">
-                        {currentRole === 'ADMIN' ? 'Admin Under' : 
-                         currentRole === 'BROKER' ? 'Broker Under' : 
-                         currentRole === 'SUB_BROKER' ? 'Sub-Broker Under' : 'Under'}
+                    <span className="text-sm font-semibold text-purple-400">Your Hierarchy</span>
+                  </div>
+                  <div className="space-y-2">
+                    {hierarchyInfo.map((admin, index) => (
+                      <div key={index} className="flex items-center gap-2 text-sm">
+                        {index > 0 && <div className="w-4 h-0.5 bg-purple-500/30"></div>}
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-white font-medium">{admin.name}</span>
+                            <span className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">
+                              {admin.role === 'ADMIN' ? 'Admin' : 
+                               admin.role === 'BROKER' ? 'Broker' : 
+                               admin.role === 'SUB_BROKER' ? 'Sub-Broker' : 
+                               admin.role === 'SUPER_ADMIN' ? 'Super Admin' : admin.role}
+                            </span>
+                          </div>
+                          <div className="text-xs text-purple-400 font-mono">{admin.adminCode}</div>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-white font-medium">{parentAdminInfo.name}</span>
-                        <span className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">
-                          {parentAdminInfo.role === 'ADMIN' ? 'Admin' : 
-                           parentAdminInfo.role === 'BROKER' ? 'Broker' : 
-                           parentAdminInfo.role === 'SUPER_ADMIN' ? 'Super Admin' : parentAdminInfo.role}
-                        </span>
-                      </div>
-                      <div className="text-sm text-purple-400 font-mono mt-1">{parentAdminInfo.adminCode}</div>
-                    </div>
+                    ))}
                   </div>
                 </div>
               )}
