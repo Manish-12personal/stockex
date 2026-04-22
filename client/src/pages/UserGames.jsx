@@ -929,7 +929,7 @@ const UserGames = () => {
                     <div>
                       <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Star size={12} /> Game Overview</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
-                        <li>1. Two bracket levels are set around the current Nifty price: <span className="text-green-400 font-bold">+{gs.bracketGap || 20} points (Upper)</span> and <span className="text-red-400 font-bold">-{gs.bracketGap || 20} points (Lower)</span>.</li>
+                        <li>1. Two bracket levels are set around the current Nifty price: <span className="text-green-400 font-bold">{gs.bracketGapType === 'percentage' ? `+${gs.bracketGapPercent || 0.1}% (Upper)` : `+${gs.bracketGap || 20} points (Upper)`}</span> and <span className="text-red-400 font-bold">{gs.bracketGapType === 'percentage' ? `-${gs.bracketGapPercent || 0.1}% (Lower)` : `-${gs.bracketGap || 20} points (Lower)`}</span>.</li>
                         <li>2. Choose <span className="text-green-400 font-bold">BUY</span> (price will hit upper bracket) or <span className="text-red-400 font-bold">SELL</span> (price will hit lower bracket).</li>
                         <li>3. If your target is hit → <span className="text-green-400 font-bold">WIN {gs.winMultiplier || 2}x</span>!</li>
                         <li>4. If neither target is hit → <span className="text-red-400 font-bold">You lose</span>.</li>
@@ -954,15 +954,15 @@ const UserGames = () => {
                     <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
                       <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> How You Win</h3>
                       <ul className="text-gray-300 space-y-1.5 pl-1">
-                        <li>1. Current Nifty = 24,000. Upper target = <span className="text-green-400 font-bold">24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}</span>. Lower target = <span className="text-red-400 font-bold">23,{String(1000 - (gs.bracketGap || 20)).padStart(3, '0')}</span>.</li>
+                        <li>1. Current Nifty = 24,000. Upper target = <span className="text-green-400 font-bold">{gs.bracketGapType === 'percentage' ? `24,${String((24000 * (gs.bracketGapPercent || 0.1) / 100)).padStart(3, '0')}` : `24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}`}</span>. Lower target = <span className="text-red-400 font-bold">{gs.bracketGapType === 'percentage' ? `23,{String(1000 - (24000 * (gs.bracketGapPercent || 0.1) / 100)).padStart(3, '0')}` : `23,{String(1000 - (gs.bracketGap || 20)).padStart(3, '0')}`}</span>.</li>
                         <li>2. You click <span className="text-green-400 font-bold">BUY</span> → You're betting price will reach the upper bracket.</li>
-                        <li>3. If Nifty touches 24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')} → <span className="text-green-400 font-bold">WIN {gs.winMultiplier || 2}x!</span></li>
+                        <li>3. If Nifty touches <span className="text-green-400 font-bold">{gs.bracketGapType === 'percentage' ? `24,${String((24000 * (gs.bracketGapPercent || 0.1) / 100)).padStart(3, '0')}` : `24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}`}</span> → <span className="text-green-400 font-bold">WIN {gs.winMultiplier || 2}x!</span></li>
                         <li>4. If neither level is hit → <span className="text-red-400 font-bold">Trade lost.</span></li>
                       </ul>
                       <div className="mt-2 bg-dark-700/60 rounded-lg p-2">
                         <div className="text-[10px] text-yellow-400 font-bold mb-1">Example</div>
-                        <div className="text-gray-400">Nifty is at 24,000. You BUY <span className="text-purple-400 font-bold">10 Tkt</span>. Upper target = 24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}.</div>
-                        <div className="text-gray-400">Nifty hits 24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')} after 2 minutes.</div>
+                        <div className="text-gray-400">Nifty is at 24,000. You BUY <span className="text-purple-400 font-bold">10 Tkt</span>. Upper target = {gs.bracketGapType === 'percentage' ? `24,${String((24000 * (gs.bracketGapPercent || 0.1) / 100)).padStart(3, '0')}` : `24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}`}.</div>
+                        <div className="text-gray-400">Nifty hits {gs.bracketGapType === 'percentage' ? `24,${String((24000 * (gs.bracketGapPercent || 0.1) / 100)).padStart(3, '0')}` : `24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}`} after 2 minutes.</div>
                         <div className="text-green-400 font-bold mt-1">Result: WIN! You get 10 × {gs.winMultiplier || 2} = {10 * (gs.winMultiplier || 2)} Tkt (full payout, no fee on profit)</div>
                       </div>
                     </div>
@@ -970,7 +970,7 @@ const UserGames = () => {
                       <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Info size={12} /> Pro Tips</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Trade during <span className="font-bold">high-volatility</span> periods (market open, news events) for better chances.</li>
-                        <li>2. The bracket gap is {gs.bracketGap || 20} points — trade when Nifty is moving fast!</li>
+                        <li>2. The bracket gap is {gs.bracketGapType === 'percentage' ? `${gs.bracketGapPercent || 0.1}%` : `${gs.bracketGap || 20} points`} — trade when Nifty is moving fast!</li>
                         <li>3. Multiple active trades are allowed simultaneously.</li>
                       </ul>
                     </div>
@@ -4827,13 +4827,20 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   }, [activeTrades.length, lockedDisplayPrice]);
 
   const bracketGap = settings?.bracketGap || 20;
+  const bracketGapType = settings?.bracketGapType || 'point';
+  const bracketGapPercent = settings?.bracketGapPercent || 0.1;
   const expiryMinutes = settings?.expiryMinutes || 5;
   const winMultiplier = settings?.winMultiplier || 2;
   const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
 
+  // Calculate gap value based on type
+  const gapValue = bracketGapType === 'percentage' && currentPrice 
+    ? currentPrice * (bracketGapPercent / 100) 
+    : bracketGap;
+
   // Calculate BUY/SELL prices with spread
-  const buyPrice = currentPrice ? currentPrice + bracketGap : null; // BUY price = current + bracketGap (20)
-  const sellPrice = currentPrice ? currentPrice - bracketGap : null; // SELL price = current - bracketGap (20)
+  const buyPrice = currentPrice ? currentPrice + gapValue : null; // BUY price = current + gap
+  const sellPrice = currentPrice ? currentPrice - gapValue : null; // SELL price = current - gap
 
   // Ticket conversion helpers
   const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
@@ -4844,8 +4851,8 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const resultTimeDisplay = formatBracketResultTimeIST(settings?.resultTime);
   const settleAtResultTime = settings?.settleAtResultTime !== false;
 
-  const upperTarget = currentPrice ? parseFloat((currentPrice + bracketGap).toFixed(2)) : null;
-  const lowerTarget = currentPrice ? parseFloat((currentPrice - bracketGap).toFixed(2)) : null;
+  const upperTarget = currentPrice ? parseFloat((currentPrice + gapValue).toFixed(2)) : null;
+  const lowerTarget = currentPrice ? parseFloat((currentPrice - gapValue).toFixed(2)) : null;
 
   const resolvingRef = useRef(false);
   const activeTradesRef = useRef([]);
@@ -5002,7 +5009,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 </div>
                 <div>
                   <h1 className="font-bold">{game.name}</h1>
-                  <p className="text-xs text-gray-400">{winMultiplier}x Returns • ±{bracketGap} pts</p>
+                  <p className="text-xs text-gray-400">{winMultiplier}x Returns • {bracketGapType === 'percentage' ? `±${bracketGapPercent}%` : `±${bracketGap} pts`}</p>
                 </div>
               </div>
             </div>
@@ -5098,7 +5105,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     <span className="font-bold text-red-400">{lowerTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
-                <div className="mt-2 text-[10px] text-gray-500 text-center">Gap: ±{bracketGap} pts</div>
+                <div className="mt-2 text-[10px] text-gray-500 text-center">Gap: {bracketGapType === 'percentage' ? `±${bracketGapPercent}%` : `±${bracketGap} pts`}</div>
               </div>
             )}
 
@@ -5124,7 +5131,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Bracket Gap</span>
-                  <span className="text-cyan-400 font-bold">±{bracketGap} pts</span>
+                  <span className="text-cyan-400 font-bold">{bracketGapType === 'percentage' ? `±${bracketGapPercent}%` : `±${bracketGap} pts`}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Min Bet</span>
@@ -5358,7 +5365,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     <div className="text-3xl font-bold text-cyan-300" key={currentPrice}>
                       ₹{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
-                    <div className="text-[10px] text-gray-500 mt-1">Bracket: ±{bracketGap} points</div>
+                    <div className="text-[10px] text-gray-500 mt-1">Bracket: {bracketGapType === 'percentage' ? `±${bracketGapPercent}%` : `±${bracketGap} points`}</div>
                   </div>
                 )}
                 
@@ -5388,7 +5395,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                         </div>
                         <div className="text-right">
                           <div className="text-white font-bold text-xl">₹{upperTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
-                          <div className="text-xs text-white/80">+{bracketGap} pts • Bid: ₹{bidAsk.bid?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '—'}</div>
+                          <div className="text-xs text-white/80">{bracketGapType === 'percentage' ? `+${bracketGapPercent}%` : `+${bracketGap} pts`} • Bid: ₹{bidAsk.bid?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '—'}</div>
                         </div>
                       </div>
                     </button>
@@ -5415,7 +5422,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                         </div>
                         <div className="text-right">
                           <div className="text-white font-bold text-xl">₹{lowerTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
-                          <div className="text-xs text-white/80">-{bracketGap} pts • Ask: ₹{bidAsk.ask?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '—'}</div>
+                          <div className="text-xs text-white/80">{bracketGapType === 'percentage' ? `-${bracketGapPercent}%` : `-${bracketGap} pts`} • Ask: ₹{bidAsk.ask?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '—'}</div>
                         </div>
                       </div>
                     </button>

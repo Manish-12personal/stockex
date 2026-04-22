@@ -178,6 +178,10 @@ const gameSettingsSchema = new mongoose.Schema({
       brokeragePercent: { type: Number, default: 5 },
       buySellRatioBrokerage: { type: Number, default: 16.67 },
       bracketGap: { type: Number, default: 20 }, // Points above/below spot (or entry) anchor
+      /** Spread type: 'point' for fixed points, 'percentage' for percentage-based spread */
+      bracketGapType: { type: String, enum: ['point', 'percentage'], default: 'point' },
+      /** Percentage spread when bracketGapType is 'percentage' (e.g., 0.1 for 0.1%) */
+      bracketGapPercent: { type: Number, default: 0.1 },
       /** If true, upper/lower are built from live Nifty spot at place time (ignores client entryPrice for centre) */
       bracketAnchorToSpot: { type: Boolean, default: true },
       /** BUY wins only if LTP > upperTarget; SELL wins only if LTP < lowerTarget (at settle) */

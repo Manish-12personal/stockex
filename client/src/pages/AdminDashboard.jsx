@@ -19758,15 +19758,57 @@ const GameSettingsManagement = () => {
                 <div className="space-y-4">
                   <h4 className="font-medium text-cyan-400">Nifty Bracket Settings</h4>
                   <div>
-                    <label className="block text-sm text-gray-400 mb-2">Bracket Gap (points)</label>
-                    <input
-                      type="number"
-                      value={currentGame?.bracketGap || 20}
-                      onChange={e => updateGameSetting(selectedGame, 'bracketGap', parseFloat(e.target.value))}
-                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Points above/below spot (or manual entry) for BUY/SELL targets</p>
+                    <label className="block text-sm text-gray-400 mb-2">Spread Type</label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="bracketGapType"
+                          value="point"
+                          checked={currentGame?.bracketGapType !== 'percentage'}
+                          onChange={() => updateGameSetting(selectedGame, 'bracketGapType', 'point')}
+                          className="w-4 h-4 text-cyan-500"
+                        />
+                        <span className="text-sm text-gray-300">Point (Fixed)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="bracketGapType"
+                          value="percentage"
+                          checked={currentGame?.bracketGapType === 'percentage'}
+                          onChange={() => updateGameSetting(selectedGame, 'bracketGapType', 'percentage')}
+                          className="w-4 h-4 text-cyan-500"
+                        />
+                        <span className="text-sm text-gray-300">Percentage (%)</span>
+                      </label>
+                    </div>
                   </div>
+                  {currentGame?.bracketGapType === 'percentage' ? (
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Bracket Gap (%)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={currentGame?.bracketGapPercent || 0.1}
+                        onChange={e => updateGameSetting(selectedGame, 'bracketGapPercent', parseFloat(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Percentage of spot price for BUY/SELL targets (e.g., 0.1 for 0.1%)</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Bracket Gap (points)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.bracketGap || 20}
+                        onChange={e => updateGameSetting(selectedGame, 'bracketGap', parseFloat(e.target.value))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Points above/below spot (or manual entry) for BUY/SELL targets</p>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm text-gray-400 mb-2">Bidding start (IST)</label>

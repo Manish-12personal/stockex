@@ -3480,14 +3480,24 @@ router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
     }
 
     const bracketGap = gameConfig.bracketGap || 20;
+    const bracketGapType = gameConfig.bracketGapType || 'point';
+    const bracketGapPercent = gameConfig.bracketGapPercent || 0.1;
     const expiryMinutes = gameConfig.expiryMinutes || 5;
     const winMultiplier =
       Number(gameConfig.winMultiplier) > 0 ? Number(gameConfig.winMultiplier) : 1.9;
     const brokeragePercent = gameConfig.brokeragePercent || 5;
     const settleAtResultTime = gameConfig.settleAtResultTime !== false;
 
-    const upperTarget = parseFloat((price + bracketGap).toFixed(2));
-    const lowerTarget = parseFloat((price - bracketGap).toFixed(2));
+    // Calculate bracket gap based on type (point or percentage)
+    let gapValue;
+    if (bracketGapType === 'percentage') {
+      gapValue = price * (bracketGapPercent / 100);
+    } else {
+      gapValue = bracketGap;
+    }
+
+    const upperTarget = parseFloat((price + gapValue).toFixed(2));
+    const lowerTarget = parseFloat((price - gapValue).toFixed(2));
 
     // Atomic debit — balance check + deduction in one MongoDB op (race-safe)
     const gw = await atomicGamesWalletDebit(User, userId, betAmount, { usedMargin: betAmount });

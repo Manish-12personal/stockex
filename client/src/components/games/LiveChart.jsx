@@ -66,23 +66,13 @@ const LiveChart = ({
       timeScale: {
         timeVisible: true,
         secondsVisible: false,
+        borderColor: '#2a2a2a',
       },
       rightPriceScale: {
         borderColor: '#2a2a2a',
       },
       crosshair: {
         mode: 1,
-      },
-      localization: {
-        timeFormatter: (time) => {
-          const date = new Date(time * 1000);
-          return date.toLocaleTimeString('en-IN', {
-            timeZone: 'Asia/Kolkata',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          });
-        },
       },
     });
 
