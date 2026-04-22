@@ -15796,7 +15796,9 @@ function SuperAdminClientWallet({ embedded = false }) {
                 <th className="text-left px-3 py-2 text-gray-400">Reason</th>
                 <th className="text-left px-3 py-2 text-gray-400">Game</th>
                 <th className="text-left px-3 py-2 text-gray-400">Ref</th>
-                <th className="text-right px-3 py-2 text-gray-400" title="Brokerage amount split to your account">Brokerage Distribution</th>
+                {txKind !== 'CREDIT' && (
+                  <th className="text-right px-3 py-2 text-gray-400" title="Brokerage amount split to your account">Brokerage Distribution</th>
+                )}
                 <th
                   className="text-right px-3 py-2 text-gray-400"
                   title="Games amount distributed through games wallet"
@@ -15836,9 +15838,11 @@ function SuperAdminClientWallet({ embedded = false }) {
                   <td className="px-3 py-2 font-mono text-[10px] text-gray-500 whitespace-nowrap">
                     {formatAllTxReference(tx)}
                   </td>
-                  <td className="px-3 py-2 text-right text-[11px] text-purple-400 font-semibold tabular-nums">
-                    {tx.brokerageAmount ? `₹${Number(tx.brokerageAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
-                  </td>
+                  {txKind !== 'CREDIT' && (
+                    <td className="px-3 py-2 text-right text-[11px] text-purple-400 font-semibold tabular-nums">
+                      {tx.brokerageAmount ? `₹${Number(tx.brokerageAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                    </td>
+                  )}
                   <td className="px-3 py-2 text-right text-[11px] text-cyan-400 font-semibold tabular-nums">
                     {tx.gamesAmount ? `₹${Number(tx.gamesAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
                   </td>
