@@ -8139,7 +8139,6 @@ const LedgerView = () => {
                   Share %
                 </th>
                 <th className="text-right px-4 py-3 text-gray-400">Amount</th>
-                <th className="text-right px-4 py-3 text-gray-400">Balance</th>
                 <th className="text-left px-4 py-3 text-gray-400">Info</th>
               </tr>
             </thead>
@@ -8189,7 +8188,6 @@ const LedgerView = () => {
                   <td className={`px-4 py-3 text-right ${entry.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
                     {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount.toLocaleString()}
                   </td>
-                  <td className="px-4 py-3 text-right">₹{entry.balanceAfter.toLocaleString()}</td>
                   <td className="px-4 py-3">
                     <button
                       onClick={() => handleShowInfo(entry)}

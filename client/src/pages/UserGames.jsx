@@ -3058,7 +3058,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       : '—';
 
   // LTP History component to show last 1 hour (4 windows) of LTP values
+  // Note: BTC doesn't use LTP concept - winners are decided by result prices only
   const LTPHistoryPanel = () => {
+    // Don't show LTP panel for BTC
+    if (isBTC) return null;
+    
     const ltpHistory = useMemo(() => {
       const history = [];
       const currentWin = windowInfo.windowNumber;
