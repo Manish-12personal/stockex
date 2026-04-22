@@ -1227,6 +1227,16 @@ const niftyOpenFixSecForWindowNum = (winNum, openTime, roundDurationSec) => {
   return m + winNum * D;
 };
 
+/** Scheduled result instant for window `winNum` (1-based), at start of window winNum+1. */
+const niftyResultSecForWindowNum = (winNum, openTime, roundDurationSec) => {
+  const m = niftyMarketOpenSnappedSecForGame(openTime);
+  const D = Math.max(
+    NIFTY_UP_DOWN_MIN_ROUND_SEC,
+    Number(roundDurationSec) || DEFAULT_NIFTY_ROUND_DURATION_SEC,
+  );
+  return m + (winNum + 1) * D;
+};
+
 const formatCountdown = (totalSec) => {
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
