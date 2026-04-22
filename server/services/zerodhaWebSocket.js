@@ -201,9 +201,11 @@ export const unsubscribeTokens = (tokens) => {
 
 // Process incoming ticks and broadcast to clients
 const processTicks = (ticks) => {
+  const serverTimestamp = Date.now(); // Capture server time immediately
   const updates = {};
   const canonicalOnly = {};
 
+  // PHASE 1: Build tick data objects (minimal processing)
   for (const tick of ticks) {
     const token = tick.instrument_token.toString();
     const nTok = parseInt(token, 10);
@@ -247,6 +249,7 @@ const processTicks = (ticks) => {
       oiDayLow: tick.oi_day_low,
       depth: tick.depth,
       lastUpdated: new Date(),
+      serverTimestamp, // Add server timestamp for latency tracking
     };
 
     marketData[token] = tickData;
@@ -260,19 +263,26 @@ const processTicks = (ticks) => {
     }
   }
 
-  // Broadcast to all connected clients (includes legacy token keys for old watchlists)
+  // PHASE 2: IMMEDIATE BROADCAST - Send to clients FIRST before any heavy processing
   if (io && Object.keys(updates).length > 0) {
     io.emit('market_tick', updates);
   }
 
-  // ==================== TRADEPRO MARGIN MONITOR INTEGRATION ====================
+  // PHASE 3: DEFERRED PROCESSING - Run margin monitoring and DB updates asynchronously
+  // Use setImmediate to defer to next event loop iteration (non-blocking)
   if (marginMonitorEnabled && Object.keys(canonicalOnly).length > 0) {
-    for (const [tok, tickData] of Object.entries(canonicalOnly)) {
-      MarginMonitorService.onPriceTick(tok, tickData.ltp, tickData).catch((err) =>
-        console.error(`Margin monitor error for token ${tok}:`, err.message)
-      );
-      updateInstrumentLastPrice(tok, tickData);
-    }
+    setImmediate(() => {
+      for (const [tok, tickData] of Object.entries(canonicalOnly)) {
+        // Margin monitoring (async, non-blocking)
+        MarginMonitorService.onPriceTick(tok, tickData.ltp, tickData).catch((err) =>
+          console.error(`Margin monitor error for token ${tok}:`, err.message)
+        );
+        // Database update (async, non-blocking)
+        updateInstrumentLastPrice(tok, tickData).catch((err) =>
+          console.error(`DB update error for token ${tok}:`, err.message)
+        );
+      }
+    });
   }
 };
 

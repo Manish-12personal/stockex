@@ -1835,6 +1835,16 @@ const GameLivePricePanel = ({
       socket.on('market_tick', (ticks) => {
         const niftyTick = ticks['256265'] ?? ticks[256265];
         if (!niftyTick) return;
+        
+        // Calculate latency if server timestamp is available
+        if (niftyTick.serverTimestamp) {
+          const clientReceiveTime = Date.now();
+          const latency = clientReceiveTime - niftyTick.serverTimestamp;
+          if (latency > 1000) {
+            console.warn(`[Price Delay] NIFTY 50 tick latency: ${latency}ms`);
+          }
+        }
+        
         // Update LTP in real-time from socket ticks (even after market hours for Nifty Bracket)
         if (!isLiveRef.current) {
           isLiveRef.current = true;

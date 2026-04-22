@@ -466,9 +466,18 @@ const UserDashboard = () => {
     });
     
     socket.on('market_tick', (ticks) => {
+      // Track latency for major indices
+      const clientReceiveTime = Date.now();
+      const nifty = Object.values(ticks).find(d => d.symbol === 'NIFTY 50' || d.symbol === 'NIFTY');
+      if (nifty?.serverTimestamp) {
+        const latency = clientReceiveTime - nifty.serverTimestamp;
+        if (latency > 1000) {
+          console.warn(`[Price Delay] Market tick latency: ${latency}ms`);
+        }
+      }
+      
       setMarketData(prev => ({ ...prev, ...ticks }));
       // Also update indices
-      const nifty = Object.values(ticks).find(d => d.symbol === 'NIFTY 50' || d.symbol === 'NIFTY');
       const banknifty = Object.values(ticks).find(d => d.symbol === 'NIFTY BANK' || d.symbol === 'BANKNIFTY');
       const finnifty = Object.values(ticks).find(d => d.symbol === 'NIFTY FIN SERVICE' || d.symbol === 'FINNIFTY');
       if (nifty || banknifty || finnifty) {
