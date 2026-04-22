@@ -238,6 +238,7 @@ router.post('/register', async (req, res) => {
       phoneVerified: phoneVerified || false,
       admin: admin._id,
       adminCode: admin.adminCode,
+      createdBy: admin._id,
       referralCode: userReferralCode,
       referredBy: referrerUser?._id || null
     });
@@ -425,19 +426,22 @@ router.post('/parent-info', async (req, res) => {
       return res.status(400).json({ message: 'Email is required' });
     }
     
-    const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role parentId');
+    const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role parentId').populate('admin', 'adminCode name username role parentId');
     
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
     
-    if (!user.createdBy) {
+    // Use createdBy if available, otherwise fall back to admin field
+    const adminToUse = user.createdBy || user.admin;
+    
+    if (!adminToUse) {
       return res.json({ parentAdmin: null, hierarchy: [] });
     }
     
     // Build full hierarchy chain
     const hierarchy = [];
-    let currentAdmin = user.createdBy;
+    let currentAdmin = adminToUse;
     
     // Start with the admin who created the user
     hierarchy.push({
