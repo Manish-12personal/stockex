@@ -375,6 +375,7 @@ const AdminDashboard = () => {
         { path: `${basePath}/subordinate-fund-requests`, icon: CreditCard, label: 'Subordinate Requests' },
         { path: `${basePath}/users`, icon: Users, label: 'User Management' },
         { path: `${basePath}/create-user`, icon: UserPlus, label: 'Create User' },
+        { path: `${basePath}/brokerage-tracking`, icon: History, label: 'Brokerage Tracking' },
         { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
         { path: `${basePath}/trades`, icon: FileText, label: 'Position' },
         { path: `${basePath}/net-positions`, icon: Layers, label: 'Net Positions' },
@@ -399,6 +400,7 @@ const AdminDashboard = () => {
         { path: `${basePath}/subordinate-fund-requests`, icon: CreditCard, label: isDemo ? 'Demo SubBroker Requests' : 'SubBroker Requests' },
         { path: `${basePath}/users`, icon: Users, label: isDemo ? 'Demo User Management' : 'User Management' },
         { path: `${basePath}/create-user`, icon: UserPlus, label: isDemo ? 'Create Demo User' : 'Create User' },
+        { path: `${basePath}/brokerage-tracking`, icon: History, label: 'Brokerage Tracking' },
         { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
         { path: `${basePath}/trades`, icon: FileText, label: isDemo ? 'Demo Position' : 'Position' },
         { path: `${basePath}/net-positions`, icon: Layers, label: isDemo ? 'Demo Net Positions' : 'Net Positions' },
@@ -418,10 +420,11 @@ const AdminDashboard = () => {
       { path: `${basePath}/temporary-wallet`, icon: Timer, label: 'Temporary Wallet' },
       { path: `${basePath}/users`, icon: Users, label: 'User Management' },
       { path: `${basePath}/create-user`, icon: UserPlus, label: 'Create User' },
+      { path: `${basePath}/brokerage-tracking`, icon: History, label: 'Brokerage Tracking' },
       { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
       { path: `${basePath}/trades`, icon: FileText, label: 'Position' },
       { path: `${basePath}/net-positions`, icon: Layers, label: 'Net Positions' },
-      { path: `${basePath}/fund-requests`, icon: CreditCard, label: 'Fund Requests' },
+      { path: `${basePath}/fund-requests`, icon: CreditCard, label: 'User Fund Requests' },
       { path: `${basePath}/bank-accounts`, icon: Building2, label: 'Bank Accounts' },
       { path: `${basePath}/ledger`, icon: FileText, label: 'Transactions' },
       { path: `${basePath}/transaction-slips`, icon: Receipt, label: 'Transaction Slips' },
@@ -590,6 +593,7 @@ const AdminDashboard = () => {
           {!isSuperAdmin && !isSubBroker && <Route path="subordinate-fund-requests" element={<SubordinateFundRequests />} />}
           {!isSuperAdmin && <Route path="users/*" element={<UserManagement />} />}
           {!isSuperAdmin && <Route path="create-user" element={<AdminCreateUser />} />}
+          {!isSuperAdmin && <Route path="brokerage-tracking" element={<BrokerageTracking />} />}
           {!isSuperAdmin && <Route path="trades" element={<AllTrades />} />}
           {!isSuperAdmin && <Route path="fund-requests" element={<FundRequests />} />}
           {!isSuperAdmin && <Route path="fund-transfer-to-admin" element={<AdminFundTransfer />} />}
@@ -6103,6 +6107,231 @@ const TemporaryWallet = () => {
           </p>
         </div>
       )}
+    </div>
+  );
+};
+
+// Brokerage Tracking - Shows winning brokerage source tracking
+const BrokerageTracking = () => {
+  const { admin } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [records, setRecords] = useState([]);
+  const [summary, setSummary] = useState({});
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  useEffect(() => {
+    fetchTrackingData();
+    fetchSummary();
+  }, [page, statusFilter, startDate, endDate]);
+
+  const fetchTrackingData = async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams({
+        page,
+        limit: 20
+      });
+      if (statusFilter) params.append('status', statusFilter);
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+
+      const { data } = await axios.get(`/api/admin/brokerage-tracking?${params}`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setRecords(data.records || []);
+      setTotal(data.pagination?.total || 0);
+    } catch (error) {
+      console.error('Error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchSummary = async () => {
+    try {
+      const { data } = await axios.get('/api/admin/brokerage-tracking/summary', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setSummary(data || {});
+    } catch (error) {
+      console.error('Error:', error);
+    }
+  };
+
+  const handleStatusChange = (e) => {
+    setStatusFilter(e.target.value);
+    setPage(1);
+  };
+
+  const handleDateChange = (field, value) => {
+    if (field === 'start') setStartDate(value);
+    else setEndDate(value);
+    setPage(1);
+  };
+
+  const totalPages = Math.ceil(total / 20);
+
+  return (
+    <div className="p-4 md:p-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold mb-2">Brokerage Tracking</h1>
+        <p className="text-sm text-gray-400">
+          Track winning brokerage source - which user generated it and which admin/broker/subbroker it belongs to
+        </p>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl p-4">
+          <div className="text-blue-200 text-sm mb-1">Pending</div>
+          <div className="text-2xl font-bold text-white">₹{(summary.PENDING?.totalAmount || 0).toLocaleString()}</div>
+          <div className="text-blue-200 text-xs mt-1">{summary.PENDING?.count || 0} records</div>
+        </div>
+        <div className="bg-gradient-to-r from-green-600 to-green-700 rounded-xl p-4">
+          <div className="text-green-200 text-sm mb-1">Distributed</div>
+          <div className="text-2xl font-bold text-white">₹{(summary.DISTRIBUTED?.totalAmount || 0).toLocaleString()}</div>
+          <div className="text-green-200 text-xs mt-1">{summary.DISTRIBUTED?.count || 0} records</div>
+        </div>
+        <div className="bg-gradient-to-r from-purple-600 to-purple-700 rounded-xl p-4">
+          <div className="text-purple-200 text-sm mb-1">Total</div>
+          <div className="text-2xl font-bold text-white">
+            ₹{((summary.PENDING?.totalAmount || 0) + (summary.DISTRIBUTED?.totalAmount || 0)).toLocaleString()}
+          </div>
+          <div className="text-purple-200 text-xs mt-1">{(summary.PENDING?.count || 0) + (summary.DISTRIBUTED?.count || 0)} records</div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-dark-800 rounded-lg p-4 border border-dark-600 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">Status</label>
+            <select
+              value={statusFilter}
+              onChange={handleStatusChange}
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500"
+            >
+              <option value="">All Status</option>
+              <option value="PENDING">Pending</option>
+              <option value="DISTRIBUTED">Distributed</option>
+              <option value="FAILED">Failed</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">Start Date</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => handleDateChange('start', e.target.value)}
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">End Date</label>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => handleDateChange('end', e.target.value)}
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Tracking Records Table */}
+      <div className="bg-dark-800 rounded-lg border border-dark-600 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-dark-700">
+              <tr>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">User</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Amount</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Admin</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Role</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Symbol</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Status</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan="7" className="px-4 py-8 text-center">
+                    <RefreshCw className="animate-spin inline mx-auto" size={24} />
+                  </td>
+                </tr>
+              ) : records.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="px-4 py-8 text-center text-gray-400">
+                    No brokerage tracking records found
+                  </td>
+                </tr>
+              ) : (
+                records.map((record) => (
+                  <tr key={record._id} className="border-t border-dark-600 hover:bg-dark-700/50">
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-white">{record.userName}</div>
+                      <div className="text-xs text-gray-400">{record.userAdminCode}</div>
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-green-400">₹{record.amount.toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-white">{record.adminName}</div>
+                      <div className="text-xs text-gray-400">{record.adminCode}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs px-2 py-1 bg-blue-500/20 text-blue-400 rounded">
+                        {record.adminRole}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-300">{record.symbol || '-'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        record.status === 'DISTRIBUTED' ? 'bg-green-500/20 text-green-400' :
+                        record.status === 'PENDING' ? 'bg-yellow-500/20 text-yellow-400' :
+                        'bg-red-500/20 text-red-400'
+                      }`}>
+                        {record.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-400">
+                      {new Date(record.createdAt).toLocaleString()}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        {!loading && records.length > 0 && (
+          <div className="px-4 py-3 border-t border-dark-600 flex items-center justify-between">
+            <div className="text-sm text-gray-400">
+              Showing {((page - 1) * 20) + 1} to {Math.min(page * 20, total)} of {total} records
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="px-3 py-1 bg-dark-700 border border-dark-600 rounded disabled:opacity-50 hover:bg-dark-600"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="px-3 py-1 bg-dark-700 border border-dark-600 rounded disabled:opacity-50 hover:bg-dark-600"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

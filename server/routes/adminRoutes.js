@@ -5,6 +5,7 @@ import Admin from '../models/Admin.js';
 import User from '../models/User.js';
 import BankSettings from '../models/BankSettings.js';
 import SystemSettings from '../models/SystemSettings.js';
+import BrokerageTracking from '../models/BrokerageTracking.js';
 import { protectAdmin, generateToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -1280,6 +1281,174 @@ router.get('/admins-list', protectAdmin, async (req, res) => {
     res.json({ admins });
   } catch (error) {
     console.error('Error fetching admins list:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ============================================================================
+// BROKERAGE TRACKING
+// ============================================================================
+
+// Create brokerage tracking record
+router.post('/brokerage-tracking', protectAdmin, async (req, res) => {
+  try {
+    const { userId, userName, userAdminCode, amount, tradeId, symbol, segment, notes } = req.body;
+    
+    if (!userId || !amount) {
+      return res.status(400).json({ message: 'User ID and amount are required' });
+    }
+    
+    const adminId = req.admin._id;
+    
+    const tracking = await BrokerageTracking.create({
+      user: userId,
+      userName,
+      userAdminCode,
+      amount,
+      adminId,
+      adminName: req.admin.name || req.admin.username,
+      adminCode: req.admin.adminCode,
+      adminRole: req.admin.role,
+      tradeId,
+      symbol,
+      segment,
+      notes: notes || '',
+      status: 'PENDING'
+    });
+    
+    res.status(201).json(tracking);
+  } catch (error) {
+    console.error('Error creating brokerage tracking:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get brokerage tracking records for current admin
+router.get('/brokerage-tracking', protectAdmin, async (req, res) => {
+  try {
+    const { status, startDate, endDate, page = 1, limit = 20 } = req.query;
+    
+    const query = { adminId: req.admin._id };
+    
+    if (status) {
+      query.status = status;
+    }
+    
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        query.createdAt.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        query.createdAt.$lte = new Date(endDate);
+      }
+    }
+    
+    const skip = (page - 1) * limit;
+    
+    const [records, total] = await Promise.all([
+      BrokerageTracking.find(query)
+        .populate('user', 'username email')
+        .populate('tradeId', 'symbol segment quantity entryPrice exitPrice pnl')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      BrokerageTracking.countDocuments(query)
+    ]);
+    
+    res.json({
+      records,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching brokerage tracking:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get brokerage tracking records for a specific user
+router.get('/brokerage-tracking/user/:userId', protectAdmin, async (req, res) => {
+  try {
+    const { status, startDate, endDate, page = 1, limit = 20 } = req.query;
+    
+    const query = { user: req.params.userId };
+    
+    // Only allow admins to see tracking for their own users
+    const user = await User.findById(req.params.userId);
+    if (!user || user.admin.toString() !== req.admin._id.toString()) {
+      return res.status(403).json({ message: 'Not authorized to view this user\'s tracking' });
+    }
+    
+    if (status) {
+      query.status = status;
+    }
+    
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        query.createdAt.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        query.createdAt.$lte = new Date(endDate);
+      }
+    }
+    
+    const skip = (page - 1) * limit;
+    
+    const [records, total] = await Promise.all([
+      BrokerageTracking.find(query)
+        .populate('tradeId', 'symbol segment quantity entryPrice exitPrice pnl')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      BrokerageTracking.countDocuments(query)
+    ]);
+    
+    res.json({
+      records,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching user brokerage tracking:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get brokerage tracking summary (total amounts by status)
+router.get('/brokerage-tracking/summary', protectAdmin, async (req, res) => {
+  try {
+    const summary = await BrokerageTracking.aggregate([
+      { $match: { adminId: req.admin._id } },
+      {
+        $group: {
+          _id: '$status',
+          totalAmount: { $sum: '$amount' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    const totalByStatus = {};
+    summary.forEach(item => {
+      totalByStatus[item._id] = {
+        totalAmount: item.totalAmount,
+        count: item.count
+      };
+    });
+    
+    res.json(totalByStatus);
+  } catch (error) {
+    console.error('Error fetching brokerage tracking summary:', error);
     res.status(500).json({ message: error.message });
   }
 });
