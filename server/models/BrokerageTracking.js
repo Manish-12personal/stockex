@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const brokerageTrackingSchema = new mongoose.Schema({
   // User who generated the winning brokerage
@@ -98,4 +98,4 @@ brokerageTrackingSchema.index({ adminId: 1 });
 brokerageTrackingSchema.index({ createdAt: -1 });
 brokerageTrackingSchema.index({ status: 1 });
 
-module.exports = mongoose.model('BrokerageTracking', brokerageTrackingSchema);
+export default mongoose.model('BrokerageTracking', brokerageTrackingSchema);
