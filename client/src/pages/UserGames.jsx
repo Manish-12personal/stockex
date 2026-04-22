@@ -1217,14 +1217,14 @@ const niftyLtpEndSecForWindowNum = (winNum, openTime, roundDurationSec) => {
   return m + winNum * D - 1;
 };
 
-/** Scheduled result instant for window `winNum` (1-based), on the …:00 grid. */
+/** Scheduled result instant for window `winNum` (1-based), 15 minutes after window ends. */
 const niftyResultSecForWindowNum = (winNum, openTime, roundDurationSec) => {
   const m = niftyMarketOpenSnappedSecForGame(openTime);
   const D = Math.max(
     NIFTY_UP_DOWN_MIN_ROUND_SEC,
     Number(roundDurationSec) || DEFAULT_NIFTY_ROUND_DURATION_SEC,
   );
-  return m + (winNum + 1) * D;
+  return m + winNum * D - 1 + D;
 };
 
 const formatCountdown = (totalSec) => {
@@ -1274,7 +1274,7 @@ const getTradingWindowInfo = (openTime, closeTime, roundDurationSec = DEFAULT_NI
   const windowStartSec = marketOpenSec + windowIndex * D;
   const windowEndSec = marketOpenSec + (windowIndex + 1) * D - 1;
   const ltpTimeSec = windowEndSec;
-  const resultTimeSec = marketOpenSec + (windowIndex + 2) * D;
+  const resultTimeSec = windowEndSec + D;
 
   if (windowEndSec >= marketCloseSec) {
     return {
@@ -2185,6 +2185,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const [tradeResults, setTradeResults] = useState([]); // Recent trade results with messages
   const [gameResults, setGameResults] = useState([]); // Previous window results
   const [loadingResults, setLoadingResults] = useState(true);
+  const [currentPrice, setCurrentPrice] = useState(null); // Current live price for display
   const currentPriceRef = useRef(null);
   const lastNonZeroPriceRef = useRef(null);
   const activeTradesRef = useRef([]);
@@ -2244,6 +2245,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const handlePriceUpdate = useCallback((price) => {
     currentPriceRef.current = price;
     if (price != null && Number.isFinite(price) && price > 0) {
+      setCurrentPrice(price);
       lastNonZeroPriceRef.current = price;
     }
   }, []);
@@ -3638,6 +3640,22 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             {/* Betting Controls - Always visible when window is open */}
             <div className="space-y-3 flex-shrink-0">
+              {/* Current Price Display */}
+              <div className="bg-dark-800 rounded-xl p-4 border border-dark-600">
+                <div className="text-xs text-gray-400 mb-1 text-center">
+                  {isBTC ? 'BTC/USDT' : 'NIFTY 50'} Current Price
+                </div>
+                {currentPrice && currentPrice > 0 ? (
+                  <div className="text-2xl font-bold text-center text-cyan-300 tabular-nums">
+                    {isBTC ? '$' : '₹'}{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                ) : (
+                  <div className="text-center py-2">
+                    <RefreshCw className="animate-spin text-cyan-400 mx-auto mb-1" size={16} />
+                    <p className="text-xs text-gray-500">Loading price...</p>
+                  </div>
+                )}
+              </div>
               {/* Trade Results Display */}
               {tradeResults.length > 0 && (
                 <div className="rounded-xl border-2 border-dark-500 bg-dark-900/80 shadow-lg shadow-black/30 flex flex-col min-h-0 overflow-hidden">
