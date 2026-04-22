@@ -2943,7 +2943,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       lastCompletedWindow?.windowNumber === winNum ? lastCompletedWindow : null;
     const serverRaw = pickLatestGameResultForWindow(gameResults, winNum);
     let server = serverRaw;
-    if (isBTC && serverRaw) {
+    // For BTC, only hide result if current time is before result time AND window is not yet completed
+    // Allow showing results for previous completed windows
+    if (isBTC && serverRaw && !completed) {
       const nowSec = currentTotalSecondsISTLib();
       if (nowSec < btcResultRefSecForUiWindow(winNum)) {
         server = null;
