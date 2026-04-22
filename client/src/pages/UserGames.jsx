@@ -1823,8 +1823,15 @@ const GameLivePricePanel = ({
         if (!isNseCashMarketOpen()) return;
         const niftyTick = ticks['256265'] ?? ticks[256265];
         if (!niftyTick) return;
-        // Headline LTP from REST only; WS confirms feed is alive.
-        setZerodhaConnected(true);
+        // Update LTP in real-time from socket ticks
+        if (!isLiveRef.current) {
+          isLiveRef.current = true;
+          setIsLiveConnected(true);
+        }
+        const ch = niftyTick.change !== undefined
+          ? { change: parseFloat(niftyTick.change).toFixed(2), percent: niftyTick.changePercent }
+          : null;
+        pushLive(niftyTick.ltp, ch, niftyTick);
         // Extract bid/ask for Nifty Bracket
         if (niftyTick.bid !== undefined || niftyTick.ask !== undefined) {
           onBidAskUpdateRef.current?.({
