@@ -425,22 +425,38 @@ router.post('/parent-info', async (req, res) => {
       return res.status(400).json({ message: 'Email is required' });
     }
     
-    const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role');
+    const user = await User.findOne({ email }).populate('createdBy', 'adminCode name username role parentId');
     
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
     
     if (!user.createdBy) {
-      return res.json({ parentAdmin: null });
+      return res.json({ parentAdmin: null, hierarchy: [] });
+    }
+    
+    // Build full hierarchy chain
+    const hierarchy = [];
+    let currentAdmin = user.createdBy;
+    
+    while (currentAdmin) {
+      hierarchy.unshift({
+        adminCode: currentAdmin.adminCode,
+        name: currentAdmin.name || currentAdmin.username,
+        role: currentAdmin.role
+      });
+      
+      // Fetch parent if exists
+      if (currentAdmin.parentId) {
+        currentAdmin = await Admin.findById(currentAdmin.parentId).select('adminCode name username role parentId');
+      } else {
+        currentAdmin = null;
+      }
     }
     
     res.json({
-      parentAdmin: {
-        adminCode: user.createdBy.adminCode,
-        name: user.createdBy.name || user.createdBy.username,
-        role: user.createdBy.role
-      }
+      parentAdmin: hierarchy[hierarchy.length - 1] || null,
+      hierarchy: hierarchy
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
