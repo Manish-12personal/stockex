@@ -1919,7 +1919,7 @@ const GameLivePricePanel = ({
       }
     };
     syncAuthoritative();
-    const id = setInterval(syncAuthoritative, 2500);
+    const id = setInterval(syncAuthoritative, 10000);
     return () => {
       cancelled = true;
       clearInterval(id);
