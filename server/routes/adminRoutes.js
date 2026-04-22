@@ -1517,10 +1517,15 @@ router.get('/manage/user-hierarchy/:userCode', protectAdmin, async (req, res) =>
   try {
     const { userCode } = req.params;
     
-    // Find user by userCode or username or fullName
+    // Find user by userCode or username or fullName or adminCode
     let user = await User.findOne({ userCode }).populate('createdBy', 'adminCode name username role parentId');
     
-    // If not found by userCode, try username
+    // If not found by userCode, try adminCode
+    if (!user) {
+      user = await User.findOne({ adminCode: userCode }).populate('createdBy', 'adminCode name username role parentId');
+    }
+    
+    // If not found, try username
     if (!user) {
       user = await User.findOne({ username: userCode }).populate('createdBy', 'adminCode name username role parentId');
     }
@@ -1531,7 +1536,7 @@ router.get('/manage/user-hierarchy/:userCode', protectAdmin, async (req, res) =>
     }
     
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ message: 'User not found', searchedFor: userCode });
     }
     
     // Build full hierarchy chain

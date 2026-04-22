@@ -15234,19 +15234,21 @@ function SuperAdminClientWallet({ embedded = false }) {
       const userIdentifier = hierarchyModal.tx.adminCode || hierarchyModal.tx.ownerUsername || hierarchyModal.tx.ownerFullName;
       
       if (!userIdentifier) {
+        console.warn('No user identifier found in transaction:', hierarchyModal.tx);
         setLoadingClientHierarchy(false);
-        setClientHierarchy(null);
+        setClientHierarchy({ error: 'No user identifier available' });
         return;
       }
       
       try {
-        const { data } = await axios.get(`/api/admin/manage/user-hierarchy/${userIdentifier}`, {
+        console.log('Fetching hierarchy for:', userIdentifier);
+        const { data } = await axios.get(`/api/admin/manage/user-hierarchy/${encodeURIComponent(userIdentifier)}`, {
           headers: { Authorization: `Bearer ${admin.token}` }
         });
         setClientHierarchy(data);
       } catch (error) {
-        console.error('Error fetching client hierarchy:', error);
-        setClientHierarchy(null);
+        console.error('Error fetching client hierarchy:', error.response?.data || error.message);
+        setClientHierarchy({ error: error.response?.data?.message || 'Failed to load hierarchy' });
       } finally {
         setLoadingClientHierarchy(false);
       }
@@ -15749,9 +15751,9 @@ function SuperAdminClientWallet({ embedded = false }) {
                 <th className="text-right px-3 py-2 text-gray-400" title="Brokerage amount split to your account">Brokerage Distribution</th>
                 <th
                   className="text-right px-3 py-2 text-gray-400"
-                  title="Effect on the platform wallet for this line (same rupees as the client line, opposite sign)."
+                  title="Games amount distributed through games wallet"
                 >
-                  Your account
+                  Games Distribution
                 </th>
                 <th className="text-right px-3 py-2 text-gray-400">Balance</th>
                 <th className="text-center px-3 py-2 text-gray-400">Info</th>
@@ -15787,18 +15789,10 @@ function SuperAdminClientWallet({ embedded = false }) {
                     {formatAllTxReference(tx)}
                   </td>
                   <td className="px-3 py-2 text-right text-[11px] text-purple-400 font-semibold tabular-nums">
-                    {tx.amount && tx.type === 'DEBIT' ? `₹${Number(tx.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                    {tx.saPoolDebit && tx.amount ? `₹${Number(tx.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
                   </td>
-                  <td className="px-3 py-2 text-right text-[11px] whitespace-nowrap">
-                    {(() => {
-                      const y = yourAccountFromClientTx(tx);
-                      return (
-                        <div className="inline-flex flex-col items-end gap-0.5">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${y.badge}`}>{y.state}</span>
-                          <span className={`font-semibold tabular-nums ${y.amountCls}`}>{y.amountStr}</span>
-                        </div>
-                      );
-                    })()}
+                  <td className="px-3 py-2 text-right text-[11px] text-cyan-400 font-semibold tabular-nums">
+                    {tx.gamesWallet && tx.amount ? `₹${Number(tx.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
                   </td>
                   <td
                     className="px-3 py-2 text-right text-[11px] text-gray-400"
@@ -15872,6 +15866,11 @@ function SuperAdminClientWallet({ embedded = false }) {
                   <div className="flex items-center justify-center py-4">
                     <RefreshCw className="animate-spin text-blue-400" size={24} />
                     <span className="ml-2 text-sm text-gray-400">Loading hierarchy...</span>
+                  </div>
+                ) : clientHierarchy?.error ? (
+                  <div className="text-sm text-red-400 text-center py-4">
+                    <div className="font-semibold mb-1">Error loading hierarchy</div>
+                    <div className="text-xs text-gray-500">{clientHierarchy.error}</div>
                   </div>
                 ) : clientHierarchy && clientHierarchy.hierarchy && clientHierarchy.hierarchy.length > 0 ? (
                   <div className="space-y-2">
