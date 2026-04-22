@@ -266,6 +266,26 @@ const adminSchema = new mongoose.Schema({
     }
   },
   
+  // Temporary Wallet - Holds brokerage from winning users until SuperAdmin releases it
+  temporaryWallet: {
+    balance: {
+      type: Number,
+      default: 0
+    },
+    totalEarned: {
+      type: Number,
+      default: 0
+    },
+    totalReleased: {
+      type: Number,
+      default: 0
+    },
+    lastReleasedAt: {
+      type: Date,
+      default: null
+    }
+  },
+  
   // Statistics
   stats: {
     totalUsers: {

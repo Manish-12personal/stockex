@@ -4664,6 +4664,7 @@ router.get('/my-wallet', protectAdmin, async (req, res) => {
     
     res.json({
       wallet: admin.wallet,
+      temporaryWallet: admin.temporaryWallet,
       summary: {
         totalUsers: users.length,
         totalUserBalance,
@@ -7389,6 +7390,119 @@ router.get('/search-all-accounts', protectAdmin, superAdminOnly, async (req, res
     
     res.json({ admins, users });
   } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== TEMPORARY WALLET MANAGEMENT ====================
+
+// Get all hierarchy temporary wallets (Super Admin only)
+router.get('/hierarchy-temporary-wallets', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { month } = req.query;
+    
+    // Build query for admins with temporary wallet balance
+    const query = {
+      role: { $in: ['ADMIN', 'BROKER', 'SUB_BROKER'] }
+    };
+    
+    // Get all admins with their temporary wallet data
+    const admins = await Admin.find(query)
+      .select('adminCode username role temporaryWallet')
+      .sort({ role: 1, adminCode: 1 })
+      .lean();
+    
+    // Filter by month if provided (based on lastReleasedAt or totalEarned > 0)
+    let filteredAdmins = admins;
+    if (month) {
+      const [year, monthNum] = month.split('-');
+      const startDate = new Date(year, monthNum - 1, 1);
+      const endDate = new Date(year, monthNum, 0, 23, 59, 59);
+      
+      // For now, just return all admins with temporary wallet data
+      // In future, you could filter based on transaction dates
+      filteredAdmins = admins.filter(admin => 
+        admin.temporaryWallet?.totalEarned > 0 ||
+        admin.temporaryWallet?.balance > 0
+      );
+    }
+    
+    res.json(filteredAdmins);
+  } catch (error) {
+    console.error('Error fetching hierarchy temporary wallets:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Release temporary wallet funds to main wallet (Super Admin only)
+router.post('/release-temporary-funds', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { adminId, amount } = req.body;
+    
+    if (!adminId || !amount || amount <= 0) {
+      return res.status(400).json({ message: 'Invalid admin ID or amount' });
+    }
+    
+    // Get the admin
+    const admin = await Admin.findById(adminId);
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    
+    // Check if admin has sufficient temporary wallet balance
+    const tempBalance = admin.temporaryWallet?.balance || 0;
+    if (amount > tempBalance) {
+      return res.status(400).json({ message: 'Insufficient temporary wallet balance' });
+    }
+    
+    // Deduct from temporary wallet
+    admin.temporaryWallet.balance -= amount;
+    admin.temporaryWallet.totalReleased = (admin.temporaryWallet.totalReleased || 0) + amount;
+    admin.temporaryWallet.lastReleasedAt = new Date();
+    
+    // Credit to main wallet
+    admin.wallet.balance = (admin.wallet.balance || 0) + amount;
+    
+    await admin.save();
+    
+    // Create ledger entries
+    // 1. Debit from temporary wallet
+    await WalletLedger.create({
+      ownerType: 'ADMIN',
+      ownerId: admin._id,
+      adminCode: admin.adminCode,
+      type: 'DEBIT',
+      reason: 'TEMP_WALLET_RELEASE',
+      amount: amount,
+      balanceAfter: admin.temporaryWallet.balance,
+      description: `Temporary wallet funds released to main wallet by SuperAdmin`,
+      performedBy: req.admin._id
+    });
+    
+    // 2. Credit to main wallet
+    await WalletLedger.create({
+      ownerType: 'ADMIN',
+      ownerId: admin._id,
+      adminCode: admin.adminCode,
+      type: 'CREDIT',
+      reason: 'TEMP_WALLET_RELEASE',
+      amount: amount,
+      balanceAfter: admin.wallet.balance,
+      description: `Funds released from temporary wallet by SuperAdmin`,
+      performedBy: req.admin._id
+    });
+    
+    res.json({ 
+      message: 'Funds released successfully',
+      admin: {
+        adminCode: admin.adminCode,
+        username: admin.username,
+        temporaryWallet: admin.temporaryWallet,
+        wallet: admin.wallet
+      }
+    });
+  } catch (error) {
+    console.error('Error releasing temporary funds:', error);
     res.status(500).json({ message: error.message });
   }
 });

@@ -350,6 +350,7 @@ const AdminDashboard = () => {
         { path: `${basePath}/admin-fund-requests`, icon: Wallet, label: 'Admin Fund Requests' },
         { path: `${basePath}/broker-change-requests`, icon: RefreshCw, label: 'Transfer Requests' },
         { path: `${basePath}/all-transactions`, icon: FileText, label: 'All Transactions' },
+        { path: `${basePath}/control-hierarchy-wallet`, icon: Timer, label: 'Control Hierarchy Wallet' },
         { path: `${basePath}/market-control`, icon: TrendingUp, label: 'Market Control' },
         { path: `${basePath}/broker-certificates`, icon: Award, label: 'Broker Certificates' },
         { path: `${basePath}/system-settings`, icon: Settings, label: 'Default Settings' },
@@ -368,6 +369,7 @@ const AdminDashboard = () => {
       return [
         ...baseItems,
         { path: `${basePath}/wallet`, icon: Wallet, label: 'My Wallet' },
+        { path: `${basePath}/temporary-wallet`, icon: Timer, label: 'Temporary Wallet' },
         { path: `${basePath}/admins`, icon: Shield, label: 'Broker/SubBroker' },
         { path: `${basePath}/restrictions-on-broker`, icon: Lock, label: 'Restrictions on Broker' },
         { path: `${basePath}/subordinate-fund-requests`, icon: CreditCard, label: 'Subordinate Requests' },
@@ -391,6 +393,7 @@ const AdminDashboard = () => {
       return [
         ...baseItems,
         { path: `${basePath}/wallet`, icon: Wallet, label: isDemo ? 'Demo Wallet' : 'My Wallet' },
+        { path: `${basePath}/temporary-wallet`, icon: Timer, label: isDemo ? 'Demo Temporary Wallet' : 'Temporary Wallet' },
         { path: `${basePath}/admins`, icon: Shield, label: isDemo ? 'Demo Sub Brokers' : 'Sub Brokers' },
         { path: `${basePath}/restrictions-on-subbroker`, icon: Lock, label: 'Restrictions on Sub Broker' },
         { path: `${basePath}/subordinate-fund-requests`, icon: CreditCard, label: isDemo ? 'Demo SubBroker Requests' : 'SubBroker Requests' },
@@ -412,6 +415,7 @@ const AdminDashboard = () => {
     return [
       ...baseItems,
       { path: `${basePath}/wallet`, icon: Wallet, label: 'My Wallet' },
+      { path: `${basePath}/temporary-wallet`, icon: Timer, label: 'Temporary Wallet' },
       { path: `${basePath}/users`, icon: Users, label: 'User Management' },
       { path: `${basePath}/create-user`, icon: UserPlus, label: 'Create User' },
       { path: `${basePath}/trading`, icon: TrendingUp, label: 'Market Watch' },
@@ -568,6 +572,7 @@ const AdminDashboard = () => {
           {isSuperAdmin && <Route path="market-control" element={<MarketControl />} />}
           {isSuperAdmin && <Route path="bank-management" element={<BankManagement />} />}
           {isSuperAdmin && <Route path="all-transactions" element={<AllTransactions />} />}
+          {isSuperAdmin && <Route path="control-hierarchy-wallet" element={<ControlHierarchyWallet />} />}
           {isSuperAdmin && <Route path="broker-certificates" element={<BrokerCertificatesManagement />} />}
           {isSuperAdmin && <Route path="system-settings" element={<SystemDefaultSettings />} />}
           {isSuperAdmin && <Route path="delivery-pledge" element={<DeliveryPledgeManagement />} />}
@@ -578,6 +583,7 @@ const AdminDashboard = () => {
           {isSuperAdmin && <Route path="transaction-slips" element={<TransactionSlipsManagement />} />}
           {/* Admin Only Routes */}
           {!isSuperAdmin && <Route path="wallet" element={<AdminWallet />} />}
+          {!isSuperAdmin && <Route path="temporary-wallet" element={<TemporaryWallet />} />}
           {!isSuperAdmin && !isSubBroker && <Route path="admins/*" element={<AdminManagement />} />}
           {!isSuperAdmin && isAdmin && <Route path="restrictions-on-broker" element={<AdminRestrictionsOnBroker />} />}
           {!isSuperAdmin && isBroker && <Route path="restrictions-on-subbroker" element={<BrokerRestrictionsOnSubBroker />} />}
@@ -5997,6 +6003,106 @@ const AddBankModal = ({ token, onClose, onSuccess }) => {
           <button type="submit" disabled={loading} className="w-full bg-green-600 py-2 rounded">{loading ? 'Adding...' : 'Add Account'}</button>
         </form>
       </div>
+    </div>
+  );
+};
+
+// Temporary Wallet - Shows brokerage earnings that are pending SuperAdmin release
+const TemporaryWallet = () => {
+  const { admin } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [tempWalletData, setTempWalletData] = useState(null);
+
+  useEffect(() => {
+    fetchTempWalletData();
+  }, []);
+
+  const fetchTempWalletData = async () => {
+    try {
+      const { data } = await axios.get('/api/admin/manage/my-wallet', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setTempWalletData(data);
+    } catch (error) {
+      console.error('Error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="p-6 text-center"><RefreshCw className="animate-spin inline" size={24} /></div>;
+  }
+
+  const tempBalance = tempWalletData?.temporaryWallet?.balance || 0;
+  const totalEarned = tempWalletData?.temporaryWallet?.totalEarned || 0;
+  const totalReleased = tempWalletData?.temporaryWallet?.totalReleased || 0;
+  const lastReleasedAt = tempWalletData?.temporaryWallet?.lastReleasedAt;
+
+  return (
+    <div className="p-4 md:p-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold mb-2">Temporary Wallet</h1>
+        <p className="text-sm text-gray-400">
+          Brokerage earnings from winning users are held here until released by SuperAdmin
+        </p>
+      </div>
+
+      {/* Temporary Wallet Balance Card */}
+      <div className="bg-gradient-to-r from-amber-600 to-orange-600 rounded-xl p-6 mb-6">
+        <div className="flex items-center gap-2 text-white/80 text-sm mb-1">
+          <Timer size={18} />
+          <span>Pending Balance</span>
+        </div>
+        <div className="text-4xl font-bold text-white mb-4">₹{tempBalance.toLocaleString()}</div>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <div className="text-white/60">Total Earned</div>
+            <div className="text-white font-semibold">₹{totalEarned.toLocaleString()}</div>
+          </div>
+          <div>
+            <div className="text-white/60">Total Released</div>
+            <div className="text-white font-semibold">₹{totalReleased.toLocaleString()}</div>
+          </div>
+        </div>
+        {lastReleasedAt && (
+          <div className="mt-4 pt-4 border-t border-white/20">
+            <div className="text-white/60 text-xs">Last Released</div>
+            <div className="text-white text-sm">{new Date(lastReleasedAt).toLocaleString()}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Info Card */}
+      <div className="bg-dark-800 rounded-lg p-6 border border-dark-600">
+        <div className="flex items-start gap-3">
+          <Info className="text-blue-400 mt-1" size={20} />
+          <div>
+            <h3 className="font-semibold mb-2">About Temporary Wallet</h3>
+            <ul className="text-sm text-gray-400 space-y-2">
+              <li>• Brokerage from winning users is credited to this wallet</li>
+              <li>• Funds are held here until SuperAdmin releases them</li>
+              <li>• Once released, funds are transferred to your main wallet</li>
+              <li>• You cannot withdraw or transfer from this wallet directly</li>
+              <li>• Contact SuperAdmin for fund release requests</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* Status Message */}
+      {tempBalance > 0 && (
+        <div className="mt-6 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
+          <div className="flex items-center gap-2 text-yellow-400">
+            <AlertTriangle size={18} />
+            <span className="font-medium">Pending Release</span>
+          </div>
+          <p className="text-sm text-gray-400 mt-2">
+            You have ₹{tempBalance.toLocaleString()} pending in your temporary wallet. 
+            These funds will be released to your main wallet as per SuperAdmin's schedule.
+          </p>
+        </div>
+      )}
     </div>
   );
 };
@@ -13625,6 +13731,274 @@ const ALL_TX_GAMES_WALLET_OPTIONS = [
   { id: 'niftyJackpot', label: 'Nifty Jackpot' },
 ];
 
+// Control Hierarchy Wallet - SuperAdmin controls releasing temporary wallet funds
+const ControlHierarchyWallet = () => {
+  const { admin } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [hierarchyData, setHierarchyData] = useState([]);
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [selectedAdmin, setSelectedAdmin] = useState(null);
+  const [releaseAmount, setReleaseAmount] = useState('');
+  const [showReleaseModal, setShowReleaseModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
+  const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    fetchHierarchyData();
+  }, [selectedMonth]);
+
+  const fetchHierarchyData = async () => {
+    setLoading(true);
+    try {
+      const { data } = await axios.get('/api/admin/manage/hierarchy-temporary-wallets', {
+        headers: { Authorization: `Bearer ${admin.token}` },
+        params: { month: selectedMonth }
+      });
+      setHierarchyData(data);
+    } catch (error) {
+      console.error('Error fetching hierarchy data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReleaseFunds = async (e) => {
+    e.preventDefault();
+    if (!releaseAmount || Number(releaseAmount) <= 0) {
+      setMessage({ type: 'error', text: 'Enter valid amount' });
+      return;
+    }
+    if (Number(releaseAmount) > selectedAdmin.temporaryWallet.balance) {
+      setMessage({ type: 'error', text: 'Amount exceeds available balance' });
+      return;
+    }
+    setSubmitting(true);
+    setMessage({ type: '', text: '' });
+    try {
+      await axios.post('/api/admin/manage/release-temporary-funds', {
+        adminId: selectedAdmin._id,
+        amount: Number(releaseAmount)
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setMessage({ type: 'success', text: 'Funds released successfully' });
+      setReleaseAmount('');
+      setShowReleaseModal(false);
+      setSelectedAdmin(null);
+      fetchHierarchyData();
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Error releasing funds' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openReleaseModal = (adminData) => {
+    setSelectedAdmin(adminData);
+    setReleaseAmount(adminData.temporaryWallet.balance.toString());
+    setShowReleaseModal(true);
+    setMessage({ type: '', text: '' });
+  };
+
+  const filteredData = hierarchyData.filter(item => 
+    item.username?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item.adminCode?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item.role?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const totalPending = filteredData.reduce((sum, item) => sum + (item.temporaryWallet?.balance || 0), 0);
+  const totalEarned = filteredData.reduce((sum, item) => sum + (item.temporaryWallet?.totalEarned || 0), 0);
+
+  return (
+    <div className="p-4 md:p-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold mb-2">Control Hierarchy Wallet</h1>
+        <p className="text-sm text-gray-400">
+          Manage and release temporary wallet funds for Admin/Broker/SubBroker hierarchy
+        </p>
+      </div>
+
+      {message.text && (
+        <div className={`mb-4 p-3 rounded ${message.type === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+          {message.text}
+        </div>
+      )}
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div className="bg-gradient-to-r from-amber-600 to-orange-600 rounded-lg p-6">
+          <div className="flex items-center gap-2 text-white/80 text-sm mb-1">
+            <Timer size={18} />
+            <span>Total Pending</span>
+          </div>
+          <div className="text-3xl font-bold text-white">₹{totalPending.toLocaleString()}</div>
+        </div>
+        <div className="bg-gradient-to-r from-blue-600 to-cyan-600 rounded-lg p-6">
+          <div className="flex items-center gap-2 text-white/80 text-sm mb-1">
+            <TrendingUp size={18} />
+            <span>Total Earned</span>
+          </div>
+          <div className="text-3xl font-bold text-white">₹{totalEarned.toLocaleString()}</div>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-dark-800 rounded-lg p-4 mb-6 border border-dark-600">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">Select Month</label>
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">Search</label>
+            <input
+              type="text"
+              placeholder="Search by username, code, or role..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Hierarchy Table */}
+      {loading ? (
+        <div className="text-center py-8">
+          <RefreshCw className="animate-spin inline" size={24} />
+        </div>
+      ) : (
+        <div className="bg-dark-800 rounded-lg border border-dark-600 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-dark-700">
+                <tr>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Admin Code</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Username</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Role</th>
+                  <th className="px-4 py-3 text-right text-sm font-semibold">Pending Balance</th>
+                  <th className="px-4 py-3 text-right text-sm font-semibold">Total Earned</th>
+                  <th className="px-4 py-3 text-right text-sm font-semibold">Total Released</th>
+                  <th className="px-4 py-3 text-center text-sm font-semibold">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredData.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="px-4 py-8 text-center text-gray-400">
+                      No data found
+                    </td>
+                  </tr>
+                ) : (
+                  filteredData.map((item) => (
+                    <tr key={item._id} className="border-t border-dark-600 hover:bg-dark-700/50">
+                      <td className="px-4 py-3 text-sm">{item.adminCode}</td>
+                      <td className="px-4 py-3 text-sm">{item.username || '-'}</td>
+                      <td className="px-4 py-3 text-sm">
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          item.role === 'ADMIN' ? 'bg-purple-500/20 text-purple-400' :
+                          item.role === 'BROKER' ? 'bg-blue-500/20 text-blue-400' :
+                          'bg-green-500/20 text-green-400'
+                        }`}>
+                          {item.role}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right font-semibold text-amber-400">
+                        ₹{(item.temporaryWallet?.balance || 0).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right">
+                        ₹{(item.temporaryWallet?.totalEarned || 0).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right">
+                        ₹{(item.temporaryWallet?.totalReleased || 0).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={() => openReleaseModal(item)}
+                          disabled={!item.temporaryWallet?.balance || item.temporaryWallet.balance <= 0}
+                          className={`px-3 py-1 rounded text-sm ${
+                            item.temporaryWallet?.balance > 0
+                              ? 'bg-green-600 hover:bg-green-700'
+                              : 'bg-gray-600 cursor-not-allowed opacity-50'
+                          }`}
+                        >
+                          Release
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Release Modal */}
+      {showReleaseModal && selectedAdmin && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-lg p-6 max-w-md w-full border border-dark-600">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold">Release Funds</h2>
+              <button onClick={() => setShowReleaseModal(false)} className="text-gray-400 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="mb-4 p-4 bg-dark-700 rounded-lg">
+              <div className="text-sm text-gray-400 mb-1">Admin</div>
+              <div className="font-semibold">{selectedAdmin.username || selectedAdmin.adminCode}</div>
+              <div className="text-sm text-gray-400 mt-2">Available Balance</div>
+              <div className="text-2xl font-bold text-amber-400">
+                ₹{(selectedAdmin.temporaryWallet?.balance || 0).toLocaleString()}
+              </div>
+            </div>
+
+            <form onSubmit={handleReleaseFunds}>
+              <div className="mb-4">
+                <label className="block text-sm text-gray-400 mb-2">Amount to Release</label>
+                <input
+                  type="number"
+                  value={releaseAmount}
+                  onChange={(e) => setReleaseAmount(e.target.value)}
+                  placeholder="Enter amount"
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
+                  required
+                  min="0.01"
+                  step="0.01"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowReleaseModal(false)}
+                  className="flex-1 bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="flex-1 bg-green-600 hover:bg-green-700 px-4 py-2 rounded disabled:opacity-50"
+                >
+                  {submitting ? 'Releasing...' : 'Release Funds'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // All Transactions (Super Admin only) — pick group → pick person → credits / debits
 const AllTransactions = () => {
   const { admin } = useAuth();
@@ -14688,6 +15062,7 @@ function SuperAdminClientWallet({ embedded = false }) {
                 <th className="text-left px-3 py-2 text-gray-400">When</th>
                 <th className="text-left px-3 py-2 text-gray-400">Client</th>
                 <th className="text-left px-3 py-2 text-gray-400">Code</th>
+                <th className="text-left px-3 py-2 text-gray-400">Hierarchy</th>
                 <th className="text-left px-3 py-2 text-gray-400">Reason</th>
                 <th className="text-left px-3 py-2 text-gray-400">Game</th>
                 <th className="text-left px-3 py-2 text-gray-400">Ref</th>
@@ -14715,6 +15090,20 @@ function SuperAdminClientWallet({ embedded = false }) {
                     )}
                   </td>
                   <td className="px-3 py-2 font-mono text-yellow-400/90 text-[11px]">{tx.adminCode || '—'}</td>
+                  <td className="px-3 py-2 text-[11px] max-w-[180px]">
+                    {tx.adminHierarchy && tx.adminHierarchy.length > 0 ? (
+                      <div className="truncate text-gray-300">
+                        {tx.adminHierarchy.map((admin, index) => (
+                          <span key={index}>
+                            {admin.role}
+                            {index < tx.adminHierarchy.length - 1 ? ' → ' : ''}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-gray-500">—</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-gray-400 max-w-[200px]">
                     <div className="truncate text-gray-200 text-[12px]">
                       {tx.gamesWallet

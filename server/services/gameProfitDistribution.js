@@ -154,8 +154,14 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
         continue;
       }
 
-      admin.wallet.balance += shareAmount;
-      admin.stats.totalBrokerage = (admin.stats.totalBrokerage || 0) + shareAmount;
+      // Credit to temporary wallet instead of main wallet (except for SUPER_ADMIN)
+      if (role === 'SUPER_ADMIN') {
+        admin.wallet.balance += shareAmount;
+        admin.stats.totalBrokerage = (admin.stats.totalBrokerage || 0) + shareAmount;
+      } else {
+        admin.temporaryWallet.balance = (admin.temporaryWallet.balance || 0) + shareAmount;
+        admin.temporaryWallet.totalEarned = (admin.temporaryWallet.totalEarned || 0) + shareAmount;
+      }
       await admin.save();
 
       // Create wallet ledger entry
@@ -166,8 +172,8 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
         type: 'CREDIT',
         reason: 'GAME_PROFIT',
         amount: shareAmount,
-        balanceAfter: admin.wallet.balance,
-        description: `${gameName} profit share - ${role} (${((shareAmount / amount) * 100).toFixed(1)}% of ₹${amount.toFixed(2)})`,
+        balanceAfter: role === 'SUPER_ADMIN' ? admin.wallet.balance : admin.temporaryWallet.balance,
+        description: `${gameName} profit share - ${role} (${((shareAmount / amount) * 100).toFixed(1)}% of ₹${amount.toFixed(2)})${role !== 'SUPER_ADMIN' ? ' [Temporary Wallet]' : ''}`,
         reference: refId ? { type: 'Manual', id: null } : undefined,
         meta: gameProfitLedgerMeta(shareAmount, amount, 'USER_LOSS_POOL', gameKey, null, user._id),
       });
@@ -391,9 +397,15 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
         divertedWinBrokerageToSuperAdmin += shareAmount;
         continue;
       }
-      console.log(`[WinBrokerage] CREDITING ${admin.username || admin.adminCode} (${role}): ₹${shareAmount.toFixed(2)}`);
-      admin.wallet.balance = (admin.wallet.balance || 0) + shareAmount;
-      admin.stats.totalBrokerage = (admin.stats.totalBrokerage || 0) + shareAmount;
+      console.log(`[WinBrokerage] CREDITING ${admin.username || admin.adminCode} (${role}): ₹${shareAmount.toFixed(2)} to TEMPORARY WALLET`);
+      // Credit to temporary wallet instead of main wallet (except for SUPER_ADMIN)
+      if (role === 'SUPER_ADMIN') {
+        admin.wallet.balance = (admin.wallet.balance || 0) + shareAmount;
+        admin.stats.totalBrokerage = (admin.stats.totalBrokerage || 0) + shareAmount;
+      } else {
+        admin.temporaryWallet.balance = (admin.temporaryWallet.balance || 0) + shareAmount;
+        admin.temporaryWallet.totalEarned = (admin.temporaryWallet.totalEarned || 0) + shareAmount;
+      }
       await admin.save();
       await WalletLedger.create({
         ownerType: 'ADMIN',
@@ -402,8 +414,8 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
         type: 'CREDIT',
         reason: 'GAME_PROFIT',
         amount: shareAmount,
-        balanceAfter: admin.wallet.balance,
-        description: `${gameName} win brokerage — ${role} (₹${shareAmount.toFixed(2)})`,
+        balanceAfter: role === 'SUPER_ADMIN' ? admin.wallet.balance : admin.temporaryWallet.balance,
+        description: `${gameName} win brokerage — ${role} (₹${shareAmount.toFixed(2)})${role !== 'SUPER_ADMIN' ? ' [Temporary Wallet]' : ''}`,
         meta: gameProfitLedgerMeta(shareAmount, T, 'WIN_BROKERAGE', gameKey, transactionId, userId),
       });
       totalDistributed += shareAmount;
@@ -644,9 +656,15 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
         continue;
       }
       
-      console.log(`[${logTag}] CREDITING ${admin.username || admin.adminCode} (${role}): ₹${shareAmount.toFixed(2)}`);
-      admin.wallet.balance = (admin.wallet.balance || 0) + shareAmount;
-      admin.stats.totalBrokerage = (admin.stats.totalBrokerage || 0) + shareAmount;
+      console.log(`[${logTag}] CREDITING ${admin.username || admin.adminCode} (${role}): ₹${shareAmount.toFixed(2)} to ${role === 'SUPER_ADMIN' ? 'MAIN' : 'TEMPORARY'} WALLET`);
+      // Credit to temporary wallet instead of main wallet (except for SUPER_ADMIN)
+      if (role === 'SUPER_ADMIN') {
+        admin.wallet.balance = (admin.wallet.balance || 0) + shareAmount;
+        admin.stats.totalBrokerage = (admin.stats.totalBrokerage || 0) + shareAmount;
+      } else {
+        admin.temporaryWallet.balance = (admin.temporaryWallet.balance || 0) + shareAmount;
+        admin.temporaryWallet.totalEarned = (admin.temporaryWallet.totalEarned || 0) + shareAmount;
+      }
       await admin.save();
       await WalletLedger.create({
         ownerType: 'ADMIN',
@@ -655,14 +673,15 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
         type: 'CREDIT',
         reason: 'GAME_PROFIT',
         amount: shareAmount,
-        balanceAfter: admin.wallet.balance,
+        balanceAfter: role === 'SUPER_ADMIN' ? admin.wallet.balance : admin.temporaryWallet.balance,
         description: (() => {
             const pctMap = { SUB_BROKER: breakdown.pctSb, BROKER: breakdown.pctBr, ADMIN: breakdown.pctAd };
             const pct = pctMap[role];
             const gp = breakdown.grossPrize;
+            const tempWalletTag = role !== 'SUPER_ADMIN' ? ' [Temporary Wallet]' : '';
             return pct > 0 && gp > 0
-              ? `${gameLabel} win brokerage — ${role} (${pct.toFixed(1)}% of ₹${gp.toFixed(2)} = ₹${shareAmount.toFixed(2)})`
-              : `${gameLabel} win brokerage — ${role} (₹${shareAmount.toFixed(2)})`;
+              ? `${gameLabel} win brokerage — ${role} (${pct.toFixed(1)}% of ₹${gp.toFixed(2)} = ₹${shareAmount.toFixed(2)})${tempWalletTag}`
+              : `${gameLabel} win brokerage — ${role} (₹${shareAmount.toFixed(2)})${tempWalletTag}`;
           })(),
         meta: gameProfitLedgerMeta(shareAmount, Number(breakdown.grossPrize) || 0, 'JACKPOT_GROSS_FEE', gameKey, null, userId),
       });
