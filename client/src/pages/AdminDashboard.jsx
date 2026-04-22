@@ -1729,6 +1729,15 @@ const AdminManagement = () => {
     }
   };
 
+  const isReferralDisabled = (adm) => {
+    const settings = adm.referralDistributionEnabled;
+    if (!settings) return false;
+    if (typeof settings === 'boolean') return !settings;
+    return !settings.games || !settings.mcx || !settings.crypto || !settings.forex;
+  };
+
+  const [showReferralSettingsModal, setShowReferralSettingsModal] = useState(null);
+
   return (
     <div className="p-4 md:p-6">
       {/* Sticky Header with Create Button */}
@@ -2020,52 +2029,17 @@ const AdminManagement = () => {
                       <Lock size={16} /> Limits
                     </button>
                   )}
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => handleToggleReferralDistribution(adm._id, 'games')}
-                      className={`px-2 py-2 rounded text-sm flex items-center gap-1 ${
-                        adm.referralDistributionEnabled?.games === false 
-                          ? 'bg-gray-600 hover:bg-gray-700' 
-                          : 'bg-emerald-600 hover:bg-emerald-700'
-                      }`}
-                      title={adm.referralDistributionEnabled?.games === false ? 'Enable Games referral' : 'Disable Games referral'}
-                    >
-                      <Gamepad2 size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleToggleReferralDistribution(adm._id, 'mcx')}
-                      className={`px-2 py-2 rounded text-sm flex items-center gap-1 ${
-                        adm.referralDistributionEnabled?.mcx === false 
-                          ? 'bg-gray-600 hover:bg-gray-700' 
-                          : 'bg-emerald-600 hover:bg-emerald-700'
-                      }`}
-                      title={adm.referralDistributionEnabled?.mcx === false ? 'Enable MCX referral' : 'Disable MCX referral'}
-                    >
-                      <TrendingUp size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleToggleReferralDistribution(adm._id, 'crypto')}
-                      className={`px-2 py-2 rounded text-sm flex items-center gap-1 ${
-                        adm.referralDistributionEnabled?.crypto === false 
-                          ? 'bg-gray-600 hover:bg-gray-700' 
-                          : 'bg-emerald-600 hover:bg-emerald-700'
-                      }`}
-                      title={adm.referralDistributionEnabled?.crypto === false ? 'Enable Crypto referral' : 'Disable Crypto referral'}
-                    >
-                      <Bitcoin size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleToggleReferralDistribution(adm._id, 'forex')}
-                      className={`px-2 py-2 rounded text-sm flex items-center gap-1 ${
-                        adm.referralDistributionEnabled?.forex === false 
-                          ? 'bg-gray-600 hover:bg-gray-700' 
-                          : 'bg-emerald-600 hover:bg-emerald-700'
-                      }`}
-                      title={adm.referralDistributionEnabled?.forex === false ? 'Enable Forex referral' : 'Disable Forex referral'}
-                    >
-                      <DollarSign size={14} />
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => setShowReferralSettingsModal(adm)}
+                    className={`px-3 py-2 rounded text-sm flex items-center gap-1 ${
+                      isReferralDisabled(adm) 
+                        ? 'bg-gray-600 hover:bg-gray-700' 
+                        : 'bg-emerald-600 hover:bg-emerald-700'
+                    }`}
+                    title={isReferralDisabled(adm) ? 'Referral disabled for some segments' : 'Referral enabled'}
+                  >
+                    <Share2 size={16} /> Referral
+                  </button>
                   {isSuperAdmin && (
                     <button
                       onClick={() => handleLoginAsAdmin(adm._id)}
@@ -2295,6 +2269,125 @@ const AdminManagement = () => {
             <div className="p-4 border-t border-dark-600">
               <button
                 onClick={() => { setShowUsersModal(false); setSelectedAdmin(null); setAdminUsers([]); }}
+                className="w-full py-2 bg-dark-600 hover:bg-dark-500 rounded-lg"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Referral Settings Modal */}
+      {showReferralSettingsModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-lg w-full max-w-md overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center p-4 border-b border-dark-600">
+              <div>
+                <h2 className="text-xl font-bold">Referral Distribution Settings</h2>
+                <p className="text-sm text-gray-400">
+                  {showReferralSettingsModal.name || showReferralSettingsModal.username} ({showReferralSettingsModal.adminCode})
+                </p>
+              </div>
+              <button onClick={() => setShowReferralSettingsModal(null)} className="text-gray-400 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="p-4 space-y-4">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <Gamepad2 size={20} className="text-purple-400" />
+                    <div>
+                      <div className="font-semibold">Games</div>
+                      <div className="text-xs text-gray-400">Nifty Up/Down, BTC Up/Down, etc.</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleToggleReferralDistribution(showReferralSettingsModal._id, 'games')}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+                      showReferralSettingsModal.referralDistributionEnabled?.games !== false
+                        ? 'bg-emerald-600 hover:bg-emerald-700'
+                        : 'bg-gray-600 hover:bg-gray-700'
+                    }`}
+                  >
+                    {showReferralSettingsModal.referralDistributionEnabled?.games !== false ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <TrendingUp size={20} className="text-blue-400" />
+                    <div>
+                      <div className="font-semibold">MCX</div>
+                      <div className="text-xs text-gray-400">Commodities trading</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleToggleReferralDistribution(showReferralSettingsModal._id, 'mcx')}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+                      showReferralSettingsModal.referralDistributionEnabled?.mcx !== false
+                        ? 'bg-emerald-600 hover:bg-emerald-700'
+                        : 'bg-gray-600 hover:bg-gray-700'
+                    }`}
+                  >
+                    {showReferralSettingsModal.referralDistributionEnabled?.mcx !== false ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <Bitcoin size={20} className="text-orange-400" />
+                    <div>
+                      <div className="font-semibold">Crypto</div>
+                      <div className="text-xs text-gray-400">Cryptocurrency trading</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleToggleReferralDistribution(showReferralSettingsModal._id, 'crypto')}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+                      showReferralSettingsModal.referralDistributionEnabled?.crypto !== false
+                        ? 'bg-emerald-600 hover:bg-emerald-700'
+                        : 'bg-gray-600 hover:bg-gray-700'
+                    }`}
+                  >
+                    {showReferralSettingsModal.referralDistributionEnabled?.crypto !== false ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-dark-700 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <DollarSign size={20} className="text-green-400" />
+                    <div>
+                      <div className="font-semibold">Forex</div>
+                      <div className="text-xs text-gray-400">Currency trading</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleToggleReferralDistribution(showReferralSettingsModal._id, 'forex')}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+                      showReferralSettingsModal.referralDistributionEnabled?.forex !== false
+                        ? 'bg-emerald-600 hover:bg-emerald-700'
+                        : 'bg-gray-600 hover:bg-gray-700'
+                    }`}
+                  >
+                    {showReferralSettingsModal.referralDistributionEnabled?.forex !== false ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-dark-600">
+                <div className="text-xs text-gray-400">
+                  <Info size={14} className="inline mr-1" />
+                  Toggle referral distribution on/off for each segment. When disabled, referral commissions will not be transferred to the referral client for that segment.
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-4 border-t border-dark-600">
+              <button
+                onClick={() => setShowReferralSettingsModal(null)}
                 className="w-full py-2 bg-dark-600 hover:bg-dark-500 rounded-lg"
               >
                 Close
