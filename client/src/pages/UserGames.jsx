@@ -1188,9 +1188,7 @@ const isNseCashMarketOpen = () => {
 };
 
 const formatTime = (hours, minutes, seconds) => {
-  const h = hours > 12 ? hours - 12 : hours;
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  return `${h}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} ${ampm}`;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
 const formatIstClockFromSec = (totalSec) => {
