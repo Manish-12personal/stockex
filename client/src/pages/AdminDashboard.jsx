@@ -15354,8 +15354,8 @@ function SuperAdminClientWallet({ embedded = false }) {
       return { earnings: 0, brokerage: 0 };
     }
 
-    let totalCredits = 0;
-    let totalDebits = 0;
+    let totalCreditsToSA = 0; // Money coming TO Super Admin (client loses)
+    let totalDebitsFromSA = 0; // Money going FROM Super Admin (client wins)
     let totalBrokerage = 0;
 
     for (const tx of transactions) {
@@ -15365,20 +15365,29 @@ function SuperAdminClientWallet({ embedded = false }) {
       }
 
       const amount = Number(tx.amount) || 0;
-      if (tx.entryType === 'credit') {
-        totalCredits += amount;
-      } else if (tx.entryType === 'debit') {
-        totalDebits += amount;
+      const txType = (tx.type || '').toUpperCase();
+      
+      // From Super Admin perspective (inverted from client):
+      // tx.type = 'CREDIT' means client was credited (won) = SA pays out (debit to SA)
+      // tx.type = 'DEBIT' means client was debited (lost) = SA receives (credit to SA)
+      if (txType === 'DEBIT') {
+        // Client lost, SA receives
+        totalCreditsToSA += amount;
+      } else if (txType === 'CREDIT') {
+        // Client won, SA pays out
+        totalDebitsFromSA += amount;
       }
 
-      // Calculate brokerage from meta.brokerageDeducted
-      if (tx.meta?.brokerageDeducted) {
+      // Calculate brokerage from brokerageAmount or meta.brokerageDeducted
+      if (tx.brokerageAmount) {
+        totalBrokerage += Number(tx.brokerageAmount) || 0;
+      } else if (tx.meta?.brokerageDeducted) {
         totalBrokerage += Number(tx.meta.brokerageDeducted) || 0;
       }
     }
 
     return {
-      earnings: totalCredits - totalDebits,
+      earnings: totalCreditsToSA - totalDebitsFromSA,
       brokerage: totalBrokerage,
     };
   }, [transactions, scope, gamesGameId]);
