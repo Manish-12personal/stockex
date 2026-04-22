@@ -56,10 +56,10 @@ const UserLogin = () => {
   useEffect(() => {
     const fetchPhoneVerificationSettings = async () => {
       try {
-        const { data } = await axios.get('/api/user/game-settings');
+        const { data } = await axios.get('/api/user/phone-verification-settings');
         setPhoneVerificationSettings({
-          enabled: data?.phoneVerification?.enabled !== false,
-          requireForRegistration: data?.phoneVerification?.requireForRegistration !== false
+          enabled: data?.enabled !== false,
+          requireForRegistration: data?.requireForRegistration !== false
         });
       } catch (err) {
         console.error('Failed to fetch phone verification settings:', err);

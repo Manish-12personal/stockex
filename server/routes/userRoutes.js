@@ -1857,6 +1857,21 @@ router.get('/demo/info', protectUser, async (req, res) => {
   }
 });
 
+// PUBLIC: Get phone verification settings (no auth required for signup flow)
+router.get('/phone-verification-settings', async (req, res) => {
+  try {
+    const settings = await GameSettings.getSettings();
+    const settingsObj = settings.toObject();
+    
+    res.json({
+      enabled: settingsObj.phoneVerification?.enabled !== false,
+      requireForRegistration: settingsObj.phoneVerification?.requireForRegistration !== false
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // PUBLIC: Get game settings for frontend (user-facing)
 router.get('/game-settings', protectUser, async (req, res) => {
   try {
@@ -1893,6 +1908,8 @@ router.get('/game-settings', protectUser, async (req, res) => {
           ...(game.biddingEndTime !== undefined && { biddingEndTime: game.biddingEndTime }),
           // Nifty Bracket specific
           ...(game.bracketGap !== undefined && { bracketGap: game.bracketGap }),
+          ...(game.bracketGapType !== undefined && { bracketGapType: game.bracketGapType }),
+          ...(game.bracketGapPercent !== undefined && { bracketGapPercent: game.bracketGapPercent }),
           ...(game.expiryMinutes !== undefined && { expiryMinutes: game.expiryMinutes }),
           ...(key === 'niftyBracket' && {
             resultTime:
