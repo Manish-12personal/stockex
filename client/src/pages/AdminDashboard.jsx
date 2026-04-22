@@ -7862,6 +7862,10 @@ const LedgerView = () => {
   const [loading, setLoading] = useState(true);
   const [gameOptions, setGameOptions] = useState(WALLET_LEDGER_GAME_OPTIONS);
   const [ledgerGameFilter, setLedgerGameFilter] = useState('all');
+  const [showInfoModal, setShowInfoModal] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState(null);
+  const [hierarchyData, setHierarchyData] = useState(null);
+  const [loadingHierarchy, setLoadingHierarchy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -7900,6 +7904,33 @@ const LedgerView = () => {
   useEffect(() => {
     fetchLedger();
   }, [fetchLedger]);
+
+  const handleShowInfo = async (entry) => {
+    setSelectedEntry(entry);
+    setShowInfoModal(true);
+    setLoadingHierarchy(true);
+    
+    // Get user code from entry
+    const userCode = entry.transactionSlip?.userCode || entry.userCode;
+    
+    if (!userCode) {
+      setLoadingHierarchy(false);
+      setHierarchyData(null);
+      return;
+    }
+    
+    try {
+      const { data } = await axios.get(`/api/admin/manage/user-hierarchy/${userCode}`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setHierarchyData(data);
+    } catch (error) {
+      console.error('Error fetching hierarchy:', error);
+      setHierarchyData(null);
+    } finally {
+      setLoadingHierarchy(false);
+    }
+  };
 
   return (
     <div className="p-4 md:p-6">
@@ -7944,6 +7975,7 @@ const LedgerView = () => {
                 </th>
                 <th className="text-right px-4 py-3 text-gray-400">Amount</th>
                 <th className="text-right px-4 py-3 text-gray-400">Balance</th>
+                <th className="text-left px-4 py-3 text-gray-400">Info</th>
               </tr>
             </thead>
             <tbody>
@@ -7993,10 +8025,101 @@ const LedgerView = () => {
                     {entry.type === 'CREDIT' ? '+' : '-'}₹{entry.amount.toLocaleString()}
                   </td>
                   <td className="px-4 py-3 text-right">₹{entry.balanceAfter.toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => handleShowInfo(entry)}
+                      className="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors text-sm font-medium"
+                    >
+                      Info
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      
+      {showInfoModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-dark-600">
+            <div className="sticky top-0 bg-dark-800 border-b border-dark-600 p-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold">Transaction Info</h3>
+              <button onClick={() => setShowInfoModal(false)} className="text-gray-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-4 space-y-4">
+              {loadingHierarchy ? (
+                <div className="text-center py-8">
+                  <RefreshCw className="animate-spin inline mx-auto" />
+                  <p className="text-gray-400 mt-2">Loading hierarchy...</p>
+                </div>
+              ) : (
+                <>
+                  <div className="bg-dark-700 rounded-lg p-4">
+                    <h4 className="font-semibold mb-3 flex items-center gap-2">
+                      <User className="w-4 h-4 text-blue-400" />
+                      User Details
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <div className="text-gray-400 text-xs">Name</div>
+                        <div className="text-white">{selectedEntry?.transactionSlip?.userName || selectedEntry?.userName || 'N/A'}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400 text-xs">User Code</div>
+                        <div className="text-white font-mono">{selectedEntry?.transactionSlip?.userCode || selectedEntry?.userCode || 'N/A'}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400 text-xs">Transaction Type</div>
+                        <div className="text-white">{selectedEntry?.type || 'N/A'}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400 text-xs">Amount</div>
+                        <div className={`font-semibold ${selectedEntry?.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'}`}>
+                          {selectedEntry?.type === 'CREDIT' ? '+' : '-'}₹{selectedEntry?.amount?.toLocaleString() || '0'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {hierarchyData && hierarchyData.hierarchy && hierarchyData.hierarchy.length > 0 ? (
+                    <div className="bg-dark-700 rounded-lg p-4">
+                      <h4 className="font-semibold mb-3 flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-blue-400" />
+                        User Hierarchy
+                      </h4>
+                      <div className="space-y-2">
+                        {hierarchyData.hierarchy.map((admin, index) => (
+                          <div key={index} className="flex items-center gap-2 text-sm">
+                            {index > 0 && <ArrowDown className="w-4 h-4 text-blue-500/50" />}
+                            <div className="flex-1 bg-dark-600 rounded p-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-white font-medium">{admin.name}</span>
+                                <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded">
+                                  {admin.role === 'ADMIN' ? 'Admin' : 
+                                   admin.role === 'BROKER' ? 'Broker' : 
+                                   admin.role === 'SUB_BROKER' ? 'Sub-Broker' : 
+                                   admin.role === 'SUPER_ADMIN' ? 'Super Admin' : admin.role}
+                                </span>
+                              </div>
+                              <div className="text-xs text-blue-400 font-mono mt-1">{admin.adminCode}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-dark-700 rounded-lg p-4 text-center text-gray-400">
+                      No hierarchy information available
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

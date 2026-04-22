@@ -1512,4 +1512,52 @@ router.get('/brokerage-tracking/user-hierarchy/:trackingId', protectAdmin, async
   }
 });
 
+// Get user hierarchy by userCode for ledger transactions
+router.get('/manage/user-hierarchy/:userCode', protectAdmin, async (req, res) => {
+  try {
+    const { userCode } = req.params;
+    
+    // Find user by userCode
+    const user = await User.findOne({ userCode }).populate('createdBy', 'adminCode name username role parentId');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Build full hierarchy chain
+    const hierarchy = [];
+    let currentAdmin = user.createdBy;
+    
+    while (currentAdmin) {
+      hierarchy.unshift({
+        adminCode: currentAdmin.adminCode,
+        name: currentAdmin.name || currentAdmin.username || currentAdmin.adminCode,
+        role: currentAdmin.role
+      });
+      
+      // Fetch parent if exists
+      if (currentAdmin.parentId) {
+        currentAdmin = await Admin.findById(currentAdmin.parentId).select('adminCode name username role parentId');
+      } else {
+        currentAdmin = null;
+      }
+    }
+    
+    res.json({
+      user: {
+        username: user.username,
+        email: user.email,
+        name: user.name,
+        phone: user.phone,
+        userCode: user.userCode,
+        adminCode: user.adminCode
+      },
+      hierarchy: hierarchy
+    });
+  } catch (error) {
+    console.error('Error fetching user hierarchy by userCode:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;
