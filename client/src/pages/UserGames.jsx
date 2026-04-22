@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { flushSync } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import axios from '../config/axios';
 import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
@@ -1649,10 +1650,12 @@ const GameLivePricePanel = ({
 
   const pushLive = useCallback((price, changePayload, tickData) => {
     if (!price || price <= 0 || !Number.isFinite(price)) return;
+    console.log('[GameLivePricePanel] pushLive called with price:', price);
     setUsingDummyPrice(false);
     onDemoPriceActiveRef.current?.(false);
     setLivePrice(price);
     setLastKnownPrice(price);
+    console.log('[GameLivePricePanel] Calling onPriceUpdate callback with:', price);
     onPriceUpdateRef.current?.(price);
     if (!isBTC && niftyLtpTapeRef.current) {
       const rounded = Math.round(Number(price) * 100) / 100;
@@ -1820,10 +1823,9 @@ const GameLivePricePanel = ({
 
     if (!isBTC) {
       socket.on('market_tick', (ticks) => {
-        if (!isNseCashMarketOpen()) return;
         const niftyTick = ticks['256265'] ?? ticks[256265];
         if (!niftyTick) return;
-        // Update LTP in real-time from socket ticks
+        // Update LTP in real-time from socket ticks (even after market hours for Nifty Bracket)
         if (!isLiveRef.current) {
           isLiveRef.current = true;
           setIsLiveConnected(true);
@@ -5149,8 +5151,10 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               onPriceUpdate={(p) => {
                 if (p != null && Number.isFinite(p) && p > 0) {
                   console.log('[NiftyBracket] Price update from socket:', p);
-                  setCurrentPrice(p);
-                  setPriceUpdateTick(t => t + 1);
+                  flushSync(() => {
+                    setCurrentPrice(p);
+                    setPriceUpdateTick(t => t + 1);
+                  });
                 }
               }}
               onFallbackPrice={(p) => {
