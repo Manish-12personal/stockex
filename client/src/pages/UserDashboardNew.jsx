@@ -1276,6 +1276,9 @@ const UserProfile = () => {
                   {availableBrokers.map(broker => (
                     <option key={broker._id} value={broker.adminCode}>
                       {broker.name || broker.username} ({broker.adminCode}) - {broker.role}
+                      {broker.hierarchy && broker.hierarchy.length > 1 && 
+                        ` [Hierarchy: ${broker.hierarchy.map(h => h.name).join(' → ')}]`
+                      }
                     </option>
                   ))}
                 </select>
