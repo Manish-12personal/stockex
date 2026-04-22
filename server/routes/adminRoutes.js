@@ -1453,4 +1453,63 @@ router.get('/brokerage-tracking/summary', protectAdmin, async (req, res) => {
   }
 });
 
+// Get user hierarchy info for brokerage tracking
+router.get('/brokerage-tracking/user-hierarchy/:trackingId', protectAdmin, async (req, res) => {
+  try {
+    const tracking = await BrokerageTracking.findById(req.params.trackingId).populate('user', 'username email name phone');
+    
+    if (!tracking) {
+      return res.status(404).json({ message: 'Tracking record not found' });
+    }
+    
+    // Verify this tracking belongs to current admin
+    if (tracking.adminId.toString() !== req.admin._id.toString()) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+    
+    // Get user hierarchy
+    const user = tracking.user;
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    const hierarchy = [];
+    let currentAdmin = await Admin.findOne({ adminCode: user.adminCode }).select('adminCode name username role parentId');
+    
+    if (currentAdmin) {
+      hierarchy.push({
+        adminCode: currentAdmin.adminCode,
+        name: currentAdmin.name || currentAdmin.username || currentAdmin.adminCode,
+        role: currentAdmin.role
+      });
+      
+      // Traverse up the hierarchy chain
+      while (currentAdmin.parentId) {
+        currentAdmin = await Admin.findById(currentAdmin.parentId).select('adminCode name username role parentId');
+        if (currentAdmin) {
+          hierarchy.push({
+            adminCode: currentAdmin.adminCode,
+            name: currentAdmin.name || currentAdmin.username || currentAdmin.adminCode,
+            role: currentAdmin.role
+          });
+        }
+      }
+    }
+    
+    res.json({
+      user: {
+        username: user.username,
+        email: user.email,
+        name: user.name,
+        phone: user.phone,
+        adminCode: user.adminCode
+      },
+      hierarchy: hierarchy
+    });
+  } catch (error) {
+    console.error('Error fetching user hierarchy:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;

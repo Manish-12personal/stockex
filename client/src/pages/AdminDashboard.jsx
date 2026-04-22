@@ -27,6 +27,7 @@ import {
   X,
   ArrowUpCircle,
   ArrowDownCircle,
+  ArrowDown,
   RefreshCw,
   Menu,
   Shield,
@@ -36,6 +37,7 @@ import {
   Building2,
   Settings,
   UserPlus,
+  User,
   Copy,
   ChevronLeft,
   ChevronRight,
@@ -6122,6 +6124,10 @@ const BrokerageTracking = () => {
   const [statusFilter, setStatusFilter] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [showInfoModal, setShowInfoModal] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState(null);
+  const [hierarchyData, setHierarchyData] = useState(null);
+  const [loadingHierarchy, setLoadingHierarchy] = useState(false);
 
   useEffect(() => {
     fetchTrackingData();
@@ -6171,6 +6177,23 @@ const BrokerageTracking = () => {
     if (field === 'start') setStartDate(value);
     else setEndDate(value);
     setPage(1);
+  };
+
+  const handleShowInfo = async (record) => {
+    setSelectedRecord(record);
+    setShowInfoModal(true);
+    setLoadingHierarchy(true);
+    
+    try {
+      const { data } = await axios.get(`/api/admin/brokerage-tracking/user-hierarchy/${record._id}`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setHierarchyData(data);
+    } catch (error) {
+      console.error('Error fetching hierarchy:', error);
+    } finally {
+      setLoadingHierarchy(false);
+    }
   };
 
   const totalPages = Math.ceil(total / 20);
@@ -6255,18 +6278,19 @@ const BrokerageTracking = () => {
                 <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Symbol</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Status</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Date</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-300">Info</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="px-4 py-8 text-center">
+                  <td colSpan="8" className="px-4 py-8 text-center">
                     <RefreshCw className="animate-spin inline mx-auto" size={24} />
                   </td>
                 </tr>
               ) : records.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan="8" className="px-4 py-8 text-center text-gray-400">
                     No brokerage tracking records found
                   </td>
                 </tr>
@@ -6300,6 +6324,14 @@ const BrokerageTracking = () => {
                     <td className="px-4 py-3 text-sm text-gray-400">
                       {new Date(record.createdAt).toLocaleString()}
                     </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => handleShowInfo(record)}
+                        className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
+                      >
+                        Info
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -6332,6 +6364,104 @@ const BrokerageTracking = () => {
           </div>
         )}
       </div>
+
+      {/* Info Modal */}
+      {showInfoModal && selectedRecord && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-dark-800 rounded-xl border border-dark-600 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-white">User Info & Hierarchy</h2>
+                <button
+                  onClick={() => setShowInfoModal(false)}
+                  className="text-gray-400 hover:text-white transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              {loadingHierarchy ? (
+                <div className="flex items-center justify-center py-8">
+                  <RefreshCw className="animate-spin text-blue-400" size={32} />
+                </div>
+              ) : hierarchyData ? (
+                <div className="space-y-6">
+                  {/* User Details */}
+                  <div className="bg-dark-700 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                      <User size={20} className="text-blue-400" />
+                      User Details
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <div className="text-sm text-gray-400">Name</div>
+                        <div className="text-white font-medium">{hierarchyData.user.name || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-400">Username</div>
+                        <div className="text-white font-medium">{hierarchyData.user.username || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-400">Email</div>
+                        <div className="text-white font-medium">{hierarchyData.user.email || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-400">Phone</div>
+                        <div className="text-white font-medium">{hierarchyData.user.phone || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-400">Admin Code</div>
+                        <div className="text-white font-medium">{hierarchyData.user.adminCode || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-400">Brokerage Amount</div>
+                        <div className="text-green-400 font-semibold">₹{selectedRecord.amount.toLocaleString()}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Hierarchy */}
+                  <div className="bg-dark-700 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                      <Building2 size={20} className="text-blue-400" />
+                      User Hierarchy
+                    </h3>
+                    {hierarchyData.hierarchy.length > 0 ? (
+                      <div className="space-y-3">
+                        {hierarchyData.hierarchy.map((admin, index) => (
+                          <div key={index} className="flex items-center gap-3 p-3 bg-dark-600 rounded-lg">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-white font-medium">{admin.name}</span>
+                                <span className="text-xs px-2 py-1 bg-blue-500/20 text-blue-400 rounded">
+                                  {admin.role === 'ADMIN' ? 'Admin' : 
+                                   admin.role === 'BROKER' ? 'Broker' : 
+                                   admin.role === 'SUB_BROKER' ? 'Sub-Broker' : 
+                                   admin.role === 'SUPER_ADMIN' ? 'Super Admin' : admin.role}
+                                </span>
+                              </div>
+                              <div className="text-xs text-gray-400 font-mono mt-1">{admin.adminCode}</div>
+                            </div>
+                            {index < hierarchyData.hierarchy.length - 1 && (
+                              <div className="text-gray-500">
+                                <ArrowDown size={16} />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-gray-400 text-sm">No hierarchy information available</div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-gray-400 text-center py-8">Failed to load hierarchy information</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
