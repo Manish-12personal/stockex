@@ -1217,14 +1217,14 @@ const niftyLtpEndSecForWindowNum = (winNum, openTime, roundDurationSec) => {
   return m + winNum * D - 1;
 };
 
-/** Scheduled result instant for window `winNum` (1-based), 15 minutes after window ends. */
-const niftyResultSecForWindowNum = (winNum, openTime, roundDurationSec) => {
+/** Scheduled LTP instant for window `winNum` (1-based), at start of next window. */
+const niftyOpenFixSecForWindowNum = (winNum, openTime, roundDurationSec) => {
   const m = niftyMarketOpenSnappedSecForGame(openTime);
   const D = Math.max(
     NIFTY_UP_DOWN_MIN_ROUND_SEC,
     Number(roundDurationSec) || DEFAULT_NIFTY_ROUND_DURATION_SEC,
   );
-  return m + winNum * D - 1 + D;
+  return m + winNum * D;
 };
 
 const formatCountdown = (totalSec) => {
@@ -1273,8 +1273,8 @@ const getTradingWindowInfo = (openTime, closeTime, roundDurationSec = DEFAULT_NI
   const windowIndex = Math.floor(secSinceMarketOpen / D);
   const windowStartSec = marketOpenSec + windowIndex * D;
   const windowEndSec = marketOpenSec + (windowIndex + 1) * D - 1;
-  const ltpTimeSec = windowEndSec;
-  const resultTimeSec = windowEndSec + D;
+  const ltpTimeSec = marketOpenSec + (windowIndex + 1) * D;
+  const resultTimeSec = marketOpenSec + (windowIndex + 2) * D;
 
   if (windowEndSec >= marketCloseSec) {
     return {
@@ -3053,8 +3053,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       const history = [];
       const currentWin = windowInfo.windowNumber;
       
-      // Get last 4 windows (1 hour = 4 x 15min windows)
-      for (let i = 3; i >= 0; i--) {
+      // Get last 4 windows (1 hour = 4 x 15min windows), newest first
+      for (let i = 0; i < 4; i++) {
         const winNum = currentWin - i - 1;
         if (winNum <= 0) continue;
         
