@@ -44,14 +44,32 @@ function mockPeriodMsForInterval(interval) {
   }
 }
 
-// Get BTC historical data (1-hour candles for last 24 hours)
+// Get BTC historical data with interval parameter (5m, 15m, 30m, 1h)
 router.get('/btc-history', async (req, res) => {
   try {
+    // Parse interval parameter (default 5m)
+    const intervalParam = req.query.interval || '5m';
+    
+    // Map frontend interval to Binance interval
+    const intervalMap = {
+      '5m': '5m',
+      '5minute': '5m',
+      '15m': '15m',
+      '15minute': '15m',
+      '30m': '30m',
+      '30minute': '30m',
+      '1h': '1h',
+      '1hour': '1h',
+      '60m': '1h',
+      '60minute': '1h'
+    };
+    const binanceInterval = intervalMap[intervalParam] || '5m';
+    
     // Fetch from Binance API
     const response = await axios.get('https://api.binance.com/api/v3/klines', {
       params: {
         symbol: 'BTCUSDT',
-        interval: '5m', // 5-minute candles
+        interval: binanceInterval,
         limit: 100 // Last 100 candles
       }
     });
@@ -67,8 +85,8 @@ router.get('/btc-history', async (req, res) => {
       volume: parseFloat(candle[5])
     }));
 
-    console.log(`BTC History: Returning ${data.length} candles`);
-    res.json({ success: true, data });
+    console.log(`BTC History: Returning ${data.length} candles (interval: ${binanceInterval})`);
+    res.json({ success: true, interval: binanceInterval, data });
   } catch (error) {
     console.error('Error fetching BTC history:', error);
     res.status(500).json({ 

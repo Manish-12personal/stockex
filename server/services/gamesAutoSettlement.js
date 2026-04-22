@@ -28,6 +28,19 @@ import {
 import { niftyResultSecForWindow } from '../../lib/niftyUpDownWindows.js';
 import { resolveNiftyJackpotSpotPrice } from '../utils/niftyJackpotRank.js';
 
+/**
+ * Helper function to get previous window's close price for BTC comparison
+ */
+async function getPreviousWindowClosePrice(windowNumber, today, dayStart, dayEnd) {
+  const GameResult = (await import('../models/GameResult.js')).default;
+  const prevRow = await GameResult.findOne({
+    gameId: 'btcupdown',
+    windowNumber,
+    windowDate: { $gte: dayStart, $lt: dayEnd },
+  }).select({ closePrice: 1 }).lean();
+  return prevRow?.closePrice || null;
+}
+
 function istSecondsNow() {
   const t = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false });
   const parts = t.split(':').map((x) => parseInt(x, 10));
@@ -229,7 +242,10 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
     }
 
     const closeSrc = resolvedClose.source;
-    const priceChange = closePx - openPrice;
+    // Compare with previous window's close price instead of current window's open price
+    const prevWindowClosePrice = rw > 1 ? await getPreviousWindowClosePrice(rw - 1, today, dayStart, dayEnd) : null;
+    const comparisonPrice = prevWindowClosePrice || openPrice;
+    const priceChange = closePx - comparisonPrice;
     const result = priceChange > 0 ? 'UP' : priceChange < 0 ? 'DOWN' : 'TIE';
     try {
       await GameResult.create({
@@ -239,14 +255,14 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
         openPrice,
         closePrice: closePx,
         priceChange,
-        priceChangePercent: openPrice > 0 ? (priceChange / openPrice) * 100 : 0,
+        priceChangePercent: comparisonPrice > 0 ? (priceChange / comparisonPrice) * 100 : 0,
         result,
         windowStartTime: fmtT(openRefSec),
         windowEndTime: fmtT(closeRefSec),
         resultTime: new Date(nowMs),
       });
       console.log(
-        `[btcUpDown] ✅ GameResult w=${rw} ${result} open=${openPrice}@${fmtT(openRefSec)} close=${closePx}@${fmtT(closeRefSec)} (openSrc=${resolvedOpen.source} closeSrc=${closeSrc})`
+        `[btcUpDown] ✅ GameResult w=${rw} ${result} comparisonPrice=${comparisonPrice} close=${closePx}@${fmtT(closeRefSec)} (openSrc=${resolvedOpen.source} closeSrc=${closeSrc})`
       );
     } catch (e) {
       if (e.code !== 11000) throw e;

@@ -1151,6 +1151,15 @@ const NIFTY_KITE_CHART_OPTIONS = [
   { kite: '60minute', label: '1h' },
 ];
 
+/** Persisted chart TF for BTC up/down */
+const LS_BTC_CHART_INTERVAL = 'stockex_btc_chart_interval';
+const BTC_CHART_OPTIONS = [
+  { interval: '5m', label: '5m' },
+  { interval: '15m', label: '15m' },
+  { interval: '30m', label: '30m' },
+  { interval: '1h', label: '1h' },
+];
+
 // Parse "HH:MM" or "HH:MM:SS" into total seconds since midnight
 const parseTimeToSec = (timeStr) => {
   const parts = (timeStr || '').split(':').map(Number);
@@ -1651,6 +1660,17 @@ const GameLivePricePanel = ({
     }
     return '15minute';
   });
+  /** BTC chart interval (default 5m) */
+  const [btcChartInterval, setBtcChartInterval] = useState(() => {
+    if (typeof window === 'undefined') return '5m';
+    try {
+      const v = localStorage.getItem(LS_BTC_CHART_INTERVAL);
+      if (v && BTC_CHART_OPTIONS.some((o) => o.interval === v)) return v;
+    } catch {
+      /* ignore */
+    }
+    return '5m';
+  });
   const [ltpTapeRows, setLtpTapeRows] = useState([]);
 
   const isBTC = gameId === 'btcupdown';
@@ -1750,7 +1770,7 @@ const GameLivePricePanel = ({
       try {
         setLoadingHistory(true);
         const endpoint = isBTC
-          ? '/api/market/btc-history'
+          ? `/api/market/btc-history?interval=${encodeURIComponent(btcChartInterval)}`
           : `/api/market/nifty-history?interval=${encodeURIComponent(niftyChartInterval)}`;
         console.log('Fetching historical data from:', endpoint);
         const response = await axios.get(endpoint);
@@ -1762,15 +1782,13 @@ const GameLivePricePanel = ({
           : response.data?.data;
         if (rawRows && rawRows.length > 0) {
           const formatted = rawRows.map((candle) => ({
-            time: candle.time
-              ? candle.time
-              : Math.floor(new Date(candle.timestamp).getTime() / 1000),
-            open: parseFloat(candle.open),
-            high: parseFloat(candle.high),
-            low: parseFloat(candle.low),
-            close: parseFloat(candle.close),
+            time: Math.floor(new Date(candle.time || candle.timestamp).getTime() / 1000),
+            timestamp: candle.timestamp || candle.time,
+            open: Number(candle.open),
+            high: Number(candle.high),
+            low: Number(candle.low),
+            close: Number(candle.close),
           }));
-          console.log('Formatted historical data:', formatted.length, 'candles');
           setHistoricalData(formatted);
         }
       } catch (error) {
@@ -1781,7 +1799,7 @@ const GameLivePricePanel = ({
     };
 
     fetchHistoricalData();
-  }, [isBTC, niftyChartInterval]);
+  }, [isBTC, niftyChartInterval, btcChartInterval]);
 
   useEffect(() => {
     const id = setInterval(() => setSessionClock((c) => c + 1), 20000);
@@ -2100,10 +2118,36 @@ const GameLivePricePanel = ({
           ))}
         </div>
       )}
+      {isBTC && (
+        <div className="mb-2 flex flex-wrap items-center justify-center gap-1.5">
+          <span className="text-[10px] text-gray-500 mr-0.5">BTC · chart = Binance</span>
+          {BTC_CHART_OPTIONS.map(({ interval, label }) => (
+            <button
+              key={interval}
+              type="button"
+              onClick={() => {
+                setBtcChartInterval(interval);
+                try {
+                  localStorage.setItem(LS_BTC_CHART_INTERVAL, interval);
+                } catch {
+                  /* ignore */
+                }
+              }}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
+                btcChartInterval === interval
+                  ? 'bg-orange-600/30 border-orange-500/50 text-orange-200'
+                  : 'bg-dark-700/50 border-slate-600/40 text-gray-400 hover:border-slate-500'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="mt-2 sm:mt-4 flex flex-col min-h-0 flex-1">
         <div className="min-h-0 flex-1 overflow-hidden max-lg:max-h-[min(32vh,320px)]">
           <LiveChart
-            key={isBTC ? 'btc-chart' : `nifty-${niftyChartInterval}`}
+            key={isBTC ? `btc-${btcChartInterval}` : `nifty-${niftyChartInterval}`}
             symbol={symbol}
             isBTC={isBTC}
             livePrice={displayPrice}
@@ -2712,9 +2756,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
           const resultPx = parseFloat(resultPrice.toFixed(2));
           const grDir = pickLatestGameResultForWindow(gameResultsRef.current, pw.windowNumber);
+          const prevWindowGrDir = pickLatestGameResultForWindow(gameResultsRef.current, pw.windowNumber - 1);
+          // For BTC, compare with previous window's close price instead of current window's open price
           const diffForDirection =
             isBTC || game.id === 'updown'
-              ? (Number(grDir?.closePrice) || 0) - (Number(grDir?.openPrice) || 0)
+              ? (Number(grDir?.closePrice) || 0) - (Number(prevWindowGrDir?.closePrice) || Number(grDir?.openPrice) || 0)
               : resultPrice - pw.windowEndLTP;
           const direction =
             diffForDirection > 0 ? 'UP' : diffForDirection < 0 ? 'DOWN' : 'TIE';
