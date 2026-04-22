@@ -177,29 +177,26 @@ const AdminLogin = () => {
 
               {/* Show parent admin info on login form */}
               {!isSetup && hierarchyInfo && hierarchyInfo.length > 0 && (
-                <div className="mb-4 p-4 bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/30 rounded-xl">
-                  <div className="flex items-center gap-2 mb-3">
+                <div className="mb-4 p-3 bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/30 rounded-xl">
+                  <div className="flex items-center gap-2">
                     <Building2 className="w-5 h-5 text-purple-400" />
-                    <span className="text-sm font-semibold text-purple-400">Your Hierarchy</span>
-                  </div>
-                  <div className="space-y-2">
-                    {hierarchyInfo.map((admin, index) => (
-                      <div key={index} className="flex items-center gap-2 text-sm">
-                        {index > 0 && <div className="w-4 h-0.5 bg-purple-500/30"></div>}
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-white font-medium">{admin.name}</span>
-                            <span className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">
-                              {admin.role === 'ADMIN' ? 'Admin' : 
-                               admin.role === 'BROKER' ? 'Broker' : 
-                               admin.role === 'SUB_BROKER' ? 'Sub-Broker' : 
-                               admin.role === 'SUPER_ADMIN' ? 'Super Admin' : admin.role}
-                            </span>
-                          </div>
-                          <div className="text-xs text-purple-400 font-mono">{admin.adminCode}</div>
-                        </div>
+                    <div className="flex-1">
+                      <div className="text-xs text-gray-400">
+                        {currentRole === 'ADMIN' ? 'Admin Under' : 
+                         currentRole === 'BROKER' ? 'Broker Under' : 
+                         currentRole === 'SUB_BROKER' ? 'Sub-Broker Under' : 'Under'}
                       </div>
-                    ))}
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-medium">{hierarchyInfo[0].name}</span>
+                        <span className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">
+                          {hierarchyInfo[0].role === 'ADMIN' ? 'Admin' : 
+                           hierarchyInfo[0].role === 'BROKER' ? 'Broker' : 
+                           hierarchyInfo[0].role === 'SUB_BROKER' ? 'Sub-Broker' : 
+                           hierarchyInfo[0].role === 'SUPER_ADMIN' ? 'Super Admin' : hierarchyInfo[0].role}
+                        </span>
+                      </div>
+                      <div className="text-sm text-purple-400 font-mono mt-1">{hierarchyInfo[0].adminCode}</div>
+                    </div>
                   </div>
                 </div>
               )}
