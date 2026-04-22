@@ -1503,39 +1503,19 @@ router.get('/available-brokers', protectUser, async (req, res) => {
     }
     
     const admins = await Admin.find(query)
-      .select('name username adminCode role parentId hierarchyPath')
+      .select('name username adminCode role')
       .sort({ role: 1, name: 1 });
     
-    // Build hierarchy info for each admin
-    const adminsWithHierarchy = await Promise.all(admins.map(async (admin) => {
-      const hierarchy = [];
-      let current = admin;
-      
-      while (current) {
-        hierarchy.unshift({
-          adminCode: current.adminCode,
-          name: current.name || current.username || current.adminCode,
-          role: current.role
-        });
-        
-        if (current.parentId) {
-          current = await Admin.findById(current.parentId).select('adminCode name username role parentId');
-        } else {
-          current = null;
-        }
-      }
-      
-      return {
-        _id: admin._id,
-        adminCode: admin.adminCode,
-        name: admin.name || admin.username || admin.adminCode,
-        username: admin.username,
-        role: admin.role,
-        hierarchy: hierarchy
-      };
+    // Return simple broker info without hierarchy
+    const simpleAdmins = admins.map(admin => ({
+      _id: admin._id,
+      adminCode: admin.adminCode,
+      name: admin.name || admin.username || admin.adminCode,
+      username: admin.username,
+      role: admin.role
     }));
     
-    res.json(adminsWithHierarchy);
+    res.json(simpleAdmins);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
