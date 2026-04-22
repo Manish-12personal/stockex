@@ -4684,6 +4684,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [timerTick, setTimerTick] = useState(0); // For live countdown
   const [sessionClearing, setSessionClearing] = useState(null);
   const [bidAsk, setBidAsk] = useState({ bid: null, ask: null });
+  const [priceUpdateTick, setPriceUpdateTick] = useState(0);
   const resolveCheckRef = useRef(null);
 
   const fetchActiveTrades = useCallback(async () => {
@@ -5146,7 +5147,11 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               fullHeight
               niftyLtpTape
               onPriceUpdate={(p) => {
-                if (p != null && Number.isFinite(p) && p > 0) setCurrentPrice(p);
+                if (p != null && Number.isFinite(p) && p > 0) {
+                  console.log('[NiftyBracket] Price update from socket:', p);
+                  setCurrentPrice(p);
+                  setPriceUpdateTick(t => t + 1);
+                }
               }}
               onFallbackPrice={(p) => {
                 if (p != null && Number.isFinite(p) && p > 0) setCurrentPrice(p);
@@ -5216,7 +5221,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 ) : (
                   <>
                     {/* Current LTP Display */}
-                    <div className={`rounded-xl p-3 mb-3 text-center border ${
+                    <div key={`ltp-${priceUpdateTick}`} className={`rounded-xl p-3 mb-3 text-center border ${
                       lockedDisplayPrice ? 'bg-green-900/30 border-green-500/50' : 'bg-dark-700 border-cyan-500/30'
                     }`}>
                       <div className={`text-[10px] mb-1 flex items-center justify-center gap-1 ${
@@ -5225,7 +5230,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                         {lockedDisplayPrice && <Lock size={10} />}
                         {lockedDisplayPrice ? `${lockedDisplayPrice === upperTarget ? 'BUY TARGET (Locked)' : 'LTP'}` : 'NIFTY 50 LTP'}
                       </div>
-                      <div className="text-lg sm:text-xl">
+                      <div className="text-lg sm:text-xl" key={currentPrice}>
                         {renderInrRedPaise(lockedDisplayPrice || sessionClearing || currentPrice, 'text-lg sm:text-xl text-cyan-300')}
                       </div>
                       <div className="text-[10px] text-gray-500 mt-1">
