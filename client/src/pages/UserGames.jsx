@@ -2943,14 +2943,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       lastCompletedWindow?.windowNumber === winNum ? lastCompletedWindow : null;
     const serverRaw = pickLatestGameResultForWindow(gameResults, winNum);
     let server = serverRaw;
-    // For BTC, only hide result if current time is before result time AND window is not yet completed
-    // Allow showing results for previous completed windows
-    if (isBTC && serverRaw && !completed) {
-      const nowSec = currentTotalSecondsISTLib();
-      if (nowSec < btcResultRefSecForUiWindow(winNum)) {
-        server = null;
-      }
-    }
 
     const btcRefClock = (sec) => {
       const h = Math.floor(sec / 3600) % 24;
@@ -3015,19 +3007,13 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
     if (server) {
       const resultWhen = btcRefClock(btcResultRefSecForUiWindow(winNum));
-      // For BTC, check if result time has passed to show resolved or pending
-      const nowSec = currentTotalSecondsISTLib();
-      const resultSec = btcResultRefSecForUiWindow(winNum);
-      const isResultReady = nowSec >= resultSec;
-      
+      // Show result if available in gameResults
       return {
         ltp: server.openPrice,
         ltpWhen: server.ltpTime || '', // Show when LTP was captured
-        resolved: isResultReady,
-        resultPrice: isResultReady ? server.closePrice : null,
-        marketDirection: isResultReady 
-          ? (server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE')
-          : null,
+        resolved: true,
+        resultPrice: server.closePrice,
+        marketDirection: server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE',
         resultWhen,
         resultAt: resultWhen,
       };
