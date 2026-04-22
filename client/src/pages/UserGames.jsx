@@ -1595,6 +1595,8 @@ const GameLivePricePanel = ({
   onPriceDataUpdate,
   /** Nifty only: show scrollable LTP + IST time log under the chart (e.g. Nifty Bracket). */
   niftyLtpTape = false,
+  /** Callback for bid/ask price updates (for Nifty Bracket) */
+  onBidAskUpdate,
 }) => {
   const socketRef = useRef(null);
   const isLiveRef = useRef(false);
@@ -1607,6 +1609,8 @@ const GameLivePricePanel = ({
   onSessionClearingUpdateRef.current = onSessionClearingUpdate;
   const onPriceDataUpdateRef = useRef(onPriceDataUpdate);
   onPriceDataUpdateRef.current = onPriceDataUpdate;
+  const onBidAskUpdateRef = useRef(onBidAskUpdate);
+  onBidAskUpdateRef.current = onBidAskUpdate;
   onDemoPriceActiveRef.current = onDemoPriceActive;
   const livePriceRef = useRef(null);
   const historicalDataRef = useRef([]);
@@ -1821,6 +1825,13 @@ const GameLivePricePanel = ({
         if (!niftyTick) return;
         // Headline LTP from REST only; WS confirms feed is alive.
         setZerodhaConnected(true);
+        // Extract bid/ask for Nifty Bracket
+        if (niftyTick.bid !== undefined || niftyTick.ask !== undefined) {
+          onBidAskUpdateRef.current?.({
+            bid: niftyTick.bid || niftyTick.ltp,
+            ask: niftyTick.ask || niftyTick.ltp,
+          });
+        }
       });
     }
 
@@ -4665,6 +4676,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [lockedDisplayPrice, setLockedDisplayPrice] = useState(null);
   const [timerTick, setTimerTick] = useState(0); // For live countdown
   const [sessionClearing, setSessionClearing] = useState(null);
+  const [bidAsk, setBidAsk] = useState({ bid: null, ask: null });
   const resolveCheckRef = useRef(null);
 
   const fetchActiveTrades = useCallback(async () => {
@@ -4722,8 +4734,8 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
 
   // Calculate BUY/SELL prices with spread
-  const buyPrice = currentPrice ? currentPrice + 5 : null; // BUY price = current + 5
-  const sellPrice = currentPrice ? currentPrice - 5 : null; // SELL price = current - 5
+  const buyPrice = currentPrice ? currentPrice + bracketGap : null; // BUY price = current + bracketGap (20)
+  const sellPrice = currentPrice ? currentPrice - bracketGap : null; // SELL price = current - bracketGap (20)
 
   // Ticket conversion helpers
   const toTokens = (rs) => parseFloat((rs / tokenValue).toFixed(2));
@@ -5140,6 +5152,9 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   setSessionClearing(null);
                 }
               }}
+              onBidAskUpdate={(bidAskData) => {
+                setBidAsk(bidAskData);
+              }}
             />
           </div>
 
@@ -5233,7 +5248,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                         </div>
                         <div className="text-right">
                           <div className="text-white font-bold text-xl">₹{upperTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
-                          <div className="text-xs text-white/80">+{bracketGap} pts</div>
+                          <div className="text-xs text-white/80">+{bracketGap} pts • Bid: ₹{bidAsk.bid?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '—'}</div>
                         </div>
                       </div>
                     </button>
@@ -5260,7 +5275,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                         </div>
                         <div className="text-right">
                           <div className="text-white font-bold text-xl">₹{lowerTarget?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
-                          <div className="text-xs text-white/80">-{bracketGap} pts</div>
+                          <div className="text-xs text-white/80">-{bracketGap} pts • Ask: ₹{bidAsk.ask?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '—'}</div>
                         </div>
                       </div>
                     </button>
