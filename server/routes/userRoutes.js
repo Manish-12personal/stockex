@@ -442,7 +442,7 @@ router.post('/parent-info', async (req, res) => {
     // Start with the admin who created the user
     hierarchy.push({
       adminCode: currentAdmin.adminCode,
-      name: currentAdmin.name || currentAdmin.username,
+      name: currentAdmin.name || currentAdmin.username || currentAdmin.adminCode,
       role: currentAdmin.role
     });
     
@@ -452,7 +452,7 @@ router.post('/parent-info', async (req, res) => {
       if (currentAdmin) {
         hierarchy.push({
           adminCode: currentAdmin.adminCode,
-          name: currentAdmin.name || currentAdmin.username,
+          name: currentAdmin.name || currentAdmin.username || currentAdmin.adminCode,
           role: currentAdmin.role
         });
       }
@@ -1510,7 +1510,7 @@ router.get('/available-brokers', protectUser, async (req, res) => {
       while (current) {
         hierarchy.unshift({
           adminCode: current.adminCode,
-          name: current.name || current.username,
+          name: current.name || current.username || current.adminCode,
           role: current.role
         });
         
@@ -1524,7 +1524,7 @@ router.get('/available-brokers', protectUser, async (req, res) => {
       return {
         _id: admin._id,
         adminCode: admin.adminCode,
-        name: admin.name || admin.username,
+        name: admin.name || admin.username || admin.adminCode,
         username: admin.username,
         role: admin.role,
         hierarchy: hierarchy

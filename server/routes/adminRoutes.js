@@ -138,7 +138,7 @@ router.post('/parent-info', async (req, res) => {
     while (currentAdmin) {
       hierarchy.unshift({
         adminCode: currentAdmin.adminCode,
-        name: currentAdmin.name || currentAdmin.username,
+        name: currentAdmin.name || currentAdmin.username || currentAdmin.adminCode,
         role: currentAdmin.role
       });
       
