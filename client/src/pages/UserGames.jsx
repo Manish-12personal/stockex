@@ -3007,37 +3007,27 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
     if (server) {
       const resultWhen = btcRefClock(btcResultRefSecForUiWindow(winNum));
-      // For BTC, check if result time has passed to show resolved or pending
-      const nowSec = currentTotalSecondsISTLib();
-      const resultSec = btcResultRefSecForUiWindow(winNum);
-      const isResultReady = nowSec >= resultSec;
-      
+      // Show result immediately if available from server (no delay)
       return {
         ltp: server.openPrice,
         ltpWhen: server.ltpTime || '', // Show when LTP was captured
-        resolved: isResultReady,
-        resultPrice: isResultReady ? server.closePrice : null,
-        marketDirection: isResultReady 
-          ? (server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE')
-          : null,
+        resolved: true,
+        resultPrice: server.closePrice,
+        marketDirection: server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE',
         resultWhen,
         resultAt: resultWhen,
       };
     }
     if (pw) {
-      // Check if result time has passed
-      const nowSec = currentTotalSecondsISTLib();
-      const resultSec = btcResultRefSecForUiWindow(winNum);
-      const isResultReady = nowSec >= resultSec;
-      
+      // Show result immediately if resolved (no delay)
       return {
         ltp: pw.windowEndLTP || null,
         ltpWhen: pw.ltpTime || '', // Show when LTP was captured (window end time)
-        resolved: !!pw.resolved && isResultReady,
-        resultPrice: (pw.resolved && isResultReady) ? pw.resultPrice : null,
-        marketDirection: (pw.resolved && isResultReady) ? pw.marketDirection : null,
-        resultWhen: btcRefClock(resultSec),
-        resultAt: btcRefClock(resultSec),
+        resolved: !!pw.resolved,
+        resultPrice: pw.resolved ? pw.resultPrice : null,
+        marketDirection: pw.resolved ? pw.marketDirection : null,
+        resultWhen: btcRefClock(btcResultRefSecForUiWindow(winNum)),
+        resultAt: btcRefClock(btcResultRefSecForUiWindow(winNum)),
       };
     }
     if (completed) {
