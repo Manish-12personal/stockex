@@ -1560,4 +1560,44 @@ router.get('/manage/user-hierarchy/:userCode', protectAdmin, async (req, res) =>
   }
 });
 
+// Toggle referral distribution for an admin/broker/subbroker
+// SuperAdmin can toggle for any admin/broker/subbroker
+// Admin can toggle for their brokers
+// Broker can toggle for their subbrokers
+router.put('/manage/toggle-referral-distribution/:adminId', protectAdmin, async (req, res) => {
+  try {
+    const { adminId } = req.params;
+    const currentAdmin = req.admin;
+    
+    // Find the target admin
+    const targetAdmin = await Admin.findById(adminId);
+    if (!targetAdmin) {
+      return res.status(404).json({ message: 'Admin not found' });
+    }
+    
+    // Check authorization
+    // SuperAdmin can toggle for anyone
+    // Admin can toggle for their brokers (direct children)
+    // Broker can toggle for their subbrokers (direct children)
+    if (currentAdmin.role !== 'SUPER_ADMIN') {
+      // Check if target is a direct child of current admin
+      if (targetAdmin.parentId?.toString() !== currentAdmin._id.toString()) {
+        return res.status(403).json({ message: 'Not authorized to modify this admin' });
+      }
+    }
+    
+    // Toggle the referral distribution setting
+    targetAdmin.referralDistributionEnabled = !targetAdmin.referralDistributionEnabled;
+    await targetAdmin.save();
+    
+    res.json({
+      message: 'Referral distribution updated successfully',
+      referralDistributionEnabled: targetAdmin.referralDistributionEnabled
+    });
+  } catch (error) {
+    console.error('Error toggling referral distribution:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 export default router;

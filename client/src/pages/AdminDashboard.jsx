@@ -1703,6 +1703,30 @@ const AdminManagement = () => {
     }
   };
 
+  const handleToggleReferralDistribution = async (adminId) => {
+    try {
+      const { data } = await axios.put(`/api/admin/manage/toggle-referral-distribution/${adminId}`, {}, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      
+      // Update local state
+      setAdmins(prev => prev.map(adm => {
+        if (adm._id === adminId) {
+          return {
+            ...adm,
+            referralDistributionEnabled: data.referralDistributionEnabled
+          };
+        }
+        return adm;
+      }));
+      
+      alert(`Referral distribution ${data.referralDistributionEnabled ? 'enabled' : 'disabled'} successfully`);
+    } catch (error) {
+      console.error('Error toggling referral distribution:', error);
+      alert(error.response?.data?.message || 'Error toggling referral distribution');
+    }
+  };
+
   return (
     <div className="p-4 md:p-6">
       {/* Sticky Header with Create Button */}
@@ -1994,6 +2018,17 @@ const AdminManagement = () => {
                       <Lock size={16} /> Limits
                     </button>
                   )}
+                  <button
+                    onClick={() => handleToggleReferralDistribution(adm._id)}
+                    className={`px-3 py-2 rounded text-sm flex items-center gap-1 ${
+                      adm.referralDistributionEnabled === false 
+                        ? 'bg-gray-600 hover:bg-gray-700' 
+                        : 'bg-emerald-600 hover:bg-emerald-700'
+                    }`}
+                    title={adm.referralDistributionEnabled === false ? 'Enable referral distribution' : 'Disable referral distribution'}
+                  >
+                    <Share2 size={16} /> {adm.referralDistributionEnabled === false ? 'Referral: OFF' : 'Referral: ON'}
+                  </button>
                   {isSuperAdmin && (
                     <button
                       onClick={() => handleLoginAsAdmin(adm._id)}

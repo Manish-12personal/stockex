@@ -95,6 +95,17 @@ const adminSchema = new mongoose.Schema({
     default: true
   },
   
+  /**
+   * When false, referral distribution is disabled for this admin/broker/subbroker.
+   * SuperAdmin can disable for any admin/broker/subbroker.
+   * Admin can disable for their brokers.
+   * Broker can disable for their subbrokers.
+   */
+  referralDistributionEnabled: {
+    type: Boolean,
+    default: true
+  },
+  
   // Demo Broker fields
   isDemo: {
     type: Boolean,
