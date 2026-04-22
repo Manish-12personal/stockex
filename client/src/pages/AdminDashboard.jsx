@@ -15383,10 +15383,58 @@ function SuperAdminClientWallet({ embedded = false }) {
     };
   }, [transactions, scope, gamesGameId]);
 
+  // Merge related brokerage and games transactions into single rows
+  const mergedRows = useMemo(() => {
+    if (scope !== 'games') return rowsMatchingYourWalletChip;
+    
+    const merged = [];
+    const processed = new Set();
+    
+    for (let i = 0; i < rowsMatchingYourWalletChip.length; i++) {
+      if (processed.has(i)) continue;
+      
+      const tx = rowsMatchingYourWalletChip[i];
+      const mergedTx = { ...tx };
+      
+      // Look for matching transaction within 5 seconds with same user
+      for (let j = i + 1; j < rowsMatchingYourWalletChip.length; j++) {
+        if (processed.has(j)) continue;
+        
+        const other = rowsMatchingYourWalletChip[j];
+        const timeDiff = Math.abs(new Date(tx.createdAt) - new Date(other.createdAt));
+        const sameUser = tx.ownerUsername === other.ownerUsername && tx.adminCode === other.adminCode;
+        const sameGame = tx.meta?.gameKey === other.meta?.gameKey || tx.meta?.gameLabel === other.meta?.gameLabel;
+        
+        // If within 5 seconds, same user, same game, and one is pool debit and other is games wallet
+        if (timeDiff < 5000 && sameUser && sameGame) {
+          if ((tx.saPoolDebit && other.gamesWallet) || (tx.gamesWallet && other.saPoolDebit)) {
+            // Merge the amounts
+            mergedTx.brokerageAmount = tx.saPoolDebit ? tx.amount : other.amount;
+            mergedTx.gamesAmount = tx.gamesWallet ? tx.amount : other.amount;
+            mergedTx.isMerged = true;
+            processed.add(j);
+            break;
+          }
+        }
+      }
+      
+      // If not merged, set individual amounts
+      if (!mergedTx.isMerged) {
+        mergedTx.brokerageAmount = tx.saPoolDebit ? tx.amount : null;
+        mergedTx.gamesAmount = tx.gamesWallet ? tx.amount : null;
+      }
+      
+      merged.push(mergedTx);
+      processed.add(i);
+    }
+    
+    return merged;
+  }, [rowsMatchingYourWalletChip, scope]);
+
   const filteredRows = useMemo(() => {
-    if (!rowSearch.trim()) return rowsMatchingYourWalletChip;
+    if (!rowSearch.trim()) return mergedRows;
     const q = rowSearch.trim().toLowerCase();
-    return rowsMatchingYourWalletChip.filter((tx) => {
+    return mergedRows.filter((tx) => {
       const y = yourAccountFromClientTx(tx);
       const blob = [
         tx.reason,
@@ -15405,7 +15453,7 @@ function SuperAdminClientWallet({ embedded = false }) {
         .toLowerCase();
       return blob.includes(q);
     });
-  }, [rowsMatchingYourWalletChip, rowSearch]);
+  }, [mergedRows, rowSearch]);
 
   return (
     <div className={embedded ? 'space-y-4' : 'p-4 md:p-6 max-w-[1500px] mx-auto space-y-4'}>
@@ -15789,10 +15837,10 @@ function SuperAdminClientWallet({ embedded = false }) {
                     {formatAllTxReference(tx)}
                   </td>
                   <td className="px-3 py-2 text-right text-[11px] text-purple-400 font-semibold tabular-nums">
-                    {tx.saPoolDebit && tx.amount ? `₹${Number(tx.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                    {tx.brokerageAmount ? `₹${Number(tx.brokerageAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
                   </td>
                   <td className="px-3 py-2 text-right text-[11px] text-cyan-400 font-semibold tabular-nums">
-                    {tx.gamesWallet && tx.amount ? `₹${Number(tx.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                    {tx.gamesAmount ? `₹${Number(tx.gamesAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
                   </td>
                   <td
                     className="px-3 py-2 text-right text-[11px] text-gray-400"
