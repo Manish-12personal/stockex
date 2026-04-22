@@ -96,14 +96,28 @@ const adminSchema = new mongoose.Schema({
   },
   
   /**
-   * When false, referral distribution is disabled for this admin/broker/subbroker.
-   * SuperAdmin can disable for any admin/broker/subbroker.
-   * Admin can disable for their brokers.
-   * Broker can disable for their subbrokers.
+   * Segment-specific referral distribution settings.
+   * SuperAdmin can disable for any admin/broker/subbroker per segment.
+   * Admin can disable for their brokers per segment.
+   * Broker can disable for their subbrokers per segment.
    */
   referralDistributionEnabled: {
-    type: Boolean,
-    default: true
+    games: {
+      type: Boolean,
+      default: true
+    },
+    mcx: {
+      type: Boolean,
+      default: true
+    },
+    crypto: {
+      type: Boolean,
+      default: true
+    },
+    forex: {
+      type: Boolean,
+      default: true
+    }
   },
   
   // Demo Broker fields

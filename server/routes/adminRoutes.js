@@ -1567,6 +1567,7 @@ router.get('/manage/user-hierarchy/:userCode', protectAdmin, async (req, res) =>
 router.put('/manage/toggle-referral-distribution/:adminId', protectAdmin, async (req, res) => {
   try {
     const { adminId } = req.params;
+    const { segment } = req.body; // segment: 'games', 'mcx', 'crypto', 'forex'
     const currentAdmin = req.admin;
     
     // Find the target admin
@@ -1586,8 +1587,28 @@ router.put('/manage/toggle-referral-distribution/:adminId', protectAdmin, async 
       }
     }
     
-    // Toggle the referral distribution setting
-    targetAdmin.referralDistributionEnabled = !targetAdmin.referralDistributionEnabled;
+    // Initialize referralDistributionEnabled if it doesn't exist or is a boolean (for backward compatibility)
+    if (!targetAdmin.referralDistributionEnabled || typeof targetAdmin.referralDistributionEnabled === 'boolean') {
+      const oldValue = targetAdmin.referralDistributionEnabled;
+      targetAdmin.referralDistributionEnabled = {
+        games: oldValue !== false,
+        mcx: oldValue !== false,
+        crypto: oldValue !== false,
+        forex: oldValue !== false
+      };
+    }
+    
+    // Toggle the referral distribution setting for the specified segment
+    if (segment && ['games', 'mcx', 'crypto', 'forex'].includes(segment)) {
+      targetAdmin.referralDistributionEnabled[segment] = !targetAdmin.referralDistributionEnabled[segment];
+    } else {
+      // If no segment specified, toggle all segments
+      targetAdmin.referralDistributionEnabled.games = !targetAdmin.referralDistributionEnabled.games;
+      targetAdmin.referralDistributionEnabled.mcx = !targetAdmin.referralDistributionEnabled.mcx;
+      targetAdmin.referralDistributionEnabled.crypto = !targetAdmin.referralDistributionEnabled.crypto;
+      targetAdmin.referralDistributionEnabled.forex = !targetAdmin.referralDistributionEnabled.forex;
+    }
+    
     await targetAdmin.save();
     
     res.json({

@@ -1703,9 +1703,9 @@ const AdminManagement = () => {
     }
   };
 
-  const handleToggleReferralDistribution = async (adminId) => {
+  const handleToggleReferralDistribution = async (adminId, segment = null) => {
     try {
-      const { data } = await axios.put(`/api/admin/manage/toggle-referral-distribution/${adminId}`, {}, {
+      const { data } = await axios.put(`/api/admin/manage/toggle-referral-distribution/${adminId}`, segment ? { segment } : {}, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
       
@@ -1720,7 +1720,9 @@ const AdminManagement = () => {
         return adm;
       }));
       
-      alert(`Referral distribution ${data.referralDistributionEnabled ? 'enabled' : 'disabled'} successfully`);
+      const segmentName = segment ? segment.toUpperCase() : 'all segments';
+      const isEnabled = segment ? data.referralDistributionEnabled[segment] : data.referralDistributionEnabled.games;
+      alert(`Referral distribution for ${segmentName} ${isEnabled ? 'enabled' : 'disabled'} successfully`);
     } catch (error) {
       console.error('Error toggling referral distribution:', error);
       alert(error.response?.data?.message || 'Error toggling referral distribution');
@@ -2018,17 +2020,52 @@ const AdminManagement = () => {
                       <Lock size={16} /> Limits
                     </button>
                   )}
-                  <button
-                    onClick={() => handleToggleReferralDistribution(adm._id)}
-                    className={`px-3 py-2 rounded text-sm flex items-center gap-1 ${
-                      adm.referralDistributionEnabled === false 
-                        ? 'bg-gray-600 hover:bg-gray-700' 
-                        : 'bg-emerald-600 hover:bg-emerald-700'
-                    }`}
-                    title={adm.referralDistributionEnabled === false ? 'Enable referral distribution' : 'Disable referral distribution'}
-                  >
-                    <Share2 size={16} /> {adm.referralDistributionEnabled === false ? 'Referral: OFF' : 'Referral: ON'}
-                  </button>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => handleToggleReferralDistribution(adm._id, 'games')}
+                      className={`px-2 py-2 rounded text-sm flex items-center gap-1 ${
+                        adm.referralDistributionEnabled?.games === false 
+                          ? 'bg-gray-600 hover:bg-gray-700' 
+                          : 'bg-emerald-600 hover:bg-emerald-700'
+                      }`}
+                      title={adm.referralDistributionEnabled?.games === false ? 'Enable Games referral' : 'Disable Games referral'}
+                    >
+                      <Gamepad2 size={14} />
+                    </button>
+                    <button
+                      onClick={() => handleToggleReferralDistribution(adm._id, 'mcx')}
+                      className={`px-2 py-2 rounded text-sm flex items-center gap-1 ${
+                        adm.referralDistributionEnabled?.mcx === false 
+                          ? 'bg-gray-600 hover:bg-gray-700' 
+                          : 'bg-emerald-600 hover:bg-emerald-700'
+                      }`}
+                      title={adm.referralDistributionEnabled?.mcx === false ? 'Enable MCX referral' : 'Disable MCX referral'}
+                    >
+                      <TrendingUp size={14} />
+                    </button>
+                    <button
+                      onClick={() => handleToggleReferralDistribution(adm._id, 'crypto')}
+                      className={`px-2 py-2 rounded text-sm flex items-center gap-1 ${
+                        adm.referralDistributionEnabled?.crypto === false 
+                          ? 'bg-gray-600 hover:bg-gray-700' 
+                          : 'bg-emerald-600 hover:bg-emerald-700'
+                      }`}
+                      title={adm.referralDistributionEnabled?.crypto === false ? 'Enable Crypto referral' : 'Disable Crypto referral'}
+                    >
+                      <Bitcoin size={14} />
+                    </button>
+                    <button
+                      onClick={() => handleToggleReferralDistribution(adm._id, 'forex')}
+                      className={`px-2 py-2 rounded text-sm flex items-center gap-1 ${
+                        adm.referralDistributionEnabled?.forex === false 
+                          ? 'bg-gray-600 hover:bg-gray-700' 
+                          : 'bg-emerald-600 hover:bg-emerald-700'
+                      }`}
+                      title={adm.referralDistributionEnabled?.forex === false ? 'Enable Forex referral' : 'Disable Forex referral'}
+                    >
+                      <DollarSign size={14} />
+                    </button>
+                  </div>
                   {isSuperAdmin && (
                     <button
                       onClick={() => handleLoginAsAdmin(adm._id)}

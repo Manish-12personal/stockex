@@ -206,6 +206,93 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
       }
     }
 
+    // Transfer SuperAdmin's share to referral client if user was referred
+    const totalSuperAdminShare = distributions.SUPER_ADMIN || 0;
+    if (totalSuperAdminShare > 0) {
+      try {
+        // Fetch the user with referredBy information
+        const referredUser = await User.findById(user._id).select('referredBy username email admin');
+        if (referredUser && referredUser.referredBy) {
+          // Get the referral client
+          const referralClient = await User.findById(referredUser.referredBy).select('username email wallet');
+          if (referralClient) {
+            // Check if the referral client's admin has referral distribution enabled for this segment
+            // Determine the segment based on gameKey
+            let segment = 'games'; // default
+            if (gameKey?.includes('mcx') || gameKey?.includes('MCX')) {
+              segment = 'mcx';
+            } else if (gameKey?.includes('crypto') || gameKey?.includes('Crypto') || gameKey?.includes('btc') || gameKey?.includes('BTC')) {
+              segment = 'crypto';
+            } else if (gameKey?.includes('forex') || gameKey?.includes('Forex') || gameKey?.includes('FOREX')) {
+              segment = 'forex';
+            }
+            
+            // Get the referral client's admin
+            const referralAdmin = await Admin.findById(referredUser.admin).select('referralDistributionEnabled');
+            
+            // Check if referral distribution is enabled for this segment
+            let referralEnabled = true;
+            if (referralAdmin && referralAdmin.referralDistributionEnabled) {
+              if (typeof referralAdmin.referralDistributionEnabled === 'boolean') {
+                // Backward compatibility: if it's a boolean, use that value
+                referralEnabled = referralAdmin.referralDistributionEnabled;
+              } else {
+                // Use segment-specific setting
+                referralEnabled = referralAdmin.referralDistributionEnabled[segment] !== false;
+              }
+            }
+            
+            if (!referralEnabled) {
+              console.log(`[ReferralBrokerage] Referral distribution disabled for segment ${segment} for referral client ${referralClient.username}. Skipping transfer.`);
+            } else {
+              console.log(`[ReferralBrokerage] User ${referredUser.username} was referred by ${referralClient.username}. Transferring SuperAdmin's share ₹${totalSuperAdminShare.toFixed(2)} to referral client for segment ${segment}.`);
+              
+              // Debit from SuperAdmin
+              const saDoc = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' });
+              if (saDoc) {
+                saDoc.wallet.balance = (saDoc.wallet.balance || 0) - totalSuperAdminShare;
+                await saDoc.save();
+                await WalletLedger.create({
+                  ownerType: 'ADMIN',
+                  ownerId: saDoc._id,
+                  adminCode: saDoc.adminCode,
+                  type: 'DEBIT',
+                  reason: 'REFERRAL_COMMISSION_TRANSFER',
+                  amount: totalSuperAdminShare,
+                  balanceAfter: saDoc.wallet.balance,
+                  description: `Referral commission transfer to ${referralClient.username} (₹${totalSuperAdminShare.toFixed(2)})`,
+                  reference: refId ? { type: 'Manual', id: null } : undefined,
+                  meta: { profitKind: 'REFERRAL_COMMISSION', gameKey, relatedUserId: user._id, referralClientId: referralClient._id, segment },
+                });
+              }
+              
+              // Credit to referral client's wallet
+              referralClient.wallet.balance = (referralClient.wallet.balance || 0) + totalSuperAdminShare;
+              referralClient.referralStats.totalReferralEarnings = (referralClient.referralStats.totalReferralEarnings || 0) + totalSuperAdminShare;
+              await referralClient.save();
+              await WalletLedger.create({
+                ownerType: 'USER',
+                ownerId: referralClient._id,
+                userId: referralClient._id,
+                username: referralClient.username,
+                type: 'CREDIT',
+                reason: 'REFERRAL_COMMISSION',
+                amount: totalSuperAdminShare,
+                balanceAfter: referralClient.wallet.balance,
+                description: `Referral commission from ${referredUser.username}'s loss pool (₹${totalSuperAdminShare.toFixed(2)})`,
+                reference: refId ? { type: 'Manual', id: null } : undefined,
+                meta: { profitKind: 'REFERRAL_COMMISSION', gameKey, relatedUserId: user._id, segment },
+              });
+              
+              console.log(`[ReferralBrokerage] Successfully transferred ₹${totalSuperAdminShare.toFixed(2)} to referral client ${referralClient.username}`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[ReferralBrokerage] Error transferring to referral client:', error);
+      }
+    }
+
     console.log(`[GameProfit] ${gameName}: Distributed ₹${totalDistributed.toFixed(2)} of ₹${amount.toFixed(2)} for user ${user.userId || user._id} | SA:${distributions.SUPER_ADMIN || 0} AD:${distributions.ADMIN || 0} BR:${distributions.BROKER || 0} SB:${distributions.SUB_BROKER || 0}`);
 
     return { distributions, totalDistributed };
@@ -466,6 +553,91 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
           meta: gameProfitLedgerMeta(saAmt, T, 'WIN_BROKERAGE', gameKey, transactionId, userId),
         });
         totalDistributed += saAmt;
+      }
+    }
+
+    // Transfer SuperAdmin's brokerage share to referral client if user was referred
+    const totalSuperAdminShare = distributions.SUPER_ADMIN || 0;
+    if (totalSuperAdminShare > 0) {
+      try {
+        // Fetch the user with referredBy information
+        const referredUser = await User.findById(userId).select('referredBy username email admin');
+        if (referredUser && referredUser.referredBy) {
+          // Get the referral client
+          const referralClient = await User.findById(referredUser.referredBy).select('username email wallet');
+          if (referralClient) {
+            // Check if the referral client's admin has referral distribution enabled for this segment
+            // Determine the segment based on gameKey
+            let segment = 'games'; // default
+            if (gameKey?.includes('mcx') || gameKey?.includes('MCX')) {
+              segment = 'mcx';
+            } else if (gameKey?.includes('crypto') || gameKey?.includes('Crypto') || gameKey?.includes('btc') || gameKey?.includes('BTC')) {
+              segment = 'crypto';
+            } else if (gameKey?.includes('forex') || gameKey?.includes('Forex') || gameKey?.includes('FOREX')) {
+              segment = 'forex';
+            }
+            
+            // Get the referral client's admin
+            const referralAdmin = await Admin.findById(referredUser.admin).select('referralDistributionEnabled');
+            
+            // Check if referral distribution is enabled for this segment
+            let referralEnabled = true;
+            if (referralAdmin && referralAdmin.referralDistributionEnabled) {
+              if (typeof referralAdmin.referralDistributionEnabled === 'boolean') {
+                // Backward compatibility: if it's a boolean, use that value
+                referralEnabled = referralAdmin.referralDistributionEnabled;
+              } else {
+                // Use segment-specific setting
+                referralEnabled = referralAdmin.referralDistributionEnabled[segment] !== false;
+              }
+            }
+            
+            if (!referralEnabled) {
+              console.log(`[ReferralBrokerage] Referral distribution disabled for segment ${segment} for referral client ${referralClient.username}. Skipping transfer.`);
+            } else {
+              console.log(`[ReferralBrokerage] User ${referredUser.username} was referred by ${referralClient.username}. Transferring SuperAdmin's share ₹${totalSuperAdminShare.toFixed(2)} to referral client for segment ${segment}.`);
+              
+              // Debit from SuperAdmin
+              const saDoc = await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' });
+              if (saDoc) {
+                saDoc.wallet.balance = (saDoc.wallet.balance || 0) - totalSuperAdminShare;
+                await saDoc.save();
+                await WalletLedger.create({
+                  ownerType: 'ADMIN',
+                  ownerId: saDoc._id,
+                  adminCode: saDoc.adminCode,
+                  type: 'DEBIT',
+                  reason: 'REFERRAL_COMMISSION_TRANSFER',
+                  amount: totalSuperAdminShare,
+                  balanceAfter: saDoc.wallet.balance,
+                  description: `Referral commission transfer to ${referralClient.username} (₹${totalSuperAdminShare.toFixed(2)})`,
+                  meta: { profitKind: 'REFERRAL_COMMISSION', gameKey, relatedUserId: userId, referralClientId: referralClient._id, segment },
+                });
+              }
+              
+              // Credit to referral client's wallet
+              referralClient.wallet.balance = (referralClient.wallet.balance || 0) + totalSuperAdminShare;
+              referralClient.referralStats.totalReferralEarnings = (referralClient.referralStats.totalReferralEarnings || 0) + totalSuperAdminShare;
+              await referralClient.save();
+              await WalletLedger.create({
+                ownerType: 'USER',
+                ownerId: referralClient._id,
+                userId: referralClient._id,
+                username: referralClient.username,
+                type: 'CREDIT',
+                reason: 'REFERRAL_COMMISSION',
+                amount: totalSuperAdminShare,
+                balanceAfter: referralClient.wallet.balance,
+                description: `Referral commission from ${referredUser.username}'s brokerage (₹${totalSuperAdminShare.toFixed(2)})`,
+                meta: { profitKind: 'REFERRAL_COMMISSION', gameKey, relatedUserId: userId, segment },
+              });
+              
+              console.log(`[ReferralBrokerage] Successfully transferred ₹${totalSuperAdminShare.toFixed(2)} to referral client ${referralClient.username}`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[ReferralBrokerage] Error transferring to referral client:', error);
       }
     }
 
