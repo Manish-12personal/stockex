@@ -2932,7 +2932,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     windowInfo.windowNumber > 1 ? windowInfo.windowNumber - 1 : null;
   const prevPrevWindowNumber =
     windowInfo.windowNumber > 2 ? windowInfo.windowNumber - 2 : null;
-  const trackerWindowNumbers = [windowInfo.windowNumber, prevPrevWindowNumber, prevWindowNumber].filter(
+  const prevPrevPrevWindowNumber =
+    windowInfo.windowNumber > 3 ? windowInfo.windowNumber - 3 : null;
+  const prevPrevPrevPrevWindowNumber =
+    windowInfo.windowNumber > 4 ? windowInfo.windowNumber - 4 : null;
+  const trackerWindowNumbers = [windowInfo.windowNumber, prevPrevPrevPrevWindowNumber, prevPrevPrevWindowNumber, prevPrevWindowNumber, prevWindowNumber].filter(
     (n) => n != null
   );
 
@@ -3516,7 +3520,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     const interval = setInterval(() => {
       fetchGameResults();
       checkTradeResults();
-    }, 10000);
+    }, 1000);
 
     return () => clearInterval(interval);
   }, [game.id, user.token]);
