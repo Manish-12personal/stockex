@@ -24935,6 +24935,8 @@ const UserManagement = () => {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
   const [saving, setSaving] = useState(false);
   const [copying, setCopying] = useState(false);
@@ -25058,6 +25060,26 @@ const UserManagement = () => {
       fetchUsers();
     } catch (error) {
       alert(error.response?.data?.message || 'Error deleting user');
+    }
+  };
+
+  const handleDeleteUser = (userId, username) => {
+    setUserToDelete({ id: userId, name: username });
+    setShowDeleteConfirmModal(true);
+  };
+
+  const handleArchiveUser = async () => {
+    if (!userToDelete) return;
+    try {
+      await axios.delete(`/api/admin/manage/users/${userToDelete.id}`, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert('User moved to archive successfully');
+      setShowDeleteConfirmModal(false);
+      setUserToDelete(null);
+      fetchUsers();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error archiving user');
     }
   };
 
