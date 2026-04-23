@@ -1,4 +1,5 @@
 import { fetchNifty50HistoricalFromKite } from './kiteNiftyQuote.js';
+import { istInstantMs } from './istDate.js';
 
 /**
  * Resolve official NIFTY 50 price at an IST calendar second (Kite 1m candle close).
@@ -9,7 +10,7 @@ export async function resolveNiftyUpDownPriceAtIstRef({
   refSecSinceMidnightIST,
   cacheGet,
   loadPersisted,
-  fetchKiteRef = fetchNifty50HistoricalFromKite,
+  fetchKiteRef = fetchNifty501mCloseAtIstRef,
   loadLedgerMinEntry,
   logWarn = console.warn.bind(console),
 }) {
@@ -28,7 +29,7 @@ export async function resolveNiftyUpDownPriceAtIstRef({
     return { price: p, source: 'db' };
   }
 
-  p = Number(await fetchKiteRef({ interval: 'minute', daysBack: 3, maxCandles: 1200, istDayKey, refSec }));
+  p = Number(await fetchKiteRef(istDayKey, refSec));
   if (Number.isFinite(p) && p > 0) {
     return { price: p, source: 'kite' };
   }
@@ -77,7 +78,6 @@ const CACHE_MS = 3600000;
 const cache = new Map();
 
 export async function fetchNifty501mCloseAtIstRef(istDayKey, secSinceMidnightIST) {
-  const { istInstantMs } = await import('./istDate.js');
   const targetMs = istInstantMs(istDayKey, secSinceMidnightIST);
   if (targetMs == null) return null;
 

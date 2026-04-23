@@ -74,9 +74,6 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
       refSecSinceMidnightIST: openRefSec,
       cacheGet: (key) => niftyRefPriceCache.get(key),
       loadPersisted: async () => null,
-      fetchKiteRef: async ({ istDayKey, refSec }) => {
-        return await fetchNifty501mCloseAtIstRef(istDayKey, refSec);
-      },
       loadLedgerMinEntry: async () => null,
     });
 
@@ -100,9 +97,6 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
       refSecSinceMidnightIST: closeRefSec,
       cacheGet: (key) => niftyRefPriceCache.get(key),
       loadPersisted: async () => null,
-      fetchKiteRef: async ({ istDayKey, refSec }) => {
-        return await fetchNifty501mCloseAtIstRef(istDayKey, refSec);
-      },
       loadLedgerMinEntry: async () => null,
     });
 
