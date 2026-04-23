@@ -7539,6 +7539,24 @@ const WalletModal = ({ onClose, walletData, user, onRefresh }) => {
               </div>
             </div>
 
+            {/* Referral Amount */}
+            <div className="bg-dark-700 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-gray-400 mb-3 flex items-center gap-2">
+                <Share2 size={16} />
+                Referral Amount
+              </h4>
+              <button 
+                onClick={() => { setShowReferralModal(true); }}
+                className="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded flex items-center justify-center gap-2 text-white font-medium transition-colors"
+              >
+                <Share2 size={16} />
+                View Referral Earnings
+              </button>
+              <p className="text-xs text-gray-500 mt-2 text-center">
+                See all your referral earnings and details
+              </p>
+            </div>
+
             {/* UPI */}
             <div className="bg-dark-700 rounded-lg p-4">
               <h4 className="text-sm font-medium text-gray-400 mb-3 flex items-center gap-2">
