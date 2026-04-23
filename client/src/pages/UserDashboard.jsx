@@ -3507,12 +3507,19 @@ const PortfolioPanel = ({ walletData, onOpenWallet, user, marketData }) => {
           </div>
 
           {/* Add Funds Button */}
-          <div className="p-4 border-t border-dark-600 mt-auto">
+          <div className="p-4 border-t border-dark-600 mt-auto space-y-2">
             <button 
               onClick={onOpenWallet}
               className="w-full bg-green-600 hover:bg-green-700 py-2 rounded text-sm transition"
             >
               Add Funds
+            </button>
+            <button 
+              onClick={() => { setShowReferralModal(true); }}
+              className="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded text-sm transition flex items-center justify-center gap-2 text-white"
+            >
+              <Share2 size={14} />
+              Referral Amount
             </button>
           </div>
         </div>
