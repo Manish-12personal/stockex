@@ -2506,7 +2506,17 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           tradesSnapshot.length > 0 ? [...tradesSnapshot] : [...(ex.trades || [])];
         const existingOpenLTP = ex.windowOpenLTP ?? windowOpenLTP;
         const next = [...prev];
-        next[existingIdx] = { ...ex, ...row, windowOpenLTP: existingOpenLTP, trades: mergedTrades };
+        // Preserve the original windowEndLTP - don't update it with current price
+        next[existingIdx] = { 
+          ...ex, 
+          windowOpenLTP: existingOpenLTP, 
+          trades: mergedTrades,
+          // Only update these fields, not windowEndLTP
+          resultTimeSec: resultTimeSecVal,
+          resultEpoch: resultEpochVal,
+          settleEpoch: settleEpochVal,
+          resultTime: !isBTC ? formatIstClockFromSec(resultTimeSecVal) : (windowInfo.resultTime || '')
+        };
         return next;
       }
       return [...prev, row];
@@ -2996,11 +3006,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     // (e.g. same window # from an old 1-minute schedule on the same day).
     if (!isBTC) {
       if (pw) {
-        const chained = niftyChainedOpenPriceForWindow(winNum, gameResults);
-        const ltpPx =
-          winNum < 2
-            ? pw.windowEndLTP
-            : chained ?? pw.windowOpenLTP ?? pw.windowEndLTP;
+        // Always use pending window's windowEndLTP (fixed at window end time) - don't use server openPrice
+        const ltpPx = pw.windowEndLTP;
         return {
           ltp: ltpPx,
           ltpWhen: pw.ltpTime || niftyLtpClock(),
@@ -3012,11 +3019,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         };
       }
       if (completed) {
-        const chained = niftyChainedOpenPriceForWindow(winNum, gameResults);
-        const ltpPx =
-          winNum < 2
-            ? completed.windowEndLTP
-            : chained ?? completed.windowOpenLTP ?? completed.windowEndLTP;
+        // Always use completed window's windowEndLTP (fixed at window end time)
+        const ltpPx = completed.windowEndLTP;
         return {
           ltp: ltpPx,
           ltpWhen: completed.ltpTime || niftyLtpClock(),
@@ -3028,6 +3032,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         };
       }
       if (server) {
+        // Only use server if no pending window or completed window data available
         return {
           ltp: server.openPrice,
           ltpWhen: niftyLtpClock(),
