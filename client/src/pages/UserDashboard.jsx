@@ -6321,6 +6321,21 @@ const MobileProfilePanel = ({ user, walletData, onLogout }) => {
                   ))}
                 </div>
               )}
+
+              {/* Referral Amount */}
+              <div className="p-4 border-b border-dark-600">
+                <button 
+                  onClick={() => { setShowReferralModal(true); }}
+                  className="w-full bg-purple-600 hover:bg-purple-700 py-3 rounded-lg flex items-center justify-center gap-2 text-white font-medium transition-colors"
+                >
+                  <Share2 size={18} />
+                  View Referral Earnings
+                </button>
+                <p className="text-xs text-gray-500 mt-2 text-center">
+                  See all your referral earnings and details
+                </p>
+              </div>
+
               {/* Trade History */}
               <div className="p-4">
                 <h3 className="text-sm text-gray-400 mb-3">Trade History</h3>
