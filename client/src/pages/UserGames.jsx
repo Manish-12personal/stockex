@@ -170,6 +170,7 @@ const UserGames = () => {
   const [gamesBalance, setGamesBalance] = useState(0);
   const [activeGame, setActiveGame] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [gameSettings, setGameSettings] = useState(null);
   const [showHowToPlay, setShowHowToPlay] = useState(false);
   const [howToPlayGame, setHowToPlayGame] = useState(null);
   const [ledgerHubGameId, setLedgerHubGameId] = useState(null);
