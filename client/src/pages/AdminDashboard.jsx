@@ -20882,7 +20882,7 @@ const ReferralDistributionSettings = () => {
                   min="0"
                   max="100"
                   step="0.1"
-                  value={settings?.games?.[game.key]?.referralDistribution?.firstWinByTickets || 5}
+                  value={settings?.games?.[game.key]?.referralDistribution?.firstWinByTickets ?? 5}
                   onChange={e => updateGameReferralSetting(game.key, 'firstWinByTickets', parseFloat(e.target.value))}
                   disabled={saving}
                   className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
@@ -20900,7 +20900,7 @@ const ReferralDistributionSettings = () => {
                   min="0"
                   max="100"
                   step="0.1"
-                  value={settings?.games?.[game.key]?.referralDistribution?.firstWinByTime || 5}
+                  value={settings?.games?.[game.key]?.referralDistribution?.firstWinByTime ?? 5}
                   onChange={e => updateGameReferralSetting(game.key, 'firstWinByTime', parseFloat(e.target.value))}
                   disabled={saving}
                   className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
@@ -20917,7 +20917,7 @@ const ReferralDistributionSettings = () => {
                   type="number"
                   min="0"
                   step="1"
-                  value={settings?.games?.[game.key]?.referralDistribution?.minWinningAmount || 100}
+                  value={settings?.games?.[game.key]?.referralDistribution?.minWinningAmount ?? 100}
                   onChange={e => updateGameReferralSetting(game.key, 'minWinningAmount', parseFloat(e.target.value))}
                   disabled={saving}
                   className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
