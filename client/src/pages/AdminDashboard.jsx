@@ -20890,22 +20890,63 @@ const ReferralDistributionSettings = () => {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm text-gray-400 mb-2">
-                  % of 1st Winning (According to Tickets)
+                  % of Winning Amount
                 </label>
                 <input
                   type="number"
                   min="0"
                   max="100"
                   step="0.1"
-                  value={settings?.games?.[game.key]?.referralDistribution?.firstWinByTickets ?? 5}
-                  onChange={e => updateGameReferralSetting(game.key, 'firstWinByTickets', parseFloat(e.target.value))}
+                  value={settings?.games?.[game.key]?.referralDistribution?.winPercent ?? 5}
+                  onChange={e => updateGameReferralSetting(game.key, 'winPercent', parseFloat(e.target.value))}
                   disabled={saving}
                   className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Percentage of first winning to give to referrer based on tickets
+                  Percentage of winning amount to give to referrer
                 </p>
               </div>
+
+              {game.key === 'niftyJackpot' && (
+                <>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">
+                      Top Ranks Only
+                    </label>
+                    <select
+                      value={settings?.games?.[game.key]?.referralDistribution?.topRanksOnly ?? false}
+                      onChange={e => updateGameReferralSetting(game.key, 'topRanksOnly', e.target.value === 'true')}
+                      disabled={saving}
+                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    >
+                      <option value="true">Yes - Only top ranks</option>
+                      <option value="false">No - All winners</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Only apply referral bonus to top X ranks
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">
+                      Top Ranks Count
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      step="1"
+                      value={settings?.games?.[game.key]?.referralDistribution?.topRanksCount ?? 3}
+                      onChange={e => updateGameReferralSetting(game.key, 'topRanksCount', parseInt(e.target.value))}
+                      disabled={saving}
+                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Number of top ranks to apply referral bonus
+                </p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         ))}
