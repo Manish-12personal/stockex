@@ -1479,14 +1479,7 @@ const InstructionsModal = ({ onClose, gameId }) => {
                     <div className="text-gray-400 text-xs mt-0.5">{w.open} → {w.close}</div>
                   </div>
                   <div className="text-right">
-                    {!isBTCModal ? (
-                      <>
-                        <div className="text-cyan-400 text-xs">LTP @ {w.ltp}</div>
-                        <div className="text-yellow-400 font-medium text-xs">Result @ {w.result}</div>
-                      </>
-                    ) : (
-                      <div className="text-yellow-400 font-medium text-xs">Result @ {w.result}</div>
-                    )}
+                    <div className="text-yellow-400 font-medium text-xs">Result @ {w.result}</div>
                   </div>
                 </div>
               ))}
@@ -2914,12 +2907,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             <span className="text-2xl font-bold text-green-400 font-mono">{formatCountdown(windowInfo.countdown)}</span>
           </div>
           <div className="mt-2 text-xs space-y-1">
-            {!isBTC ? (
-              <div className="flex justify-between">
-                <span className="text-gray-500">LTP @</span>
-                <span className="text-cyan-400">{windowInfo.ltpTime}</span>
-              </div>
-            ) : null}
             <div className="flex justify-between">
               <span className="text-gray-500">Result @</span>
               <span className="text-purple-400">{windowInfo.resultTime}</span>
@@ -3425,22 +3412,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             {title}
           </h3>
           <div className="bg-dark-700/50 rounded-lg p-3 border border-dark-600 space-y-3">
-            {!isBTC ? (
-              <div className="flex items-start justify-between gap-3">
-                <span className="text-gray-400 text-sm shrink-0 pt-0.5">LTP</span>
-                <div className="text-right min-w-0">
-                  <div className="text-cyan-400 font-bold font-mono tabular-nums">
-                    {fmtPx(view.ltp)}
-                  </div>
-                  {view.ltpWhen ? (
-                    <div className="text-[10px] text-gray-500 mt-1 leading-snug">
-                      LTP @ {view.ltpWhen}
-                      <span className="text-gray-600"> IST</span>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
             <div className="flex items-start justify-between gap-3">
               <span className="text-gray-400 text-sm shrink-0 pt-0.5">Result</span>
               {view.resolved ? (
