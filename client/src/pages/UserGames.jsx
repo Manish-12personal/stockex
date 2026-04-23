@@ -5452,11 +5452,12 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               niftyLtpTape
               onPriceUpdate={(p) => {
                 if (p != null && Number.isFinite(p) && p > 0) {
-                  console.log('[NiftyBracket] onPriceUpdate received LTP:', p);
+                  console.log('[NiftyBracket] ✅ onPriceUpdate received REAL LTP:', p, '(NOT clearing price)');
                   flushSync(() => {
                     setCurrentPrice(p);
                     setPriceUpdateTick(t => t + 1);
                   });
+                  console.log('[NiftyBracket] ✅ currentPrice set to LTP:', p);
                 }
               }}
               onFallbackPrice={(p) => {
@@ -5532,10 +5533,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   <div key={`ltp-${priceUpdateTick}`} className="text-center mb-3 pb-3 border-b border-dark-600">
                     <div className="text-xs text-cyan-400 mb-1">NIFTY 50 LTP</div>
                     <div className="text-3xl font-bold text-cyan-300" key={currentPrice}>
-                      ₹{(() => {
-                        console.log('[NiftyBracket] 🎯 DISPLAYING currentPrice:', currentPrice, 'sessionClearing:', sessionClearing);
-                        return currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                      })()}
+                      ₹{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <div className="text-[10px] text-gray-500 mt-1">Bracket: {bracketGapType === 'percentage' ? `±${bracketGapPercent}%` : `±${bracketGap} points`}</div>
                   </div>
