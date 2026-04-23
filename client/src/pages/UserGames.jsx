@@ -2243,6 +2243,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const [currentPrice, setCurrentPrice] = useState(null); // Current live price for display
   const currentPriceRef = useRef(null);
   const lastNonZeroPriceRef = useRef(null);
+  const capturedWindowEndPriceRef = useRef(null); // Store price captured at exact window end
   const activeTradesRef = useRef([]);
   activeTradesRef.current = activeTrades;
   const prevWindowNumberRef = useRef(windowInfo.windowNumber);
@@ -2321,8 +2322,28 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       const nowSec = isBTC ? currentTotalSecondsISTLib() : getTotalSecondsIST();
       if (nowSec < info.windowStartSec) return;
 
-      const raw = currentPriceRef.current || lastNonZeroPriceRef.current;
-      if (raw == null || !Number.isFinite(raw) || raw <= 0) return;
+      // For Nifty: capture price at window end time if we're at the exact moment
+      const prevWindowEndSec = info.windowStartSec - (info.roundDurationSec || NIFTY_UP_DOWN_MIN_ROUND_SEC);
+      const isAtWindowEnd = Math.abs(nowSec - prevWindowEndSec) < 1;
+      
+      if (isAtWindowEnd && !isBTC) {
+        const priceAtEnd = currentPriceRef.current || lastNonZeroPriceRef.current;
+        if (priceAtEnd != null && Number.isFinite(priceAtEnd) && priceAtEnd > 0) {
+          capturedWindowEndPriceRef.current = priceAtEnd;
+          console.log('[LTP] Captured at window end in setInterval:', priceAtEnd, 'for window', prevNum);
+        }
+      }
+
+      // For Nifty: use captured price if available, otherwise current price
+      const raw = isBTC ? (currentPriceRef.current || lastNonZeroPriceRef.current) : (capturedWindowEndPriceRef.current || currentPriceRef.current || lastNonZeroPriceRef.current);
+      if (raw == null || !Number.isFinite(raw) || raw <= 0) {
+        // For Nifty, if we don't have captured price yet, skip creating pending window
+        if (!isBTC) {
+          console.log('[LTP] No captured price available for window', prevNum, 'skipping pending window creation');
+          return;
+        }
+        return;
+      }
 
       setPendingWindows((prev) => {
         if (prev.some((pw) => pw.windowNumber === prevNum)) return prev;
@@ -2467,7 +2488,17 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
     if (prevWinNum <= 0 || prevWinNum === windowInfo.windowNumber) return;
 
-    const windowEndLTP = currentPriceRef.current || lastNonZeroPriceRef.current || 0;
+    // Capture the price at the exact moment window changes - this is the fixed LTP
+    const windowEndLTP = isBTC 
+      ? (lastNonZeroPriceRef.current || currentPriceRef.current || 0)
+      : (lastNonZeroPriceRef.current || currentPriceRef.current || 0);
+    
+    // For Nifty, store this price so it can be used when creating the pending window
+    if (!isBTC) {
+      capturedWindowEndPriceRef.current = windowEndLTP;
+      console.log('[LTP] Window changed from', prevWinNum, 'to', windowInfo.windowNumber, 'captured LTP:', windowEndLTP);
+    }
+    
     const nowSecTick = isBTC ? currentTotalSecondsISTLib() : getTotalSecondsIST();
     let resultTimeSecVal;
     let resultEpochVal;
@@ -2506,12 +2537,14 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           tradesSnapshot.length > 0 ? [...tradesSnapshot] : [...(ex.trades || [])];
         const existingOpenLTP = ex.windowOpenLTP ?? windowOpenLTP;
         const next = [...prev];
-        // Preserve the original windowEndLTP - don't update it with current price
+        // Always update windowEndLTP with the captured price from window change
+        // This ensures the correct price is used even if pending window was created earlier
+        console.log('[LTP] Updating existing pending window', prevWinNum, 'from', ex.windowEndLTP, 'to', windowEndLTP);
         next[existingIdx] = { 
           ...ex, 
           windowOpenLTP: existingOpenLTP, 
           trades: mergedTrades,
-          // Only update these fields, not windowEndLTP
+          windowEndLTP: parseFloat(windowEndLTP.toFixed(2)), // Always use captured price
           resultTimeSec: resultTimeSecVal,
           resultEpoch: resultEpochVal,
           settleEpoch: settleEpochVal,
