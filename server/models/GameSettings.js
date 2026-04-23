@@ -81,7 +81,7 @@ const gameSettingsSchema = new mongoose.Schema({
       profitBrokerPercent: { type: Number, default: 20 },
       profitAdminPercent: { type: Number, default: 30 },
       startTime: { type: String, default: '09:15:00' },
-      endTime: { type: String, default: '15:44:59' },
+      endTime: { type: String, default: '15:45:00' },
       referralDistribution: {
         winPercent: { type: Number, default: 10 }
       }
@@ -115,7 +115,7 @@ const gameSettingsSchema = new mongoose.Schema({
       biddingStartTime: { type: String, default: '09:15' },
       biddingEndTime: { type: String, default: '15:24' },
       startTime: { type: String, default: '09:15:15' },
-      endTime: { type: String, default: '15:44:59' },
+      endTime: { type: String, default: '15:45:00' },
       referralDistribution: {
         winPercent: { type: Number, default: 10 }
       }
@@ -171,7 +171,7 @@ const gameSettingsSchema = new mongoose.Schema({
       },
       brokerageDistribution: { type: mongoose.Schema.Types.Mixed },
       startTime: { type: String, default: '09:15:15' },
-      endTime: { type: String, default: '15:44:59' },
+      endTime: { type: String, default: '15:45:00' },
       referralDistribution: {
         winPercent: { type: Number, default: 5 },
         topRanksOnly: { type: Boolean, default: true },
@@ -214,7 +214,7 @@ const gameSettingsSchema = new mongoose.Schema({
       /** HH:mm → inclusive through end of that minute (e.g. 15:29 = …:15:29:59) */
       biddingEndTime: { type: String, default: '15:29' },
       startTime: { type: String, default: '09:15:15' },
-      endTime: { type: String, default: '15:44:59' },
+      endTime: { type: String, default: '15:45:00' },
       referralDistribution: {
         winPercent: { type: Number, default: 2 }
       }
