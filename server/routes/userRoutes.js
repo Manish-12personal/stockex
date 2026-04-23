@@ -4729,24 +4729,37 @@ router.get('/nifty-jackpot/last-5-days', protectUser, async (req, res) => {
 // Get last 5 days closing LTP for Nifty Bracket
 router.get('/nifty-bracket/last-5-days', protectUser, async (req, res) => {
   try {
-    // Fetch last 5 days of Nifty Jackpot results as they contain the closing prices
-    const results = await NiftyJackpotResult.find({
-      lockedPrice: { $exists: true, $ne: null }
-    })
-      .sort({ resultDate: -1 })
-      .limit(5)
-      .select('resultDate lockedPrice lockedAt')
-      .lean();
+    // Import Kite historical data fetcher
+    const { fetchNifty50HistoricalFromKite, istCalendarDateString } = await import('../utils/kiteNiftyQuote.js');
     
-    // Format for Nifty Bracket display
-    const formattedResults = results.map(r => ({
-      date: r.resultDate,
-      closingLTP: r.lockedPrice,
-      closedAt: r.lockedAt
+    // Fetch last 7 days of historical data (day candles)
+    const candles = await fetchNifty50HistoricalFromKite({
+      interval: 'day',
+      daysBack: 10,
+      maxCandles: 10
+    });
+    
+    if (!candles || candles.length === 0) {
+      return res.json([]);
+    }
+    
+    // Get last 5 completed days (exclude today if market is still open)
+    const today = istCalendarDateString();
+    const completedDays = candles
+      .filter(c => istCalendarDateString(new Date(c.time * 1000)) !== today)
+      .slice(-5)
+      .reverse();
+    
+    // Format for Nifty Bracket display - use close price which is the actual LTP at market close
+    const formattedResults = completedDays.map(c => ({
+      date: istCalendarDateString(new Date(c.time * 1000)),
+      closingLTP: c.close, // This is the actual LTP at market close, not clearing price
+      closedAt: new Date(c.time * 1000).toISOString()
     }));
     
     res.json(formattedResults);
   } catch (error) {
+    console.error('Error fetching last 5 days LTP for Nifty Bracket:', error);
     res.status(500).json({ message: error.message });
   }
 });
