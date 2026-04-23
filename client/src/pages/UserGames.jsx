@@ -1221,7 +1221,7 @@ const niftyLtpEndSecForWindowNum = (winNum, openTime, roundDurationSec) => {
     NIFTY_UP_DOWN_MIN_ROUND_SEC,
     Number(roundDurationSec) || DEFAULT_NIFTY_ROUND_DURATION_SEC,
   );
-  return m + winNum * D - 1;
+  return m + winNum * D;
 };
 
 /** Scheduled LTP instant for window `winNum` (1-based), at start of next window. */
@@ -2351,7 +2351,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             windowNumber: prevNum,
             windowEndLTP: parseFloat(parseFloat(raw).toFixed(2)),
             windowOpenLTP,
-            ltpTime: isBTC ? info.windowStart : formatIstClockFromSec((info.windowStartSec ?? 0) - 1),
+            ltpTime: isBTC ? info.windowStart : formatIstClockFromSec(info.windowStartSec ?? 0),
             resultTimeSec: resultTimeSecVal,
             resultEpoch,
             settleEpoch: settleEpochVal,
@@ -2493,7 +2493,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         windowNumber: prevWinNum,
         windowEndLTP: parseFloat(windowEndLTP.toFixed(2)),
         windowOpenLTP,
-        ltpTime: !isBTC ? formatIstClockFromSec((windowInfo.windowStartSec ?? 0) - 1) : windowInfo.windowStart,
+        ltpTime: !isBTC ? formatIstClockFromSec(windowInfo.windowStartSec ?? 0) : windowInfo.windowStart,
         resultTimeSec: resultTimeSecVal,
         resultEpoch: resultEpochVal,
         settleEpoch: settleEpochVal,
