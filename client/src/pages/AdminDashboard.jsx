@@ -20784,7 +20784,7 @@ const ReferralDistributionSettings = () => {
     { key: 'btcUpDown', name: 'BTC Up/Down', icon: '₿' },
     { key: 'niftyBracket', name: 'Nifty Bracket', icon: '🎯' },
     { key: 'niftyNumber', name: 'Nifty Number', icon: '🔢' },
-    { key: 'niftyjackpot', name: 'Nifty Jackpot', icon: '🎰' }
+    { key: 'niftyJackpot', name: 'Nifty Jackpot', icon: '🎰' }
   ];
 
   useEffect(() => {
