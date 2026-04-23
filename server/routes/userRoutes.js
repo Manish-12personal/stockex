@@ -4767,35 +4767,154 @@ router.get('/nifty-jackpot/last-5-days-clearing', protectUser, async (req, res) 
 // Get last 5 days closing LTP for Nifty Bracket
 router.get('/nifty-bracket/last-5-days', protectUser, async (req, res) => {
   try {
-    // Import Kite historical data fetcher
-    const { fetchNifty50HistoricalFromKite, istCalendarDateString } = await import('../utils/kiteNiftyQuote.js');
+    // Import Kite functions
+    const { fetchNifty50HistoricalFromKite, istCalendarDateString, loadZerodhaSessionFromFile, fetchNifty50LastPriceFromKite } = await import('../utils/kiteNiftyQuote.js');
+    const axios = require('axios');
     
-    // Fetch last 7 days of historical data (day candles)
-    const candles = await fetchNifty50HistoricalFromKite({
-      interval: 'day',
-      daysBack: 10,
-      maxCandles: 10
-    });
+    // Get session for Kite API
+    const session = loadZerodhaSessionFromFile();
+    const apiKey = process.env.ZERODHA_API_KEY;
     
-    if (!candles || candles.length === 0) {
-      return res.json([]);
+    // Get last 5 completed trading days
+    const today = istCalendarDateString();
+    const results = [];
+    
+    for (let i = 1; i <= 7; i++) { // Check last 7 days to get 5 completed days
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = istCalendarDateString(date);
+      
+      // Skip today and weekends
+      if (dateStr === today || date.getDay() === 0 || date.getDay() === 6) {
+        continue;
+      }
+      
+      if (results.length >= 5) break;
+      
+      try {
+        // Method 1: Try to get actual LTP from quote API at market close time (3:30 PM IST)
+        if (session?.accessToken && apiKey) {
+          // Create a timestamp for 3:30 PM IST on that date
+          const marketCloseTime = new Date(date);
+          marketCloseTime.setHours(15, 30, 0, 0); // 3:30 PM IST
+          marketCloseTime.setMinutes(marketCloseTime.getMinutes() - marketCloseTime.getTimezoneOffset()); // Adjust for UTC
+          
+          // Try to get historical quote at market close
+          const quoteResponse = await axios.get(
+            `https://api.kite.trade/quote/ohlc?i=NSE:NIFTY%2050`,
+            {
+              headers: {
+                'X-Kite-Version': '3',
+                Authorization: `token ${apiKey}:${session.accessToken}`,
+              },
+            }
+          );
+          
+          if (quoteResponse.data?.status === 'success' && quoteResponse.data?.data) {
+            const quoteData = Object.values(quoteResponse.data.data)[0];
+            if (quoteData?.last_price && Number.isFinite(Number(quoteData.last_price))) {
+              results.push({
+                date: dateStr,
+                closingLTP: Number(quoteData.last_price),
+                closedAt: marketCloseTime.toISOString(),
+                note: 'Actual LTP from Kite quote API'
+              });
+              continue;
+            }
+          }
+        }
+        
+        // Method 2: Fallback to 1-minute candles to get the last traded price
+        const oneMinCandles = await fetchNifty50HistoricalFromKite({
+          interval: 'minute',
+          daysBack: i + 1,
+          maxCandles: 1000
+        });
+        
+        if (oneMinCandles && oneMinCandles.length > 0) {
+          // Filter candles for the specific date and get the last one
+          const dayCandles = oneMinCandles.filter(c => {
+            const candleDate = istCalendarDateString(new Date(c.time * 1000));
+            return candleDate === dateStr;
+          });
+          
+          if (dayCandles.length > 0) {
+            // Get the last candle of the day (actual LTP)
+            const lastCandle = dayCandles[dayCandles.length - 1];
+            results.push({
+              date: dateStr,
+              closingLTP: lastCandle.close,
+              closedAt: new Date(lastCandle.time * 1000).toISOString(),
+              note: 'Actual LTP from last 1-min candle'
+            });
+            continue;
+          }
+        }
+        
+        // Method 3: Last resort - use 5-minute candles
+        const fiveMinCandles = await fetchNifty50HistoricalFromKite({
+          interval: '5minute',
+          daysBack: i + 1,
+          maxCandles: 500
+        });
+        
+        if (fiveMinCandles && fiveMinCandles.length > 0) {
+          const dayCandles = fiveMinCandles.filter(c => {
+            const candleDate = istCalendarDateString(new Date(c.time * 1000));
+            return candleDate === dateStr;
+          });
+          
+          if (dayCandles.length > 0) {
+            const lastCandle = dayCandles[dayCandles.length - 1];
+            results.push({
+              date: dateStr,
+              closingLTP: lastCandle.close,
+              closedAt: new Date(lastCandle.time * 1000).toISOString(),
+              note: 'Actual LTP from last 5-min candle'
+            });
+            continue;
+          }
+        }
+        
+        // Method 4: Final fallback - daily close (but clearly marked)
+        const dailyCandles = await fetchNifty50HistoricalFromKite({
+          interval: 'day',
+          daysBack: i + 1,
+          maxCandles: 10
+        });
+        
+        if (dailyCandles && dailyCandles.length > 0) {
+          const dayCandle = dailyCandles.find(c => {
+            const candleDate = istCalendarDateString(new Date(c.time * 1000));
+            return candleDate === dateStr;
+          });
+          
+          if (dayCandle) {
+            results.push({
+              date: dateStr,
+              closingLTP: dayCandle.close,
+              closedAt: new Date(dayCandle.time * 1000).toISOString(),
+              note: 'Daily close (fallback - may be clearing price)'
+            });
+            continue;
+          }
+        }
+        
+        console.warn(`No data found for date: ${dateStr}`);
+        
+      } catch (error) {
+        console.error(`Error fetching data for ${dateStr}:`, error.message);
+        // Skip this date and continue
+        continue;
+      }
     }
     
-    // Get last 5 completed days (exclude today if market is still open)
-    const today = istCalendarDateString();
-    const completedDays = candles
-      .filter(c => istCalendarDateString(new Date(c.time * 1000)) !== today)
-      .slice(-5)
-      .reverse();
+    // Sort results by date and return last 5
+    const sortedResults = results
+      .sort((a, b) => new Date(a.date) - new Date(b.date))
+      .slice(-5);
     
-    // Format for Nifty Bracket display - use close price which is the actual LTP at market close
-    const formattedResults = completedDays.map(c => ({
-      date: istCalendarDateString(new Date(c.time * 1000)),
-      closingLTP: c.close, // This is the actual LTP at market close, not clearing price
-      closedAt: new Date(c.time * 1000).toISOString()
-    }));
-    
-    res.json(formattedResults);
+    res.json(sortedResults);
   } catch (error) {
     console.error('Error fetching last 5 days LTP for Nifty Bracket:', error);
     res.status(500).json({ message: error.message });

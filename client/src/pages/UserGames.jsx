@@ -821,6 +821,11 @@ const UserGames = () => {
                             <div className="text-xs text-gray-500">
                               {isLTP ? 'LTP at close' : 'Clearing price'}
                             </div>
+                            {item.note && (
+                              <div className="text-xs text-purple-400 mt-1">
+                                {item.note}
+                              </div>
+                            )}
                           </div>
                           <div className="text-right">
                             <div className="text-lg font-bold text-green-400">
@@ -835,6 +840,9 @@ const UserGames = () => {
                                 month: 'short',
                                 day: 'numeric'
                               })}
+                            </div>
+                            <div className="text-xs text-gray-600 mt-1">
+                              Source: {isLTP ? 'LTP API' : 'Clearing API'}
                             </div>
                           </div>
                         </div>
