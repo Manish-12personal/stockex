@@ -12,20 +12,22 @@ import { resolveNiftyBracketTrade } from './niftyBracketResolve.js';
 import { declareNiftyJackpotResult, NiftyJackpotDeclareError } from './niftyJackpotDeclare.js';
 import { declareNiftyNumberResultForDate } from './niftyNumberDeclareService.js';
 import { settleUpDownUserWindowFromLedger } from './upDownSettlementService.js';
-import { publishNiftyUpDownGameResults } from './niftyUpDownGameResultPublish.js';
 import { getMarketData } from './zerodhaWebSocket.js';
 import { getCryptoPrice } from './binanceWebSocket.js';
-import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
-import { getTodayISTString, startOfISTDayFromKey, endOfISTDayFromKey } from '../utils/istDate.js';
+import { fetchNifty50LastPriceFromKite, fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
+import { getTodayISTString, startOfISTDayFromKey, endOfISTDayFromKey, istInstantMs } from '../utils/istDate.js';
 import {
   getBtcUpDownWindowState,
   getEffectiveBtcSessionBounds,
   BTC_QUARTER_SEC,
   betStartSecForK,
   btcResultRefSecForUiWindow,
-  currentTotalSecondsIST,
 } from '../../lib/btcUpDownWindows.js';
-import { niftyResultSecForWindow } from '../../lib/niftyUpDownWindows.js';
+import {
+  getEffectiveNiftySessionBounds,
+  getNiftyRoundDurationSec,
+  niftyResultSecForWindow,
+} from '../../lib/niftyUpDownWindows.js';
 import { resolveNiftyJackpotSpotPrice } from '../utils/niftyJackpotRank.js';
 
 /**
@@ -39,6 +41,85 @@ async function getPreviousWindowClosePrice(windowNumber, today, dayStart, dayEnd
     windowDate: { $gte: dayStart, $lt: dayEnd },
   }).select({ closePrice: 1 }).lean();
   return prevRow?.closePrice || null;
+}
+
+/**
+ * Helper function to get previous window's close price for Nifty comparison
+ */
+async function getPreviousNiftyWindowClosePrice(windowNumber, today, dayStart, dayEnd) {
+  const prevRow = await GameResult.findOne({
+    gameId: 'updown',
+    windowNumber,
+    windowDate: { $gte: dayStart, $lt: dayEnd },
+  }).select({ closePrice: 1 }).lean();
+  return prevRow?.closePrice || null;
+}
+
+/**
+ * Pick NIFTY 50 1m candle close for a target IST instant from Kite historical data.
+ */
+function pickNifty1mCloseForInstant(targetMs, candles) {
+  if (!Number.isFinite(targetMs) || !Array.isArray(candles) || candles.length === 0) {
+    return null;
+  }
+  for (const c of candles) {
+    const openMs = Number(c.time) * 1000;
+    if (!Number.isFinite(openMs)) continue;
+    if (targetMs >= openMs && targetMs < openMs + 60000) {
+      const close = Number(c.close);
+      if (Number.isFinite(close) && close > 0) return close;
+      return null;
+    }
+  }
+  // Fallback: find the candle closest before target
+  for (let i = candles.length - 1; i >= 0; i--) {
+    const openMs = Number(candles[i].time) * 1000;
+    if (openMs <= targetMs) {
+      const close = Number(candles[i].close);
+      if (Number.isFinite(close) && close > 0) return close;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve official NIFTY 50 price at an IST calendar second (Kite 1m candle close).
+ * No LTP - uses only historical candles.
+ */
+async function resolveNiftyUpDownPriceAtIstRef({
+  istDayKey,
+  refSecSinceMidnightIST,
+  cacheGet,
+}) {
+  const refSec = Number(refSecSinceMidnightIST);
+  if (!Number.isFinite(refSec) || refSec < 0) {
+    return { price: null, source: null };
+  }
+  const cacheKey = `${istDayKey}|r${refSec}`;
+  let p = Number(cacheGet(cacheKey));
+  if (Number.isFinite(p) && p > 0) {
+    return { price: p, source: 'cache' };
+  }
+
+  // Fetch from Kite historical candles
+  const targetMs = istInstantMs(istDayKey, refSec);
+  if (targetMs == null) return { price: null, source: null };
+
+  try {
+    const candles = await fetchNifty50HistoricalFromKite({
+      interval: 'minute',
+      daysBack: 3,
+      maxCandles: 1200,
+    });
+    const close = pickNifty1mCloseForInstant(targetMs, candles);
+    if (Number.isFinite(close) && close > 0) {
+      return { price: close, source: 'kite' };
+    }
+  } catch (e) {
+    console.warn('[niftyUpDown] price resolution failed:', e?.message || e);
+  }
+
+  return { price: null, source: null };
 }
 
 function istSecondsNow() {
@@ -139,6 +220,9 @@ const MIN_MS = 45000;
 
 /** In-memory BTC 1m-ref prices (key `${istDayKey}|r${refSec}`) for the current settlement tick. */
 const btcRefPriceCache = new Map();
+
+/** In-memory Nifty 1m-ref prices (key `${istDayKey}|r${refSec}`) for the current settlement tick. */
+const niftyRefPriceCache = new Map();
 
 /**
  * BTC Up/Down: create GameResult rows from live price (or Binance 1m at result second) + open resolution.
@@ -270,6 +354,117 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
   }
 }
 
+/**
+ * Nifty Up/Down: create GameResult rows from Kite 1m candles (no LTP).
+ * Similar to BTC Up/Down but uses Kite historical data instead of Binance.
+ */
+async function autoSettleNiftyUpDown(settings, nowMs) {
+  const gc = settings?.games?.niftyUpDown || {};
+  if (gc.enabled === false) return;
+
+  const { marketOpenSec, marketCloseSec } = getEffectiveNiftySessionBounds(gc);
+  const D = getNiftyRoundDurationSec(gc);
+
+  const nowSec = istSecondsNow();
+  if (nowSec < marketOpenSec || nowSec >= marketCloseSec) return;
+
+  const today = getTodayISTString();
+  const dayStart = startOfISTDayFromKey(today);
+  const dayEnd = endOfISTDayFromKey(today);
+
+  const fmtT = (s) => {
+    const h = Math.floor(s / 3600) % 24;
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  // Calculate max window number based on current time
+  const elapsed = nowSec - marketOpenSec;
+  const resultDueWindow = Math.floor(elapsed / D);
+
+  for (let rw = 1; rw <= resultDueWindow; rw++) {
+    const existing = await GameResult.findOne({
+      gameId: 'updown',
+      windowNumber: rw,
+      windowDate: { $gte: dayStart, $lt: dayEnd },
+    }).lean();
+    if (existing) continue;
+
+    const resultSec = niftyResultSecForWindow(rw, gc);
+    if (nowSec < resultSec) continue;
+    if (resultSec >= marketCloseSec) break;
+
+    const openRefSec = marketOpenSec + (rw - 1) * D;
+    const openCacheKey = `${today}|r${openRefSec}`;
+    const resolvedOpen = await resolveNiftyUpDownPriceAtIstRef({
+      istDayKey: today,
+      refSecSinceMidnightIST: openRefSec,
+      cacheGet: (key) => niftyRefPriceCache.get(key),
+    });
+
+    const openPrice = resolvedOpen.price;
+    if (!openPrice || !Number.isFinite(openPrice)) {
+      console.warn(
+        `[niftyUpDown] skip GameResult w=${rw} day=${today}: could not resolve open price (window start @ ${fmtT(openRefSec)})`
+      );
+      continue;
+    }
+
+    if (resolvedOpen.source !== 'cache') {
+      niftyRefPriceCache.set(openCacheKey, openPrice);
+    }
+
+    const closeRefSec = resultSec;
+    const closeCacheKey = `${today}|r${closeRefSec}`;
+    const resolvedClose = await resolveNiftyUpDownPriceAtIstRef({
+      istDayKey: today,
+      refSecSinceMidnightIST: closeRefSec,
+      cacheGet: (key) => niftyRefPriceCache.get(key),
+    });
+
+    const closePx = resolvedClose.price;
+    if (!closePx || !Number.isFinite(closePx) || closePx <= 0) {
+      console.warn(`[niftyUpDown] skip GameResult w=${rw} day=${today}: no close price (resolver failed)`);
+      continue;
+    }
+
+    if (resolvedClose.source !== 'cache') {
+      niftyRefPriceCache.set(closeCacheKey, closePx);
+    }
+
+    // Compare with previous window's close price instead of current window's open price (like BTC Up/Down)
+    const prevWindowClosePrice = rw > 1 ? await getPreviousNiftyWindowClosePrice(rw - 1, today, dayStart, dayEnd) : null;
+    const comparisonPrice = prevWindowClosePrice || openPrice;
+    const priceChange = closePx - comparisonPrice;
+    const result = priceChange > 0 ? 'UP' : priceChange < 0 ? 'DOWN' : 'TIE';
+
+    const betStartSec = marketOpenSec + (rw - 1) * D;
+    const betEndSec = marketOpenSec + rw * D - 1;
+
+    try {
+      await GameResult.create({
+        gameId: 'updown',
+        windowNumber: rw,
+        windowDate: dayStart,
+        openPrice,
+        closePrice: closePx,
+        priceChange,
+        priceChangePercent: comparisonPrice > 0 ? (priceChange / comparisonPrice) * 100 : 0,
+        result,
+        windowStartTime: fmtT(betStartSec),
+        windowEndTime: fmtT(betEndSec),
+        resultTime: new Date(nowMs),
+      });
+      console.log(
+        `[niftyUpDown] ✅ GameResult w=${rw} ${result} comparisonPrice=${comparisonPrice} close=${closePx}@${fmtT(closeRefSec)} (openSrc=${resolvedOpen.source} closeSrc=${resolvedClose.source})`
+      );
+    } catch (e) {
+      if (e.code !== 11000) throw e;
+    }
+  }
+}
+
 export async function runGamesAutoSettlementTick() {
   if (String(process.env.GAMES_AUTO_SETTLEMENT || '').toLowerCase() === 'false') {
     return;
@@ -314,13 +509,13 @@ export async function runGamesAutoSettlementTick() {
     }
   }
 
-  // ---------- Nifty Up/Down: publish GameResult from market data (before consuming in loop below) ----------
+  // ---------- Nifty Up/Down: publish GameResult (result-based, no LTP) ----------
   if (now - lastNiftyGameResultRun >= MIN_MS) {
     lastNiftyGameResultRun = now;
     try {
-      await publishNiftyUpDownGameResults(settings, now);
+      await autoSettleNiftyUpDown(settings, now);
     } catch (e) {
-      console.warn('[gamesAutoSettlement] niftyUpDown publish', e?.message || e);
+      console.warn('[gamesAutoSettlement] niftyUpDown settle', e?.message || e);
     }
   }
 
