@@ -1912,6 +1912,7 @@ const GameLivePricePanel = ({
         const { data } = await axios.get('/api/zerodha/game-price/NIFTY?authoritative=1');
         if (cancelled || data?.price == null) return;
         const price = Number(data.price);
+        console.log('[GameLivePricePanel] API returned - LTP:', price, 'Clearing:', data.sessionClearing);
         if (!Number.isFinite(price) || price <= 0) return;
         if (!isLiveRef.current) {
           isLiveRef.current = true;
@@ -1932,12 +1933,14 @@ const GameLivePricePanel = ({
           ch = { change: change.toFixed(2), percent: ((change / refForChange) * 100).toFixed(2) };
         }
         if (data.sessionClearing != null && Number.isFinite(Number(data.sessionClearing))) {
+          console.log('[GameLivePricePanel] Setting sessionClearing to:', Number(data.sessionClearing));
           setSessionClearing(Number(data.sessionClearing));
           onSessionClearingUpdateRef.current?.(Number(data.sessionClearing));
         } else {
           setSessionClearing(null);
           onSessionClearingUpdateRef.current?.(null);
         }
+        console.log('[GameLivePricePanel] Calling pushLive with LTP:', price);
         pushLive(price, ch, {
           open: data.open,
           high: data.high,
@@ -4809,9 +4812,19 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   }, [user?.token]);
 
   // Debug: Monitor currentPrice changes
+  // This should show the LIVE LTP from Zerodha, NOT the clearing price
   useEffect(() => {
-    console.log('NiftyBracket currentPrice changed to:', currentPrice);
+    console.log('[NiftyBracket] ✓ currentPrice (should be LTP) changed to:', currentPrice);
   }, [currentPrice]);
+
+  // Debug: Monitor sessionClearing changes  
+  // This should show the last 15m bar close (clearing price)
+  useEffect(() => {
+    console.log('[NiftyBracket] ✓ sessionClearing (last 15m bar) changed to:', sessionClearing);
+    if (currentPrice && sessionClearing && Math.abs(currentPrice - sessionClearing) < 0.01) {
+      console.warn('[NiftyBracket] ⚠️ WARNING: currentPrice and sessionClearing are the same! This is the bug!');
+    }
+  }, [sessionClearing, currentPrice]);
 
   // Fetch active trades and history on mount / token change
   useEffect(() => {
@@ -5297,7 +5310,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               niftyLtpTape
               onPriceUpdate={(p) => {
                 if (p != null && Number.isFinite(p) && p > 0) {
-                  console.log('[NiftyBracket] Price update from socket:', p);
+                  console.log('[NiftyBracket] onPriceUpdate received LTP:', p);
                   flushSync(() => {
                     setCurrentPrice(p);
                     setPriceUpdateTick(t => t + 1);
@@ -5305,10 +5318,14 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 }
               }}
               onFallbackPrice={(p) => {
-                if (p != null && Number.isFinite(p) && p > 0) setCurrentPrice(p);
+                if (p != null && Number.isFinite(p) && p > 0) {
+                  console.log('[NiftyBracket] onFallbackPrice received:', p);
+                  setCurrentPrice(p);
+                }
               }}
               onDemoPriceActive={setDemoPriceActive}
               onSessionClearingUpdate={(clearing) => {
+                console.log('[NiftyBracket] onSessionClearingUpdate received clearing:', clearing);
                 if (clearing != null && Number.isFinite(Number(clearing))) {
                   setSessionClearing(Number(clearing));
                 } else {
@@ -5373,7 +5390,10 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                   <div key={`ltp-${priceUpdateTick}`} className="text-center mb-3 pb-3 border-b border-dark-600">
                     <div className="text-xs text-cyan-400 mb-1">NIFTY 50 LTP</div>
                     <div className="text-3xl font-bold text-cyan-300" key={currentPrice}>
-                      ₹{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ₹{(() => {
+                        console.log('[NiftyBracket] 🎯 DISPLAYING currentPrice:', currentPrice, 'sessionClearing:', sessionClearing);
+                        return currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                      })()}
                     </div>
                     <div className="text-[10px] text-gray-500 mt-1">Bracket: {bracketGapType === 'percentage' ? `±${bracketGapPercent}%` : `±${bracketGap} points`}</div>
                   </div>
