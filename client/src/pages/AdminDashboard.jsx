@@ -19433,6 +19433,8 @@ const GameSettingsManagement = () => {
       const { data } = await axios.get(`/api/admin/manage/nifty-jackpot/bids?date=${date}`, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
+      console.log('[DEBUG] Jackpot bids data:', data);
+      console.log('[DEBUG] topWinners from backend:', data.topWinners);
       setJackpotBids(data.bids || []);
       setJackpotBidsMeta({
         referencePrice: data.referencePrice,
@@ -20403,6 +20405,9 @@ const GameSettingsManagement = () => {
                           <tbody>
                             {jackpotBids.slice(0, 20).map((b) => {
                               const isWinner = b.rank <= (jackpotBidsMeta?.topWinners || 20);
+                              if (b.rank >= 11 && b.rank <= 20) {
+                                console.log(`[DEBUG] Rank ${b.rank}: isWinner=${isWinner}, topWinners=${jackpotBidsMeta?.topWinners}, prize=${b.prize}`);
+                              }
                               const dist =
                                 b.distanceToReference != null && Number.isFinite(Number(b.distanceToReference))
                                   ? Number(b.distanceToReference).toFixed(2)
