@@ -14,8 +14,9 @@ import { declareNiftyNumberResultForDate } from './niftyNumberDeclareService.js'
 import { settleUpDownUserWindowFromLedger } from './upDownSettlementService.js';
 import { getMarketData } from './zerodhaWebSocket.js';
 import { getCryptoPrice } from './binanceWebSocket.js';
-import { fetchNifty50LastPriceFromKite, fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
-import { getTodayISTString, startOfISTDayFromKey, endOfISTDayFromKey, istInstantMs } from '../utils/istDate.js';
+import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
+import { getTodayISTString, startOfISTDayFromKey, endOfISTDayFromKey } from '../utils/istDate.js';
+import { currentTotalSecondsIST } from '../../lib/btcUpDownWindows.js';
 import {
   getBtcUpDownWindowState,
   getEffectiveBtcSessionBounds,
@@ -41,85 +42,6 @@ async function getPreviousWindowClosePrice(windowNumber, today, dayStart, dayEnd
     windowDate: { $gte: dayStart, $lt: dayEnd },
   }).select({ closePrice: 1 }).lean();
   return prevRow?.closePrice || null;
-}
-
-/**
- * Helper function to get previous window's close price for Nifty comparison
- */
-async function getPreviousNiftyWindowClosePrice(windowNumber, today, dayStart, dayEnd) {
-  const prevRow = await GameResult.findOne({
-    gameId: 'updown',
-    windowNumber,
-    windowDate: { $gte: dayStart, $lt: dayEnd },
-  }).select({ closePrice: 1 }).lean();
-  return prevRow?.closePrice || null;
-}
-
-/**
- * Pick NIFTY 50 1m candle close for a target IST instant from Kite historical data.
- */
-function pickNifty1mCloseForInstant(targetMs, candles) {
-  if (!Number.isFinite(targetMs) || !Array.isArray(candles) || candles.length === 0) {
-    return null;
-  }
-  for (const c of candles) {
-    const openMs = Number(c.time) * 1000;
-    if (!Number.isFinite(openMs)) continue;
-    if (targetMs >= openMs && targetMs < openMs + 60000) {
-      const close = Number(c.close);
-      if (Number.isFinite(close) && close > 0) return close;
-      return null;
-    }
-  }
-  // Fallback: find the candle closest before target
-  for (let i = candles.length - 1; i >= 0; i--) {
-    const openMs = Number(candles[i].time) * 1000;
-    if (openMs <= targetMs) {
-      const close = Number(candles[i].close);
-      if (Number.isFinite(close) && close > 0) return close;
-    }
-  }
-  return null;
-}
-
-/**
- * Resolve official NIFTY 50 price at an IST calendar second (Kite 1m candle close).
- * No LTP - uses only historical candles.
- */
-async function resolveNiftyUpDownPriceAtIstRef({
-  istDayKey,
-  refSecSinceMidnightIST,
-  cacheGet,
-}) {
-  const refSec = Number(refSecSinceMidnightIST);
-  if (!Number.isFinite(refSec) || refSec < 0) {
-    return { price: null, source: null };
-  }
-  const cacheKey = `${istDayKey}|r${refSec}`;
-  let p = Number(cacheGet(cacheKey));
-  if (Number.isFinite(p) && p > 0) {
-    return { price: p, source: 'cache' };
-  }
-
-  // Fetch from Kite historical candles
-  const targetMs = istInstantMs(istDayKey, refSec);
-  if (targetMs == null) return { price: null, source: null };
-
-  try {
-    const candles = await fetchNifty50HistoricalFromKite({
-      interval: 'minute',
-      daysBack: 3,
-      maxCandles: 1200,
-    });
-    const close = pickNifty1mCloseForInstant(targetMs, candles);
-    if (Number.isFinite(close) && close > 0) {
-      return { price: close, source: 'kite' };
-    }
-  } catch (e) {
-    console.warn('[niftyUpDown] price resolution failed:', e?.message || e);
-  }
-
-  return { price: null, source: null };
 }
 
 function istSecondsNow() {
@@ -220,9 +142,6 @@ const MIN_MS = 45000;
 
 /** In-memory BTC 1m-ref prices (key `${istDayKey}|r${refSec}`) for the current settlement tick. */
 const btcRefPriceCache = new Map();
-
-/** In-memory Nifty 1m-ref prices (key `${istDayKey}|r${refSec}`) for the current settlement tick. */
-const niftyRefPriceCache = new Map();
 
 /**
  * BTC Up/Down: create GameResult rows from live price (or Binance 1m at result second) + open resolution.
