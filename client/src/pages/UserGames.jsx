@@ -5451,14 +5451,10 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               fullHeight
               niftyLtpTape
               onPriceUpdate={(p) => {
-                if (p != null && Number.isFinite(p) && p > 0) {
-                  console.log('[NiftyBracket] ✅ onPriceUpdate received REAL LTP:', p, '(NOT clearing price)');
-                  flushSync(() => {
-                    setCurrentPrice(p);
-                    setPriceUpdateTick(t => t + 1);
-                  });
-                  console.log('[NiftyBracket] ✅ currentPrice set to LTP:', p);
-                }
+                // IMPORTANT: For Nifty Bracket, we need to use sessionClearing as LTP
+                // because Kite's "last_price" is actually the clearing price
+                // We'll swap in onSessionClearingUpdate callback
+                console.log('[NiftyBracket] onPriceUpdate received (this is clearing):', p);
               }}
               onFallbackPrice={(p) => {
                 if (p != null && Number.isFinite(p) && p > 0) {
@@ -5468,9 +5464,17 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
               }}
               onDemoPriceActive={setDemoPriceActive}
               onSessionClearingUpdate={(clearing) => {
-                console.log('[NiftyBracket] onSessionClearingUpdate received clearing:', clearing);
+                // SWAP FOR NIFTY BRACKET: sessionClearing is actually the real LTP
+                // Kite's last_price (which comes via onPriceUpdate) is the clearing price
+                console.log('[NiftyBracket] ✅ onSessionClearingUpdate received REAL LTP:', clearing);
                 if (clearing != null && Number.isFinite(Number(clearing))) {
-                  setSessionClearing(Number(clearing));
+                  // Use sessionClearing as the current price (LTP) for Nifty Bracket
+                  flushSync(() => {
+                    setCurrentPrice(Number(clearing)); // This is the REAL LTP
+                    setSessionClearing(Number(clearing)); // Store it
+                    setPriceUpdateTick(t => t + 1);
+                  });
+                  console.log('[NiftyBracket] ✅ currentPrice set to REAL LTP:', clearing);
                 } else {
                   setSessionClearing(null);
                 }
