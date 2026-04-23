@@ -982,6 +982,7 @@ const UserDashboard = () => {
             activeTab={activeTab}
             setActiveTab={setActiveTab}
             walletData={walletData}
+            setShowReferralModal={setShowReferralModal}
             user={user}
             marketData={marketData}
             refreshKey={positionsRefreshKey}
@@ -2703,7 +2704,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
   );
 };
 
-const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false, mcxOnly = false, forexOnly = false, usdRate = 83.5 }) => {
+const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData, refreshKey, selectedInstrument, onRefreshPositions, cryptoOnly = false, mcxOnly = false, forexOnly = false, usdRate = 83.5, setShowReferralModal }) => {
   const [positions, setPositions] = useState([]);
   const [pendingOrders, setPendingOrders] = useState([]);
   const [history, setHistory] = useState([]);
@@ -3338,393 +3339,70 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
                 >
                   Cancel
                 </button>
+              </div>
+            </div>
+          );
+        })}
+
+        {activeTab === 'history' && history.length === 0 && (
+          <div className="flex items-center justify-center h-full text-gray-400 text-sm">No trade history</div>
+        )}
+        {activeTab === 'history' && history.map(trade => {
+          const isCryptoRow = trade.isCrypto || trade.segment === 'CRYPTO' || trade.exchange === 'BINANCE';
+          const isForexRow = isForexInstrument(trade);
+          const currencySymbol = '₹';
+          // Calculate trade duration
+          const getDuration = () => {
+            if (!trade.openedAt || !trade.closedAt) return '-';
+            const start = new Date(trade.openedAt);
+            const end = new Date(trade.closedAt);
+            const diffMs = end - start;
+            if (diffMs < 0) return '-';
+            const diffSecs = Math.floor(diffMs / 1000);
+            if (diffSecs < 60) return `${diffSecs}s`;
+            const diffMins = Math.floor(diffSecs / 60);
+            if (diffMins < 60) return `${diffMins}m ${diffSecs % 60}s`;
+            const diffHrs = Math.floor(diffMins / 60);
+            return `${diffHrs}h ${diffMins % 60}m`;
+          };
+          return (
+            <div key={trade._id} className="grid grid-cols-10 gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700">
+              <div className="truncate text-purple-400 font-mono text-xs">{trade.userId || user?.userId || '-'}</div>
+              <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{trade.symbol}</div>
+              <div className={trade.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{trade.side}</div>
+              <div className="text-right">{trade.quantity}</div>
+              <div className="text-right">{currencySymbol}{(parseFloat(trade.entryPrice) || 0).toFixed(2)}</div>
+              <div className="text-right">{currencySymbol}{trade.exitPrice ? (parseFloat(trade.exitPrice) || 0).toFixed(2) : '-'}</div>
+              <div className="text-right text-yellow-400">{currencySymbol}{(parseFloat(trade.commission) || 0).toFixed(2)}</div>
+              <div className={`text-right font-medium ${(trade.netPnL || trade.realizedPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {(trade.netPnL || trade.realizedPnL || 0) >= 0 ? '+' : ''}{currencySymbol}{(parseFloat(trade.netPnL || trade.realizedPnL) || 0).toFixed(2)}
+              </div>
+              <div className="text-center text-xs text-blue-400" title={`Opened: ${trade.openedAt ? new Date(trade.openedAt).toLocaleString() : '-'}`}>{getDuration()}</div>
+              <div className="text-center text-xs text-gray-400">{trade.closeReason || 'CLOSED'}</div>
+            </div>
+          );
+        })}
+
+        {/* Referral Amounts Tab */}
+        {activeTab === 'referral' && (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <Share2 size={48} className="mx-auto mb-4 text-purple-400 opacity-50" />
+              <p className="text-gray-400 mb-4">Referral Earnings</p>
+              <button 
+                onClick={() => { setShowReferralModal(true); }}
+                className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded text-white font-medium transition-colors"
+              >
+                View Referral Details
+              </button>
+              <p className="text-xs text-gray-500 mt-2">
+                Click to see all your referral earnings and details
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
-
-    {/* Table Header */}
-    <div className={`grid ${activeTab === 'history' ? 'grid-cols-10' : 'grid-cols-9'} gap-2 px-4 py-2 text-xs text-gray-400 border-b border-dark-700`}>
-      <div>User ID</div>
-      <div>Symbol</div>
-      <div>Side</div>
-      <div className="text-right">Qty</div>
-      <div className="text-right">Entry</div>
-      <div className="text-right">{activeTab === 'history' ? 'Exit' : 'LTP'}</div>
-      <div className="text-right">Charges</div>
-      <div className="text-right">{activeTab === 'pending' ? 'Type' : 'P&L'}</div>
-      {activeTab === 'history' && <div className="text-center">Duration</div>}
-      <div className="text-center">{activeTab === 'history' ? 'Reason' : 'Action'}</div>
-    </div>
-
-    {/* Content */}
-    <div className="flex-1 overflow-y-auto">
-      {activeTab === 'positions' && positions.length === 0 && (
-        <div className="flex items-center justify-center h-full text-gray-400 text-sm">No open positions</div>
-      )}
-      {activeTab === 'positions' && positions.map(pos => {
-        const ltp = getCurrentPrice(pos) || pos.currentPrice || pos.entryPrice;
-        const pnl = pos.side === 'BUY' 
-          ? (ltp - pos.entryPrice) * pos.quantity 
-          : (pos.entryPrice - ltp) * pos.quantity;
-        const isCryptoRow = pos.isCrypto || pos.segment === 'CRYPTO' || pos.exchange === 'BINANCE';
-        const isForexRow = isForexInstrument(pos);
-        const currencySymbol = '₹';
-        return (
-          <div key={pos._id} className="grid grid-cols-9 gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700">
-            <div className="truncate text-purple-400 font-mono text-xs">{pos.userId || user?.userId || '-'}</div>
-            <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{pos.symbol}</div>
-            <div className={pos.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{pos.side}</div>
-            <div className="text-right">{pos.quantity}</div>
-            <div className="text-right">{currencySymbol}{(parseFloat(pos.entryPrice) || 0).toFixed(2)}</div>
-            <div className="text-right">{currencySymbol}{(parseFloat(ltp) || 0).toFixed(2)}</div>
-            <div className="text-right text-yellow-400" title={`Spread: ${pos.spread || 0} pts, Comm: ${currencySymbol}${pos.commission || 0}`}>
-              {currencySymbol}{(parseFloat(pos.commission) || 0).toFixed(2)}
-            </div>
-            <div className={`text-right font-medium ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {pnl >= 0 ? '+' : ''}{currencySymbol}{(parseFloat(pnl) || 0).toFixed(2)}
-            </div>
-            <div className="text-center">
-              <button 
-                onClick={() => handleClosePosition(pos._id, pos)}
-                disabled={loading}
-                className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        );
-      })}
-
-      {activeTab === 'pending' && pendingOrders.length === 0 && (
-        <div className="flex items-center justify-center h-full text-gray-400 text-sm">No pending orders</div>
-      )}
-      {activeTab === 'pending' && pendingOrders.map(order => {
-        const isCryptoRow = order.isCrypto || order.segment === 'CRYPTO' || order.exchange === 'BINANCE';
-        const isForexRow = isForexInstrument(order);
-        const currencySymbol = '₹';
-        const displayPx = getPendingDisplayPrice(order);
-        const livePx = getPendingLivePrice(order);
-        const livePxInr =
-          (isCryptoRow || isForexRow) && livePx > 0
-            ? spotPxToDisplayedInr(
-                { isCrypto: isCryptoRow, isForex: isForexRow, exchange: order.exchange, segment: order.segment, pair: order.pair, symbol: order.symbol },
-                livePx,
-                usdRate
-              )
-            : livePx;
-        return (
-          <div key={order._id} className="grid grid-cols-9 gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700">
-            <div className="truncate text-purple-400 font-mono text-xs">{order.userId || user?.userId || '-'}</div>
-            <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{order.symbol}</div>
-            <div className={order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{order.side}</div>
-            <div className="text-right">{order.quantity}</div>
-            <div className="text-right">
-              {displayPx != null ? `${currencySymbol}${displayPx.toFixed(2)}` : '—'}
-            </div>
-            <div className="text-right">
-              {livePxInr > 0 ? `${currencySymbol}${Number(livePxInr).toFixed(2)}` : '—'}
-            </div>
-            <div className="text-right text-yellow-400">{currencySymbol}{(parseFloat(order.commission) || 0).toFixed(2)}</div>
-            <div className="text-right text-gray-400">{order.orderType}</div>
-            <div className="text-center">
-              <button 
-                onClick={() => handleCancelOrder(order._id)}
-                className="px-2 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-xs"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        );
-      })}
-
-      {activeTab === 'history' && history.length === 0 && (
-        <div className="flex items-center justify-center h-full text-gray-400 text-sm">No trade history</div>
-      )}
-      {activeTab === 'history' && history.map(trade => {
-        const isCryptoRow = trade.isCrypto || trade.segment === 'CRYPTO' || trade.exchange === 'BINANCE';
-        const isForexRow = isForexInstrument(trade);
-        const currencySymbol = '₹';
-        // Calculate trade duration
-        const getDuration = () => {
-          if (!trade.openedAt || !trade.closedAt) return '-';
-          const start = new Date(trade.openedAt);
-          const end = new Date(trade.closedAt);
-          const diffMs = end - start;
-          if (diffMs < 0) return '-';
-          const diffSecs = Math.floor(diffMs / 1000);
-          if (diffSecs < 60) return `${diffSecs}s`;
-          const diffMins = Math.floor(diffSecs / 60);
-          if (diffMins < 60) return `${diffMins}m ${diffSecs % 60}s`;
-          const diffHrs = Math.floor(diffMins / 60);
-          return `${diffHrs}h ${diffMins % 60}m`;
-        };
-        return (
-          <div key={trade._id} className="grid grid-cols-10 gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700">
-            <div className="truncate text-purple-400 font-mono text-xs">{trade.userId || user?.userId || '-'}</div>
-            <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{trade.symbol}</div>
-            <div className={trade.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{trade.side}</div>
-            <div className="text-right">{trade.quantity}</div>
-            <div className="text-right">{currencySymbol}{(parseFloat(trade.entryPrice) || 0).toFixed(2)}</div>
-            <div className="text-right">{currencySymbol}{trade.exitPrice ? (parseFloat(trade.exitPrice) || 0).toFixed(2) : '-'}</div>
-            <div className="text-right text-yellow-400">{currencySymbol}{(parseFloat(trade.commission) || 0).toFixed(2)}</div>
-            <div className={`text-right font-medium ${(trade.netPnL || trade.realizedPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {(trade.netPnL || trade.realizedPnL || 0) >= 0 ? '+' : ''}{currencySymbol}{(parseFloat(trade.netPnL || trade.realizedPnL) || 0).toFixed(2)}
-            </div>
-            <div className="text-center text-xs text-blue-400" title={`Opened: ${trade.openedAt ? new Date(trade.openedAt).toLocaleString() : '-'}`}>{getDuration()}</div>
-            <div className="text-center text-xs text-gray-400">{trade.closeReason || 'CLOSED'}</div>
-          </div>
-        );
-      })}
-
-      {/* Referral Amounts Tab */}
-      {activeTab === 'referral' && (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center">
-            <Share2 size={48} className="mx-auto mb-4 text-purple-400 opacity-50" />
-            <p className="text-gray-400 mb-4">Referral Earnings</p>
-            <button 
-              onClick={() => { setShowReferralModal(true); }}
-              className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded text-white font-medium transition-colors"
-            >
-              View Referral Details
-            </button>
-            <p className="text-xs text-gray-500 mt-2">
-              Click to see all your referral earnings and details
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
-  </div>
-);
-
-const PortfolioPanel = ({ walletData, onOpenWallet, user, marketData }) => {
-  const [activeView, setActiveView] = useState('wallet');
-  const [positions, setPositions] = useState([]);
-  const [pendingOrders, setPendingOrders] = useState([]);
-
-  useEffect(() => {
-    if (user?.token) {
-      fetchData();
-      const interval = setInterval(fetchData, 2000);
-      return () => clearInterval(interval);
-    }
-  }, [user?.token]);
-
-  const fetchData = async () => {
-    try {
-      const headers = { Authorization: `Bearer ${user.token}` };
-      const [posRes, ordersRes] = await Promise.all([
-        axios.get('/api/trading/positions?status=OPEN', { headers }),
-        axios.get('/api/trading/pending-orders', { headers })
-      ]);
-      setPositions(posRes.data || []);
-      setPendingOrders(ordersRes.data || []);
-    } catch (err) {
-      console.error('Error fetching portfolio data:', err);
-    }
-  };
-
-  const handleClosePosition = async (tradeId, position) => {
-    try {
-      const { bidPrice, askPrice } = getUsdSpotBidAsk(marketData || {}, position);
-      const isCryptoOnly = !!(position?.isCrypto || position?.segment === 'CRYPTO' || position?.exchange === 'BINANCE');
-      const isForexPos = !!isForexInstrument(position);
-      
-      await axios.post(`/api/trading/close/${tradeId}`, { bidPrice, askPrice, isCrypto: isCryptoOnly, isForex: isForexPos }, {
-        headers: { Authorization: `Bearer ${user.token}` }
-      });
-      fetchData();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error closing position');
-    }
-  };
-
-  return (
-    <aside className="w-72 bg-dark-800 border-l border-dark-600 flex flex-col">
-      {/* View Tabs */}
-      <div className="flex border-b border-dark-600">
-        {['Wallet', 'Positions', 'Orders'].map(view => (
-          <button
-            key={view}
-            onClick={() => setActiveView(view.toLowerCase())}
-            className={`flex-1 px-2 py-2 text-sm ${
-              activeView === view.toLowerCase()
-                ? 'bg-green-600 text-white'
-                : 'text-gray-400 hover:bg-dark-700'
-            }`}
-          >
-            {view}
-          </button>
-        ))}
-      </div>
-
-      {/* Wallet View */}
-      {activeView === 'wallet' && (
-        <div className="flex-1 overflow-y-auto">
-          {/* Available Margin - Highlighted */}
-          <div className="p-4 bg-gradient-to-r from-green-900/30 to-dark-800 border-b border-dark-600">
-            <div className="text-xs text-gray-400 mb-1">Available Margin</div>
-            <div className="text-2xl font-bold text-green-400">
-              ₹{walletData?.availableMargin?.toLocaleString() || walletData?.marginAvailable?.toLocaleString() || '0'}
-            </div>
-            {walletData?.rmsStatus === 'BLOCKED' && (
-              <div className="text-xs text-red-400 mt-1">⚠️ Trading Blocked: {walletData?.rmsBlockReason}</div>
-            )}
-          </div>
-
-          {/* Wallet Breakdown */}
-          <div className="p-4 space-y-3">
-            <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">Wallet Breakdown</div>
-            
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-400">Trading Balance</span>
-              <span>₹{(walletData?.tradingBalance || walletData?.wallet?.tradingBalance || 0).toLocaleString()}</span>
-            </div>
-            
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-400">Used Margin</span>
-              <span className="text-yellow-400">₹{walletData?.usedMargin?.toLocaleString() || '0'}</span>
-            </div>
-            
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-400">Collateral</span>
-              <span>₹{walletData?.collateralValue?.toLocaleString() || '0'}</span>
-            </div>
-
-            <div className="border-t border-dark-600 pt-3 mt-3">
-              <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">P&L</div>
-              
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Unrealized P&L</span>
-                <span className={walletData?.unrealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}>
-                  {walletData?.unrealizedPnL >= 0 ? '+' : ''}₹{walletData?.unrealizedPnL?.toLocaleString() || '0'}
-                </span>
-              </div>
-              
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Realized P&L</span>
-                <span className={walletData?.realizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}>
-                  {walletData?.realizedPnL >= 0 ? '+' : ''}₹{walletData?.realizedPnL?.toLocaleString() || '0'}
-                </span>
-              </div>
-
-              <div className="flex justify-between text-sm mt-2 pt-2 border-t border-dark-700">
-                <span className="text-gray-400">Today's P&L</span>
-                <span className={(walletData?.todayRealizedPnL || 0) + (walletData?.todayUnrealizedPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                  {((walletData?.todayRealizedPnL || 0) + (walletData?.todayUnrealizedPnL || 0)) >= 0 ? '+' : ''}
-                  ₹{((walletData?.todayRealizedPnL || 0) + (walletData?.todayUnrealizedPnL || 0)).toLocaleString()}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Add Funds Button */}
-          <div className="p-4 border-t border-dark-600 mt-auto space-y-2">
-            <button 
-              onClick={onOpenWallet}
-              className="w-full bg-green-600 hover:bg-green-700 py-2 rounded text-sm transition"
-            >
-              Add Funds
-            </button>
-            <button 
-              onClick={() => { setShowReferralModal(true); }}
-              className="w-full bg-purple-600 hover:bg-purple-700 py-2 rounded text-sm transition flex items-center justify-center gap-2 text-white"
-            >
-              <Share2 size={14} />
-              Referral Amount
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Positions View */}
-      {activeView === 'positions' && (
-        <div className="flex-1 overflow-y-auto">
-          {positions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-4 text-center h-full">
-              <div className="w-16 h-16 mb-4 opacity-30">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-gray-400">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              </div>
-              <p className="text-gray-400 text-sm">No open positions</p>
-              <p className="text-gray-500 text-xs mt-1">Enable Quick Trade to start trading</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-dark-600">
-              {positions.map(pos => {
-                const liveData = marketData?.[pos.token] || {};
-                const currentPrice = pos.side === 'BUY' 
-                  ? (liveData.bid || liveData.ltp || pos.currentPrice)
-                  : (liveData.ask || liveData.ltp || pos.currentPrice);
-                const pnl = pos.side === 'BUY' 
-                  ? (currentPrice - pos.entryPrice) * pos.quantity
-                  : (pos.entryPrice - currentPrice) * pos.quantity;
-                return (
-                  <div key={pos._id} className="p-3">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="font-medium text-sm">{pos.symbol}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${pos.side === 'BUY' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
-                        {pos.side}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                      <span>Qty: {pos.quantity}</span>
-                      <span>Entry: ₹{pos.entryPrice?.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className={`text-sm font-medium ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {pnl >= 0 ? '+' : ''}₹{(parseFloat(pnl) || 0).toFixed(2)}
-                      </span>
-                      <button
-                        onClick={() => handleClosePosition(pos._id, pos)}
-                        className="text-xs bg-red-600 hover:bg-red-700 px-2 py-1 rounded"
-                      >
-                        Close
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Orders View */}
-      {activeView === 'orders' && (
-        <div className="flex-1 overflow-y-auto">
-          {pendingOrders.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-4 text-center h-full">
-              <div className="w-16 h-16 mb-4 opacity-30">
-                <ListOrdered size={48} className="text-gray-400" />
-              </div>
-              <p className="text-gray-400 text-sm">No pending orders</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-dark-600">
-              {pendingOrders.map(order => (
-                <div key={order._id} className="p-3">
-                  <div className="flex justify-between items-start mb-1">
-                    <span className="font-medium text-sm">{order.symbol}</span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${order.side === 'BUY' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
-                      {order.side}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-400 mb-1">
-                    <span>Qty: {order.quantity}</span>
-                    <span>Limit: ₹{order.limitPrice?.toLocaleString()}</span>
-                  </div>
-                  <div className="text-xs text-yellow-400">PENDING</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </aside>
   );
 };
 
