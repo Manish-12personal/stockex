@@ -128,9 +128,6 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
       });
       openPx = pickMinuteCloseNearTarget(candles, targetOpenMs);
     }
-    if (openPx == null) {
-      openPx = niftyLtpFromSocket() ?? (await fetchNifty50LastPriceFromKite());
-    }
 
     let closePx = null;
     if (targetCloseMs != null) {
@@ -141,16 +138,16 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
       });
       closePx = pickMinuteCloseNearTarget(candles, targetCloseMs);
     }
-    if (closePx == null) {
-      closePx = niftyLtpFromSocket() ?? (await fetchNifty50LastPriceFromKite());
-    }
 
     if (!Number.isFinite(openPx) || openPx <= 0 || !Number.isFinite(closePx) || closePx <= 0) {
       console.warn(`[niftyUpDownPublish] skip window ${W} day=${today}: missing prices (open=${openPx} close=${closePx})`);
       continue;
     }
 
-    const priceChange = closePx - openPx;
+    // Compare with previous window's close price instead of current window's open price (like BTC Up/Down)
+    const prevWindowClosePrice = W > 1 ? await getPreviousWindowClosePrice(W - 1, today, dayStart, dayEnd) : null;
+    const comparisonPrice = prevWindowClosePrice || openPx;
+    const priceChange = closePx - comparisonPrice;
     const result = priceChange > 0 ? 'UP' : priceChange < 0 ? 'DOWN' : 'TIE';
 
     const betStartSec = marketOpenSec + (W - 1) * D;
@@ -164,14 +161,14 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
         openPrice: openPx,
         closePrice: closePx,
         priceChange,
-        priceChangePercent: openPx > 0 ? (priceChange / openPx) * 100 : 0,
+        priceChangePercent: comparisonPrice > 0 ? (priceChange / comparisonPrice) * 100 : 0,
         result,
         windowStartTime: fmtT(betStartSec),
         windowEndTime: fmtT(betEndSec),
         resultTime: new Date(nowMs),
       });
       console.log(
-        `[niftyUpDownPublish] GameResult w=${W} ${result} open=${openPx} close=${closePx} day=${today}`
+        `[niftyUpDownPublish] GameResult w=${W} ${result} comparisonPrice=${comparisonPrice} close=${closePx} day=${today}`
       );
     } catch (e) {
       if (e.code !== 11000) throw e;
@@ -207,4 +204,16 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
       }
     }
   }
+}
+
+/**
+ * Helper function to get previous window's close price for Nifty comparison (like BTC Up/Down)
+ */
+async function getPreviousWindowClosePrice(windowNumber, today, dayStart, dayEnd) {
+  const prevRow = await GameResult.findOne({
+    gameId: 'updown',
+    windowNumber,
+    windowDate: { $gte: dayStart, $lt: dayEnd },
+  }).select({ closePrice: 1 }).lean();
+  return prevRow?.closePrice || null;
 }
