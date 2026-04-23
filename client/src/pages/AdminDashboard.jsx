@@ -20906,41 +20906,6 @@ const ReferralDistributionSettings = () => {
                   Percentage of first winning to give to referrer based on tickets
                 </p>
               </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">
-                  % of 1st Winning (According to Time)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  value={settings?.games?.[game.key]?.referralDistribution?.firstWinByTime ?? 5}
-                  onChange={e => updateGameReferralSetting(game.key, 'firstWinByTime', parseFloat(e.target.value))}
-                  disabled={saving}
-                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Percentage of first winning to give to referrer based on time
-                </p>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">
-                  Minimum Winning Amount (₹)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={settings?.games?.[game.key]?.referralDistribution?.minWinningAmount ?? 100}
-                  onChange={e => updateGameReferralSetting(game.key, 'minWinningAmount', parseFloat(e.target.value))}
-                  disabled={saving}
-                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Minimum winning amount required to trigger referral reward
-                </p>
-              </div>
             </div>
           </div>
         ))}
@@ -20950,9 +20915,7 @@ const ReferralDistributionSettings = () => {
         <h4 className="font-bold text-purple-300 mb-2">How Referral Distribution Works</h4>
         <ul className="text-sm text-gray-300 space-y-1">
           <li>• When a referred user wins for the first time in a game, the referrer gets a percentage of the winning amount</li>
-          <li>• Two calculation methods: based on tickets purchased or based on time of winning</li>
-          <li>• The higher of the two percentages will be used for the referral reward</li>
-          <li>• Minimum winning amount threshold ensures only meaningful wins trigger rewards</li>
+          <li>• The percentage is based on the tickets purchased by the referred user</li>
         </ul>
       </div>
     </div>

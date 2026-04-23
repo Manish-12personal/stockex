@@ -20,6 +20,10 @@ const gameConfigSchema = new mongoose.Schema({
   /** 0 = unlimited. Nifty Bracket: max tickets on BUY vs SELL side per IST calendar day. */
   maxTicketsBuyPerDay: { type: Number, default: 0 },
   maxTicketsSellPerDay: { type: Number, default: 0 },
+  // Referral distribution settings per game
+  referralDistribution: {
+    firstWinByTickets: { type: Number, default: 5 } // % of first winning to referrer based on tickets
+  }
 }, { _id: false });
 
 const gameSettingsSchema = new mongoose.Schema({
