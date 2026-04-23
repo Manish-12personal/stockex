@@ -4726,6 +4726,44 @@ router.get('/nifty-jackpot/last-5-days', protectUser, async (req, res) => {
   }
 });
 
+// Get last 5 days clearing prices for Nifty Number and Nifty Jackpot
+router.get('/nifty-jackpot/last-5-days-clearing', protectUser, async (req, res) => {
+  try {
+    // Import Kite historical data fetcher
+    const { fetchNifty50HistoricalFromKite, istCalendarDateString } = await import('../utils/kiteNiftyQuote.js');
+    
+    // Fetch last 7 days of historical data (day candles)
+    const candles = await fetchNifty50HistoricalFromKite({
+      interval: 'day',
+      daysBack: 10,
+      maxCandles: 10
+    });
+    
+    if (!candles || candles.length === 0) {
+      return res.json([]);
+    }
+    
+    // Get last 5 completed days (exclude today if market is still open)
+    const today = istCalendarDateString();
+    const completedDays = candles
+      .filter(c => istCalendarDateString(new Date(c.time * 1000)) !== today)
+      .slice(-5)
+      .reverse();
+    
+    // Format for Nifty Number/Jackpot display - use close price as clearing price
+    const formattedResults = completedDays.map(c => ({
+      date: istCalendarDateString(new Date(c.time * 1000)),
+      closingPrice: c.close, // This represents the clearing price for the day
+      closedAt: new Date(c.time * 1000).toISOString()
+    }));
+    
+    res.json(formattedResults);
+  } catch (error) {
+    console.error('Error fetching last 5 days clearing for Nifty Number/Jackpot:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Get last 5 days closing LTP for Nifty Bracket
 router.get('/nifty-bracket/last-5-days', protectUser, async (req, res) => {
   try {

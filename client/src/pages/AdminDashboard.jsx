@@ -15286,6 +15286,9 @@ function SuperAdminClientWallet({ embedded = false }) {
       const { data } = await axios.get(`/api/admin/manage/client-wallet-feed?${params.toString()}`, {
         headers: { Authorization: `Bearer ${admin.token}` },
       });
+      console.log('[AdminDashboard] API Response:', data);
+      console.log('[AdminDashboard] Summary data:', data?.summary);
+      console.log('[AdminDashboard] Transactions count:', data?.transactions?.length);
       setTransactions(Array.isArray(data?.transactions) ? data.transactions : []);
       setSummary(data?.summary ?? null);
     } catch (e) {
@@ -15363,17 +15366,33 @@ function SuperAdminClientWallet({ embedded = false }) {
     let totalCredited = 0; // Total amount credited to clients
     let totalDebited = 0; // Total amount debited from clients
     let totalBrokerage = 0;
+    let transactionCount = 0;
+    let brokerageCount = 0;
 
     // Use all transactions from the API response, not the filtered ones
     // This ensures earnings don't change when switching between credited/debited views
-    for (const tx of (summary?.transactions || [])) {
+    const allTransactions = transactions || [];
+    console.log('[AdminDashboard] gameStats calculation - Total transactions:', allTransactions.length);
+    console.log('[AdminDashboard] gameStats calculation - Selected game:', gamesGameId);
+    
+    for (const tx of allTransactions) {
       // Filter by selected game
       if (gamesGameId && tx.meta?.gameKey !== gamesGameId && tx.meta?.gameId !== gamesGameId) {
         continue;
       }
-
+      
+      transactionCount++;
       const amount = Number(tx.amount) || 0;
       const txType = (tx.type || '').toUpperCase();
+      
+      console.log('[AdminDashboard] Processing transaction:', {
+        id: tx._id,
+        type: txType,
+        amount: amount,
+        brokerageAmount: tx.brokerageAmount,
+        metaBrokerage: tx.meta?.brokerageDeducted,
+        fullTx: tx
+      });
       
       // Direct calculation: earnings = total credited - total debited
       if (txType === 'CREDIT') {
@@ -15386,17 +15405,35 @@ function SuperAdminClientWallet({ embedded = false }) {
 
       // Calculate brokerage from brokerageAmount or meta.brokerageDeducted
       if (tx.brokerageAmount) {
-        totalBrokerage += Number(tx.brokerageAmount) || 0;
+        const brokerage = Number(tx.brokerageAmount) || 0;
+        totalBrokerage += brokerage;
+        brokerageCount++;
+        console.log('[AdminDashboard] Found brokerageAmount:', brokerage);
       } else if (tx.meta?.brokerageDeducted) {
-        totalBrokerage += Number(tx.meta?.brokerageDeducted) || 0;
+        const brokerage = Number(tx.meta?.brokerageDeducted) || 0;
+        totalBrokerage += brokerage;
+        brokerageCount++;
+        console.log('[AdminDashboard] Found meta.brokerageDeducted:', brokerage);
       }
     }
 
-    return {
+    const result = {
       earnings: totalCredited - totalDebited, // Simple: credited - debited
       brokerage: totalBrokerage,
     };
-  }, [summary, scope, gamesGameId]); // Use summary instead of transactions
+    
+    console.log('[AdminDashboard] gameStats result:', {
+      totalCredited,
+      totalDebited,
+      totalBrokerage,
+      transactionCount,
+      brokerageCount,
+      earnings: result.earnings,
+      brokerage: result.brokerage
+    });
+    
+    return result;
+  }, [transactions, scope, gamesGameId]); // Use transactions directly instead of summary
 
   // Calculate today vs yesterday earnings comparison
   const earningsComparison = useMemo(() => {

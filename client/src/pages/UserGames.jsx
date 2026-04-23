@@ -18,7 +18,7 @@ import {
   ArrowLeft, TrendingUp, TrendingDown, Hash, Trophy, Target,
   Timer, Users, Coins, Gamepad2, Zap, Star, Gift, ChevronRight,
   ArrowUpCircle, ArrowDownCircle, RefreshCw, X, Check, AlertCircle, Bitcoin,
-  Info, Lock, BookOpen, Award, Crown, HelpCircle, ChevronDown, BarChart3, History
+  Info, Lock, BookOpen, Award, Crown, HelpCircle, ChevronDown, BarChart3, History, Calendar
 } from 'lucide-react';
 
 // Map frontend game IDs to backend GameSettings keys
@@ -170,9 +170,13 @@ const UserGames = () => {
   const [gamesBalance, setGamesBalance] = useState(0);
   const [activeGame, setActiveGame] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [gameSettings, setGameSettings] = useState(null);
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
   const [howToPlayGame, setHowToPlayGame] = useState(null);
   const [ledgerHubGameId, setLedgerHubGameId] = useState(null);
+  const [showLast5DaysModal, setShowLast5DaysModal] = useState(false);
+  const [last5DaysGame, setLast5DaysGame] = useState(null);
+  const [last5DaysData, setLast5DaysData] = useState([]);
+  const [last5DaysLoading, setLast5DaysLoading] = useState(false);
   const [todayNetByGame, setTodayNetByGame] = useState({});
   const [todayGrossWinsByGame, setTodayGrossWinsByGame] = useState({});
   /** { istDate, games: { [ledgerGameId]: { totalTickets, players, ... } } } */
@@ -247,6 +251,30 @@ const UserGames = () => {
       setLiveActivity(null);
     }
   }, [user?.token]);
+
+  const fetchLast5DaysData = async (gameId) => {
+    setLast5DaysLoading(true);
+    try {
+      let endpoint;
+      if (gameId === 'niftybracket') {
+        endpoint = '/api/user/nifty-bracket/last-5-days';
+      } else if (gameId === 'niftynumber' || gameId === 'niftyjackpot') {
+        endpoint = '/api/user/nifty-jackpot/last-5-days-clearing';
+      } else {
+        throw new Error('Invalid game for last 5 days data');
+      }
+
+      const { data } = await axios.get(endpoint, {
+        headers: { Authorization: `Bearer ${user?.token}` }
+      });
+      setLast5DaysData(data || []);
+    } catch (error) {
+      console.error('Error fetching last 5 days data:', error);
+      setLast5DaysData([]);
+    } finally {
+      setLast5DaysLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -649,17 +677,37 @@ const UserGames = () => {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setLedgerHubGameId(game.id);
-                }}
-                className="mt-0 w-full flex items-center justify-center gap-1.5 py-2 rounded-b-xl text-xs font-medium text-cyan-400 bg-dark-900/40 border-t border-cyan-500/20 hover:bg-cyan-500/10 transition"
-              >
-                <History size={14} />
-                Order history
-              </button>
+              <div className="flex border-t border-dark-700">
+                {/* Order history button */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setLedgerHubGameId(game.id);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-cyan-400 bg-dark-900/40 hover:bg-cyan-500/10 transition"
+                >
+                  <History size={14} />
+                  Order history
+                </button>
+                
+                {/* Last 5 days button - only for Nifty games */}
+                {(game.id === 'niftynumber' || game.id === 'niftyjackpot' || game.id === 'niftybracket') && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLast5DaysGame(game.id);
+                      setShowLast5DaysModal(true);
+                      fetchLast5DaysData(game.id);
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-purple-400 bg-dark-900/40 hover:bg-purple-500/10 transition border-l border-dark-700"
+                  >
+                    <Calendar size={14} />
+                    {game.id === 'niftybracket' ? 'Last 5 LTPs' : 'Last 5 Clearing'}
+                  </button>
+                )}
+              </div>
             </div>
             );
           })}
@@ -707,6 +755,91 @@ const UserGames = () => {
                     enableDateFilter
                     bodyClassName="max-h-[min(24rem,52vh)]"
                   />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Last 5 Days Modal */}
+        {showLast5DaysModal && (() => {
+          const game = games.find((g) => g.id === last5DaysGame);
+          const isLTP = last5DaysGame === 'niftybracket';
+          return (
+            <div
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+              onClick={() => setShowLast5DaysModal(false)}
+            >
+              <div
+                className="bg-dark-800 border border-purple-500/30 rounded-2xl w-full max-w-lg max-h-[88vh] overflow-hidden flex flex-col shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between px-4 py-3 border-b border-dark-600 shrink-0">
+                  <h2 className="font-bold text-sm flex items-center gap-2 text-purple-300">
+                    <Calendar size={16} className="text-purple-400" />
+                    {isLTP ? 'Last 5 Days LTP' : 'Last 5 Days Clearing'} — {game?.name || 'Game'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setShowLast5DaysModal(false)}
+                    className="p-1.5 hover:bg-dark-700 rounded-lg transition"
+                    aria-label="Close"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="overflow-y-auto flex-1 min-h-0 p-3">
+                  {last5DaysLoading ? (
+                    <div className="flex items-center justify-center py-8 text-gray-400">
+                      <RefreshCw size={20} className="animate-spin mr-2" />
+                      Loading data...
+                    </div>
+                  ) : last5DaysData.length === 0 ? (
+                    <div className="text-center py-8 text-gray-400">
+                      <Calendar size={48} className="mx-auto mb-4 opacity-30" />
+                      <p>No data available for the last 5 days</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-[10px] text-gray-500 mb-3">
+                        {isLTP 
+                          ? 'Showing the last traded price (LTP) at market close for the last 5 completed trading days.'
+                          : 'Showing the clearing price (last 15-minute bar close) for the last 5 completed trading days.'
+                        }
+                      </p>
+                      {last5DaysData.map((item, index) => (
+                        <div key={index} className="bg-dark-700 rounded-lg p-3 flex items-center justify-between">
+                          <div>
+                            <div className="text-sm font-medium text-gray-300">
+                              {new Date(item.date || item.closedAt).toLocaleDateString('en-IN', {
+                                weekday: 'short',
+                                day: 'numeric',
+                                month: 'short'
+                              })}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {isLTP ? 'LTP at close' : 'Clearing price'}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-lg font-bold text-green-400">
+                              ₹{(isLTP ? item.closingLTP : item.closingPrice || item.clearingPrice || item.lockedPrice)?.toLocaleString('en-IN', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2
+                            }) || '—'}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {new Date(item.date || item.closedAt).toLocaleDateString('en-IN', {
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric'
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
