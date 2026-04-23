@@ -6,8 +6,7 @@ import {
   niftyOpenFixSecForWindow,
   niftyResultSecForWindow,
 } from '../../lib/niftyUpDownWindows.js';
-import { fetchNifty50LastPriceFromKite, fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
-import { getMarketData } from './zerodhaWebSocket.js';
+import { fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
 
 function istSecondsFromMs(ms = Date.now()) {
   const t = new Date(ms).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false });
@@ -49,12 +48,16 @@ function pickMinuteCloseNearTarget(candles, targetMs) {
   return null;
 }
 
-function niftyLtpFromSocket() {
-  const md = getMarketData();
-  const tick = md['256265'] || md[256265];
-  const lp = tick?.ltp ?? tick?.last_price;
-  if (lp == null || !Number.isFinite(Number(lp)) || Number(lp) <= 0) return null;
-  return Number(lp);
+/**
+ * Helper function to get previous window's close price for Nifty comparison
+ */
+async function getPreviousWindowClosePrice(windowNumber, today, dayStart, dayEnd) {
+  const prevRow = await GameResult.findOne({
+    gameId: 'updown',
+    windowNumber,
+    windowDate: { $gte: dayStart, $lt: dayEnd },
+  }).select({ closePrice: 1 }).lean();
+  return prevRow?.closePrice || null;
 }
 
 export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()) {
@@ -125,8 +128,11 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
         openPx = pickMinuteCloseNearTarget(candles, targetOpenMs);
       }
     }
-    if (openPx == null) {
-      openPx = niftyLtpFromSocket() ?? (await fetchNifty50LastPriceFromKite());
+
+    // Skip if open price is not available from historical candles (no LTP fallback)
+    if (!Number.isFinite(openPx) || openPx <= 0) {
+      console.warn(`[niftyUpDownPublish] skip window ${W} day=${today}: missing open price from historical candles`);
+      continue;
     }
 
     const targetCloseMs = istInstantMs(today, resultSec);
@@ -140,16 +146,17 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
       });
       closePx = pickMinuteCloseNearTarget(candles, targetCloseMs);
     }
-    if (closePx == null) {
-      closePx = niftyLtpFromSocket() ?? (await fetchNifty50LastPriceFromKite());
-    }
 
-    if (!Number.isFinite(openPx) || openPx <= 0 || !Number.isFinite(closePx) || closePx <= 0) {
-      console.warn(`[niftyUpDownPublish] skip window ${W} day=${today}: missing prices (open=${openPx} close=${closePx})`);
+    // Skip if close price is not available from historical candles (no LTP fallback)
+    if (!Number.isFinite(closePx) || closePx <= 0) {
+      console.warn(`[niftyUpDownPublish] skip window ${W} day=${today}: missing close price from historical candles`);
       continue;
     }
 
-    const priceChange = closePx - openPx;
+    // Compare with previous window's close price (like BTC Up/Down)
+    const prevWindowClosePrice = W > 1 ? await getPreviousWindowClosePrice(W - 1, today, dayStart, dayEnd) : null;
+    const comparisonPrice = prevWindowClosePrice || openPx;
+    const priceChange = closePx - comparisonPrice;
     const result = priceChange > 0 ? 'UP' : priceChange < 0 ? 'DOWN' : 'TIE';
 
     try {
@@ -160,14 +167,14 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
         openPrice: openPx,
         closePrice: closePx,
         priceChange,
-        priceChangePercent: openPx > 0 ? (priceChange / openPx) * 100 : 0,
+        priceChangePercent: comparisonPrice > 0 ? (priceChange / comparisonPrice) * 100 : 0,
         result,
         windowStartTime: fmtT(betStartSec),
         windowEndTime: fmtT(betEndSec),
         resultTime: new Date(nowMs),
       });
       console.log(
-        `[niftyUpDownPublish] GameResult w=${W} ${result} open=${openPx} close=${closePx} day=${today}`
+        `[niftyUpDownPublish] GameResult w=${W} ${result} comparisonPrice=${comparisonPrice} close=${closePx} day=${today}`
       );
     } catch (e) {
       if (e.code !== 11000) throw e;
