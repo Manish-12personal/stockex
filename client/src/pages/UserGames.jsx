@@ -3117,14 +3117,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           // Result time is 15 minutes later, but LTP time is when the price was captured
           time = gameResult.ltpTime || gameResult.windowEndTime || pendingWindow?.ltpTime;
           source = 'official';
+        } else if (pendingWindow && pendingWindow.windowEndLTP) {
+          // Prioritize pending window LTP (fixed at window end) over game results
+          ltp = pendingWindow.windowEndLTP;
+          time = pendingWindow.ltpTime;
+          source = 'pending';
         } else if (gameResult && gameResult.closePrice) {
           ltp = Number(gameResult.closePrice);
           time = gameResult.resultTime || gameResult.createdAt;
           source = 'result';
-        } else if (pendingWindow && pendingWindow.windowEndLTP) {
-          ltp = pendingWindow.windowEndLTP;
-          time = pendingWindow.ltpTime;
-          source = 'pending';
         }
         
         // If no time available, use a default format
