@@ -15194,8 +15194,14 @@ function SuperAdminClientWallet({ embedded = false }) {
   const [userSearch, setUserSearch] = useState('');
   const [debouncedUserSearch, setDebouncedUserSearch] = useState('');
   const [debouncedAdminCode, setDebouncedAdminCode] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateFrom, setDateFrom] = useState(() => {
+    const today = new Date();
+    return today.toISOString().split('T')[0]; // Format as YYYY-MM-DD
+  });
+  const [dateTo, setDateTo] = useState(() => {
+    const today = new Date();
+    return today.toISOString().split('T')[0]; // Format as YYYY-MM-DD
+  });
   const [transactions, setTransactions] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -15354,8 +15360,8 @@ function SuperAdminClientWallet({ embedded = false }) {
       return { earnings: 0, brokerage: 0 };
     }
 
-    let totalCreditsToSA = 0; // Money coming TO Super Admin (client loses)
-    let totalDebitsFromSA = 0; // Money going FROM Super Admin (client wins)
+    let totalCredited = 0; // Total amount credited to clients
+    let totalDebited = 0; // Total amount debited from clients
     let totalBrokerage = 0;
 
     // Use all transactions from the API response, not the filtered ones
@@ -15369,15 +15375,13 @@ function SuperAdminClientWallet({ embedded = false }) {
       const amount = Number(tx.amount) || 0;
       const txType = (tx.type || '').toUpperCase();
       
-      // From Super Admin perspective (inverted from client):
-      // tx.type = 'CREDIT' means client was credited (won) = SA pays out (debit to SA)
-      // tx.type = 'DEBIT' means client was debited (lost) = SA receives (credit to SA)
-      if (txType === 'DEBIT') {
-        // Client lost, SA receives
-        totalCreditsToSA += amount;
-      } else if (txType === 'CREDIT') {
-        // Client won, SA pays out
-        totalDebitsFromSA += amount;
+      // Direct calculation: earnings = total credited - total debited
+      if (txType === 'CREDIT') {
+        // Money credited to clients
+        totalCredited += amount;
+      } else if (txType === 'DEBIT') {
+        // Money debited from clients
+        totalDebited += amount;
       }
 
       // Calculate brokerage from brokerageAmount or meta.brokerageDeducted
@@ -15389,7 +15393,7 @@ function SuperAdminClientWallet({ embedded = false }) {
     }
 
     return {
-      earnings: totalCreditsToSA - totalDebitsFromSA,
+      earnings: totalCredited - totalDebited, // Simple: credited - debited
       brokerage: totalBrokerage,
     };
   }, [summary, scope, gamesGameId]); // Use summary instead of transactions
@@ -15403,10 +15407,10 @@ function SuperAdminClientWallet({ embedded = false }) {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
     const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
 
-    let todayCredits = 0;
-    let todayDebits = 0;
-    let yesterdayCredits = 0;
-    let yesterdayDebits = 0;
+    let todayCredited = 0;
+    let todayDebited = 0;
+    let yesterdayCredited = 0;
+    let yesterdayDebited = 0;
 
     // Use all transactions from summary for accurate comparison
     for (const tx of (summary?.transactions || [])) {
@@ -15419,20 +15423,20 @@ function SuperAdminClientWallet({ embedded = false }) {
       const txType = (tx.type || '').toUpperCase();
       const txDate = new Date(tx.createdAt).toISOString().split('T')[0];
 
-      // From Super Admin perspective
-      if (txType === 'DEBIT') {
-        // Client lost, SA receives
-        if (txDate === today) todayCredits += amount;
-        else if (txDate === yesterday) yesterdayCredits += amount;
-      } else if (txType === 'CREDIT') {
-        // Client won, SA pays out
-        if (txDate === today) todayDebits += amount;
-        else if (txDate === yesterday) yesterdayDebits += amount;
+      // Direct calculation: earnings = credited - debited
+      if (txType === 'CREDIT') {
+        // Money credited to clients
+        if (txDate === today) todayCredited += amount;
+        else if (txDate === yesterday) yesterdayCredited += amount;
+      } else if (txType === 'DEBIT') {
+        // Money debited from clients
+        if (txDate === today) todayDebited += amount;
+        else if (txDate === yesterday) yesterdayDebited += amount;
       }
     }
 
-    const todayEarnings = todayCredits - todayDebits;
-    const yesterdayEarnings = yesterdayCredits - yesterdayDebits;
+    const todayEarnings = todayCredited - todayDebited;
+    const yesterdayEarnings = yesterdayCredited - yesterdayDebited;
     const comparison = todayEarnings - yesterdayEarnings;
 
     return {
@@ -15858,100 +15862,217 @@ function SuperAdminClientWallet({ embedded = false }) {
 
       {loading ? (
         <div className="text-center py-16 text-gray-500">
-          <RefreshCw className="animate-spin inline" size={28} />
+          <div className="flex flex-col items-center gap-3">
+            <RefreshCw className="animate-spin" size={32} />
+            <div className="text-sm">Loading transactions...</div>
+            <div className="text-xs text-gray-600">Fetching your financial data</div>
+          </div>
         </div>
       ) : filteredRows.length === 0 ? (
         <div className="text-center py-14 text-gray-500 text-sm rounded-xl border border-dark-600 bg-dark-800/50">
-          No lines for these filters. Try widening dates or clearing category / game filters.
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-16 h-16 bg-gray-700/50 rounded-full flex items-center justify-center">
+              <Search size={24} className="text-gray-500" />
+            </div>
+            <div className="font-medium text-gray-400">No transactions found</div>
+            <div className="text-xs text-gray-600 max-w-md">
+              Try adjusting your filters: expand date range, clear search terms, or select different transaction types/games
+            </div>
+            <div className="flex gap-2 text-xs">
+              <button 
+                onClick={() => {setUserSearch(''); setAdminCodeFilter(''); setTxKind(''); setGamesGameId('');}}
+                className="px-3 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg transition-colors"
+              >
+                Clear all filters
+              </button>
+            </div>
+          </div>
         </div>
       ) : (
         <div className="bg-dark-800 rounded-xl border border-dark-600 overflow-x-auto">
-          <div className="text-[10px] text-gray-500 px-3 py-2 border-b border-dark-600">
-            Showing {filteredRows.length} of {rowsMatchingYourWalletChip.length} loaded
-            {rowsMatchingYourWalletChip.length !== transactions.length ? (
-              <span className="text-amber-500/90"> ({transactions.length} from server)</span>
-            ) : null}
+          {/* Transaction Summary */}
+          <div className="bg-gradient-to-r from-dark-700 to-dark-700/50 px-4 py-3 border-b border-dark-600">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="text-sm">
+                  <span className="text-gray-500">Showing:</span>
+                  <span className="text-white font-semibold ml-1">{filteredRows.length}</span>
+                  <span className="text-gray-500 ml-1">of</span>
+                  <span className="text-white font-semibold ml-1">{rowsMatchingYourWalletChip.length}</span>
+                  <span className="text-gray-500 ml-1">loaded</span>
+                  {rowsMatchingYourWalletChip.length !== transactions.length && (
+                    <span className="text-amber-500/90 ml-1">({transactions.length} from server)</span>
+                  )}
+                </div>
+                <div className="h-6 w-px bg-gray-600"></div>
+                <div className="flex items-center gap-3 text-xs">
+                  <div className="flex items-center gap-1">
+                    <span className="w-3 h-3 bg-green-500/50 rounded-full"></span>
+                    <span className="text-gray-400">Credits</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-3 h-3 bg-red-500/50 rounded-full"></span>
+                    <span className="text-gray-400">Debits</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-3 h-3 bg-purple-500/50 rounded-full"></span>
+                    <span className="text-gray-400">Games</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <Info size={12} />
+                <span>Click ℹ️ for details</span>
+              </div>
+            </div>
           </div>
           <table className="w-full text-sm min-w-[820px]">
             <thead className="bg-dark-700">
               <tr>
-                <th className="text-left px-3 py-2 text-gray-400">When</th>
-                <th className="text-left px-3 py-2 text-gray-400">Client</th>
-                <th className="text-left px-3 py-2 text-gray-400">Code</th>
-                <th className="text-left px-3 py-2 text-gray-400">Reason</th>
-                <th className="text-left px-3 py-2 text-gray-400">Game</th>
-                <th className="text-left px-3 py-2 text-gray-400">Ref</th>
+                <th className="text-left px-3 py-2 text-gray-400 font-semibold">📅 When</th>
+                <th className="text-left px-3 py-2 text-gray-400 font-semibold">👤 Client</th>
+                <th className="text-left px-3 py-2 text-gray-400 font-semibold">🔖 Code</th>
+                <th className="text-left px-3 py-2 text-gray-400 font-semibold">📝 Reason</th>
+                <th className="text-left px-3 py-2 text-gray-400 font-semibold">🎮 Game</th>
+                <th className="text-left px-3 py-2 text-gray-400 font-semibold">🔗 Ref</th>
                 {txKind !== 'CREDIT' && (
-                  <th className="text-right px-3 py-2 text-gray-400" title="Brokerage amount split to your account">Brokerage Distribution</th>
+                  <th className="text-right px-3 py-2 text-gray-400 font-semibold" title="Brokerage amount split to your account">💰 Brokerage</th>
                 )}
                 <th
-                  className="text-right px-3 py-2 text-gray-400"
+                  className="text-right px-3 py-2 text-gray-400 font-semibold"
                   title="Games amount distributed through games wallet"
                 >
-                  Games Distribution
+                  🎯 Games
                 </th>
-                <th className="text-right px-3 py-2 text-gray-400">Balance</th>
-                <th className="text-center px-3 py-2 text-gray-400">Info</th>
+                <th className="text-right px-3 py-2 text-gray-400 font-semibold">💵 Balance</th>
+                <th className="text-center px-3 py-2 text-gray-400 font-semibold">ℹ️ Info</th>
               </tr>
             </thead>
             <tbody>
-              {filteredRows.map((tx) => (
-                <tr key={tx.feedMergeKey || tx._id} className="border-t border-dark-600 hover:bg-dark-700/40">
+              {filteredRows.map((tx) => {
+                const isCredit = (tx.type || '').toUpperCase() === 'CREDIT';
+                const isDebit = (tx.type || '').toUpperCase() === 'DEBIT';
+                const isGameTx = tx.gamesWallet || tx.meta?.gameKey || tx.meta?.gameId;
+                
+                return (
+                <tr key={tx.feedMergeKey || tx._id} className={`border-t hover:bg-dark-700/40 transition-colors ${
+                  isCredit ? 'border-l-4 border-l-green-500/50' : 
+                  isDebit ? 'border-l-4 border-l-red-500/50' : 
+                  'border-l-4 border-l-gray-600/50'
+                }`}>
                   <td className="px-3 py-2 whitespace-nowrap text-[11px]">
-                    {new Date(tx.createdAt).toLocaleString()}
+                    <div className="flex items-center gap-1">
+                      {isCredit && <span className="text-green-400">📥</span>}
+                      {isDebit && <span className="text-red-400">📤</span>}
+                      <span className="text-gray-300">{new Date(tx.createdAt).toLocaleString('en-IN', { 
+                        day: '2-digit', 
+                        month: '2-digit', 
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                      })}</span>
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-[11px] max-w-[160px]">
-                    <div className="text-gray-200 truncate">{tx.ownerFullName || tx.ownerUsername || '—'}</div>
-                    {tx.ownerUsername && (
-                      <div className="text-gray-500 font-mono truncate">@{tx.ownerUsername}</div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-yellow-400/90 text-[11px]">{tx.adminCode || '—'}</td>
-                  <td className="px-3 py-2 text-gray-400 max-w-[200px]">
-                    <div className="truncate text-gray-200 text-[12px]">
-                      {tx.gamesWallet
-                        ? 'Games wallet'
-                        : tx.saPoolDebit
-                          ? 'House pool (SA main wallet)'
-                          : tx.reason || '—'}
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1">
+                        <div className="text-gray-200 truncate font-medium">{tx.ownerFullName || tx.ownerUsername || '—'}</div>
+                        {tx.ownerUsername && (
+                          <div className="text-gray-500 font-mono text-[10px]">@{tx.ownerUsername}</div>
+                        )}
+                      </div>
+                      {isGameTx && <span className="text-purple-400">🎮</span>}
                     </div>
-                    <div className="truncate text-[10px] text-gray-600">{tx.description || ''}</div>
                   </td>
-                  <td className="px-3 py-2 text-[11px] text-cyan-300/90 whitespace-nowrap">
-                    {gameColumnLabelForTx(tx)}
+                  <td className="px-3 py-2 font-mono text-yellow-400/90 text-[11px] font-semibold bg-yellow-900/20 px-2 py-1 rounded">
+                    {tx.adminCode || '—'}
+                  </td>
+                  <td className="px-3 py-2 text-gray-400 max-w-[200px]">
+                    <div className="space-y-1">
+                      <div className={`truncate text-[12px] font-medium ${
+                        tx.gamesWallet ? 'text-purple-300' : 
+                        tx.saPoolDebit ? 'text-orange-300' : 
+                        'text-gray-200'
+                      }`}>
+                        {tx.gamesWallet
+                          ? '🎮 Games wallet'
+                          : tx.saPoolDebit
+                            ? '🏠 House pool (SA main)'
+                            : tx.reason || '—'}
+                      </div>
+                      {tx.description && (
+                        <div className="truncate text-[10px] text-gray-500 italic">{tx.description}</div>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-[11px] whitespace-nowrap">
+                    <div className={`font-medium px-2 py-1 rounded text-xs ${
+                      tx.meta?.gameKey === 'niftyjackpot' ? 'bg-purple-900/30 text-purple-300' :
+                      tx.meta?.gameKey === 'niftybracket' ? 'bg-blue-900/30 text-blue-300' :
+                      tx.meta?.gameKey === 'niftynumber' ? 'bg-green-900/30 text-green-300' :
+                      tx.meta?.gameKey === 'niftyltp' ? 'bg-orange-900/30 text-orange-300' :
+                      tx.meta?.gameKey === 'niftysignal' ? 'bg-pink-900/30 text-pink-300' :
+                      'bg-gray-700/30 text-gray-300'
+                    }`}>
+                      {gameColumnLabelForTx(tx) || '—'}
+                    </div>
                   </td>
                   <td className="px-3 py-2 font-mono text-[10px] text-gray-500 whitespace-nowrap">
-                    {formatAllTxReference(tx)}
+                    <div className="bg-dark-700/50 px-2 py-1 rounded">
+                      {formatAllTxReference(tx) || '—'}
+                    </div>
                   </td>
                   {txKind !== 'CREDIT' && (
-                    <td className="px-3 py-2 text-right text-[11px] text-purple-400 font-semibold tabular-nums">
-                      {tx.brokerageAmount ? `₹${Number(tx.brokerageAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                    <td className="px-3 py-2 text-right text-[11px] font-semibold tabular-nums">
+                      {tx.brokerageAmount ? (
+                        <div className="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">
+                          ₹{Number(tx.brokerageAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      ) : (
+                        <span className="text-gray-600">—</span>
+                      )}
                     </td>
                   )}
-                  <td className="px-3 py-2 text-right text-[11px] text-cyan-400 font-semibold tabular-nums">
-                    {tx.gamesAmount ? `₹${Number(tx.gamesAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
+                  <td className="px-3 py-2 text-right text-[11px] font-semibold tabular-nums">
+                    {tx.gamesAmount ? (
+                      <div className={`px-2 py-1 rounded ${
+                        Number(tx.gamesAmount) > 0 
+                          ? 'bg-green-900/30 text-green-300' 
+                          : 'bg-red-900/30 text-red-300'
+                      }`}>
+                        ₹{Number(tx.gamesAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    ) : (
+                      <span className="text-gray-600">—</span>
+                    )}
                   </td>
                   <td
-                    className="px-3 py-2 text-right text-[11px] text-gray-400"
+                    className="px-3 py-2 text-right text-[11px] font-semibold tabular-nums"
                     title={
                       tx.saPoolDebit
                         ? 'Super Admin main wallet balance after this pool debit (not games-wallet balance)'
-                        : undefined
+                        : 'Balance after transaction'
                     }
                   >
-                    ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
+                    <div className={`px-2 py-1 rounded ${
+                      Number(tx.balanceAfter || 0) >= 0 
+                        ? 'bg-gray-700/50 text-gray-300' 
+                        : 'bg-red-900/30 text-red-300'
+                    }`}>
+                      ₹{Number(tx.balanceAfter || 0).toLocaleString('en-IN')}
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-center">
                     <button
                       onClick={() => setHierarchyModal({ open: true, tx })}
-                      className="inline-flex items-center justify-center w-7 h-7 rounded-full hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 transition-colors"
-                      title="View hierarchy"
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 hover:text-blue-300 transition-all transform hover:scale-105"
+                      title="View transaction details"
                     >
-                      <Info size={16} />
+                      <Info size={14} />
                     </button>
                   </td>
                 </tr>
-              ))}
+              );
+            })}
             </tbody>
           </table>
         </div>
