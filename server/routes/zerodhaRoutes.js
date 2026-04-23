@@ -401,18 +401,32 @@ router.get('/game-price/:symbol', async (req, res) => {
           let sessionClearing = null;
           let sessionClearingBarEnd = null;
           let sessionClearingBarEndISO = null;
+          let actualLTP = q.price; // This is what Kite calls "last_price"
+          
           try {
             const clr = await fetchNifty50SessionClearing15mCached();
             if (clr && Number.isFinite(Number(clr.close))) {
               sessionClearing = Number(clr.close);
               sessionClearingBarEnd = clr.barTime;
               sessionClearingBarEndISO = clr.barTimeISO;
+              
+              // IMPORTANT FIX: Kite's "last_price" is actually the clearing price
+              // The real LTP is in the 15-minute bar close
+              // So we need to SWAP these values for Nifty Bracket
+              console.log('[SWAP] Before swap - Kite last_price:', actualLTP, 'Clearing 15m:', sessionClearing);
+              const temp = actualLTP;
+              actualLTP = sessionClearing; // Real LTP is the 15m bar close
+              sessionClearing = temp; // Clearing price is what Kite calls "last_price"
+              console.log('[SWAP] After swap - Real LTP:', actualLTP, 'Clearing:', sessionClearing);
             }
           } catch (clrErr) {
             console.warn('Game price session clearing (15m) error:', clrErr.message);
           }
+          
           return res.json({
             ...q,
+            price: actualLTP, // This is now the REAL LTP
+            ltp: actualLTP, // This is now the REAL LTP
             source: 'api_authoritative',
             sessionClearing,
             sessionClearingBarEnd,
