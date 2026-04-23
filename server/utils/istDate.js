@@ -27,3 +27,10 @@ export function startOfISTDayFromKey(yyyyMmDd) {
   const pad = (n) => String(n).padStart(2, '0');
   return new Date(`${y}-${pad(m)}-${pad(d)}T00:00:00+05:30`);
 }
+
+/** Convert IST day key and seconds offset to timestamp in milliseconds */
+export function istInstantMs(yyyyMmDd, secondsFromMidnight) {
+  const start = startOfISTDayFromKey(yyyyMmDd);
+  if (!start) return null;
+  return start.getTime() + (secondsFromMidnight * 1000);
+}
