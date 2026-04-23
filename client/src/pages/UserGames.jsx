@@ -1821,7 +1821,15 @@ const GameLivePricePanel = ({
     console.log('[GameLivePricePanel] Calling onPriceUpdate callback with:', price);
     onPriceUpdateRef.current?.(price);
     if (!isBTC && niftyLtpTapeRef.current) {
-      const rounded = Math.round(Number(price) * 100) / 100;
+      // For Nifty Bracket (gameId="updown"), we need to use the real LTP (sessionClearing)
+      // But we don't have access to sessionClearing here, so we'll use the price that comes from the callback
+      // The real LTP will be set by the onSessionClearingUpdate callback in Nifty Bracket
+      let priceToUse = price;
+      
+      // Special handling for Nifty Bracket - use the price from onSessionClearingUpdate
+      // This will be handled in the component itself by updating the LTP tape separately
+      
+      const rounded = Math.round(Number(priceToUse) * 100) / 100;
       const istYmd = getIstCalendarYmd();
       const istTime = new Date().toLocaleTimeString('en-IN', {
         timeZone: 'Asia/Kolkata',
@@ -4920,6 +4928,31 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
   const [showLast5DaysLTP, setShowLast5DaysLTP] = useState(false);
   const resolveCheckRef = useRef(null);
 
+  // LTP Tape state for Nifty Bracket
+  const [ltpTapeRows, setLtpTapeRows] = useState([]);
+  
+  // Function to update LTP tape with real LTP
+  const updateLtpTape = useCallback((realLTP) => {
+    if (!realLTP || !Number.isFinite(realLTP)) return;
+    
+    const istYmd = getIstCalendarYmd();
+    const istTime = new Date().toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour12: true,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const rounded = Math.round(Number(realLTP) * 100) / 100;
+    
+    setLtpTapeRows((prev) => {
+      const row = { id, price: rounded, istTime, ts: Date.now() };
+      const next = [row, ...prev].slice(0, 10000); // Same max as global LTP tape
+      return next;
+    });
+  }, []);
+
   const fetchActiveTrades = useCallback(async () => {
     try {
       const { data } = await axios.get('/api/user/nifty-bracket/active', {
@@ -5449,7 +5482,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
             <GameLivePricePanel
               gameId="updown"
               fullHeight
-              niftyLtpTape
+              niftyLtpTape={false}
               onPriceUpdate={(p) => {
                 // IMPORTANT: For Nifty Bracket, we need to use sessionClearing as LTP
                 // because Kite's "last_price" is actually the clearing price
@@ -5475,6 +5508,9 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                     setPriceUpdateTick(t => t + 1);
                   });
                   console.log('[NiftyBracket] ✅ currentPrice set to REAL LTP:', clearing);
+                  
+                  // Also update the LTP tape with the real LTP
+                  updateLtpTape(Number(clearing));
                 } else {
                   setSessionClearing(null);
                 }
@@ -5483,6 +5519,32 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
                 setBidAsk(bidAskData);
               }}
             />
+            
+            {/* Custom LTP Tape for Nifty Bracket - shows real LTP instead of clearing */}
+            {ltpTapeRows.length > 0 && (
+              <div className="mt-2 shrink-0 rounded-lg border border-cyan-600/25 bg-dark-900/60 overflow-hidden flex flex-col max-h-[min(280px,38vh)]">
+                <div className="px-2 py-1 text-[10px] font-semibold text-cyan-300/90 border-b border-dark-600 bg-dark-800/90 flex flex-col gap-0.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>LTP trail (IST) - REAL LTP</span>
+                    <span className="text-gray-500 font-normal">newest ↑ · scroll for older</span>
+                  </div>
+                  <p className="text-[9px] text-gray-500 font-normal leading-snug">
+                    Shows actual LTP (24,156.05) not clearing price (24,173.05)
+                  </p>
+                </div>
+                <div className="overflow-y-auto min-h-0 overscroll-y-contain divide-y divide-dark-700/80 text-[11px]">
+                  {ltpTapeRows.map((row) => (
+                    <div
+                      key={row.id}
+                      className="flex items-center justify-between gap-2 px-2 py-1.5 tabular-nums"
+                    >
+                      <span className="text-cyan-300 font-mono">₹{row.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      <span className="text-gray-500 text-[10px]">{row.istTime}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* RIGHT COLUMN - Betting Controls */}
