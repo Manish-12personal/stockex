@@ -1289,7 +1289,7 @@ const getTradingWindowInfo = (openTime, closeTime, roundDurationSec = DEFAULT_NI
   const secSinceMarketOpen = currentSec - marketOpenSec;
   const windowIndex = Math.floor(secSinceMarketOpen / D);
   const windowStartSec = marketOpenSec + windowIndex * D;
-  const windowEndSec = marketOpenSec + (windowIndex + 1) * D - 1;
+  const windowEndSec = marketOpenSec + (windowIndex + 1) * D;
   const ltpTimeSec = marketOpenSec + (windowIndex + 1) * D;
   const resultTimeSec = marketOpenSec + (windowIndex + 2) * D;
 
