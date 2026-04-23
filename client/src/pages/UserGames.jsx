@@ -775,7 +775,7 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Predict whether <span className="text-green-400 font-bold">NIFTY 50</span> will go <span className="text-green-400 font-bold">UP</span> or <span className="text-red-400 font-bold">DOWN</span> after the trading window closes.</li>
                         <li>2. Each trading window lasts <span className="text-cyan-400 font-bold">15 minutes</span>.</li>
-                        <li>3. <span className="text-purple-400 font-bold">Result</span> uses Nifty <span className="text-cyan-400 font-bold">LTP (spot)</span> read <span className="text-cyan-400 font-bold">15 minutes after</span> your window&apos;s first LTP — the <span className="text-cyan-400 font-bold">same price and time as the next window&apos;s LTP</span> tick.</li>
+                        <li>3. <span className="text-purple-400 font-bold">Result</span> is published <span className="text-cyan-400 font-bold">15 minutes after</span> the window closes.</li>
                         <li>4. If your prediction is correct, you win <span className="text-yellow-400 font-bold">{gs.winMultiplier || 1.95}x</span> your bet amount.</li>
                         <li>5. Once placed, bets <span className="text-red-400 font-bold">cannot be changed, modified or cancelled</span>.</li>
                       </ul>
@@ -784,8 +784,8 @@ const UserGames = () => {
                       <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Timer size={12} /> Trading Window</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Market hours: <span className="text-cyan-400 font-bold">{gs.startTime || '09:15'} - {gs.endTime || '15:30'} IST</span> (Mon-Fri).</li>
-                        <li>2. Window 1: <span className="text-cyan-400 font-bold">12:00:00 – 12:14:59</span> → LTP <span className="text-cyan-400 font-bold">12:15:00</span> → Result <span className="text-purple-400 font-bold">12:30:00</span> (same spot as Window 2 LTP)</li>
-                        <li>3. Window 2: <span className="text-cyan-400 font-bold">12:15:00 – 12:29:59</span> → LTP <span className="text-cyan-400 font-bold">12:30:00</span> → Result <span className="text-purple-400 font-bold">12:45:00</span></li>
+                        <li>2. Window 1: <span className="text-cyan-400 font-bold">11:00:00 – 11:15:00</span> → Result <span className="text-purple-400 font-bold">11:30:00</span></li>
+                        <li>3. Window 2: <span className="text-cyan-400 font-bold">11:15:00 – 11:30:00</span> → Result <span className="text-purple-400 font-bold">11:45:00</span></li>
                         <li>4. No gap between windows — next window starts immediately.</li>
                       </ul>
                     </div>
@@ -800,15 +800,15 @@ const UserGames = () => {
                     <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
                       <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> How You Win</h3>
                       <ul className="text-gray-300 space-y-1.5 pl-1">
-                        <li>1. When your betting window ends, <span className="text-cyan-400 font-bold">LTP</span> (last traded price) is fixed.</li>
-                        <li>2. After 15 minutes, <span className="text-purple-400 font-bold">Result</span> is the Nifty <span className="text-purple-400 font-bold">LTP (spot)</span> at that moment — the <span className="text-purple-400 font-bold">same reading as the next window&apos;s LTP</span> tick — compared to your window&apos;s LTP.</li>
-                        <li>3. If Result LTP {'>'} window LTP → <span className="text-green-400 font-bold">GREEN</span> → UP wins!</li>
-                        <li>4. If Result LTP {'<'} window LTP → <span className="text-red-400 font-bold">RED</span> → DOWN wins!</li>
-                        <li>5. If Result LTP = window LTP → <span className="text-yellow-400 font-bold">Tie (bet refunded)</span>.</li>
+                        <li>1. When your betting window ends, the <span className="text-cyan-400 font-bold">reference price</span> is fixed.</li>
+                        <li>2. After 15 minutes, the <span className="text-purple-400 font-bold">result price</span> is published and compared to the reference price.</li>
+                        <li>3. If result price {'>'} reference price → <span className="text-green-400 font-bold">UP</span> wins!</li>
+                        <li>4. If result price {'<'} reference price → <span className="text-red-400 font-bold">DOWN</span> wins!</li>
+                        <li>5. If result price = reference price → <span className="text-yellow-400 font-bold">Tie (bet refunded)</span>.</li>
                       </ul>
                       <div className="mt-2 bg-dark-700/60 rounded-lg p-2">
                         <div className="text-[10px] text-yellow-400 font-bold mb-1">Example</div>
-                        <div className="text-gray-400">Window 12:00–12:14:59. LTP 12:15:00 = <span className="text-cyan-400 font-bold">22,800</span>. Result 12:30:00 (same Nifty spot as next window&apos;s LTP) = <span className="text-green-400 font-bold">22,803</span>.</div>
+                        <div className="text-gray-400">Window 11:00–11:14:59. Reference price = <span className="text-cyan-400 font-bold">22,800</span>. Result 11:30:00 = <span className="text-green-400 font-bold">22,803</span>.</div>
                         <div className="text-green-400 font-bold mt-1">22,803 {'>'} 22,800 → UP wins! You get 10 × {gs.winMultiplier || 1.95} = {(10 * (gs.winMultiplier || 1.95)).toFixed(1)} Tkt (full payout, no fee on profit)</div>
                       </div>
                     </div>
@@ -1406,10 +1406,10 @@ const InstructionsModal = ({ onClose, gameId }) => {
         { window: '4th', open: '00:45', close: '00:59:59', result: '01:15' },
       ]
     : [
-        { window: '1st', open: '12:00:00', close: '12:14:59', ltp: '12:15:00', result: '12:30:00' },
-        { window: '2nd', open: '12:15:00', close: '12:29:59', ltp: '12:30:00', result: '12:45:00' },
-        { window: '3rd', open: '12:30:00', close: '12:44:59', ltp: '12:45:00', result: '1:00:00 PM' },
-        { window: '4th', open: '12:45:00', close: '12:59:59', ltp: '1:00:00 PM', result: '1:15:00 PM' },
+        { window: '1st', open: '11:00:00', close: '11:15:00', result: '11:30:00' },
+        { window: '2nd', open: '11:15:00', close: '11:30:00', result: '11:45:00' },
+        { window: '3rd', open: '11:30:00', close: '11:45:00', result: '12:00:00' },
+        { window: '4th', open: '11:45:00', close: '12:00:00', result: '12:15:00' },
       ];
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -1455,7 +1455,7 @@ const InstructionsModal = ({ onClose, gameId }) => {
                 <span className="font-medium">
                   {isBTCModal
                     ? '15 minutes after each trading window ends'
-                    : '15 minutes after LTP — same Nifty spot as the next window’s LTP'}
+                    : '15 minutes after window closes'}
                 </span>
               </div>
               <div className="flex justify-between">
