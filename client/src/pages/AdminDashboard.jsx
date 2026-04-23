@@ -15348,7 +15348,7 @@ function SuperAdminClientWallet({ embedded = false }) {
     };
   }, [summary, txKind, rowsMatchingYourWalletChip]);
 
-  // Calculate game-specific earnings and brokerage distribution
+  // Calculate game-specific earnings and brokerage distribution from ALL transactions (not filtered)
   const gameStats = useMemo(() => {
     if (scope !== 'games' || !gamesGameId) {
       return { earnings: 0, brokerage: 0 };
@@ -15358,7 +15358,9 @@ function SuperAdminClientWallet({ embedded = false }) {
     let totalDebitsFromSA = 0; // Money going FROM Super Admin (client wins)
     let totalBrokerage = 0;
 
-    for (const tx of transactions) {
+    // Use all transactions from the API response, not the filtered ones
+    // This ensures earnings don't change when switching between credited/debited views
+    for (const tx of (summary?.transactions || [])) {
       // Filter by selected game
       if (gamesGameId && tx.meta?.gameKey !== gamesGameId && tx.meta?.gameId !== gamesGameId) {
         continue;
@@ -15382,7 +15384,7 @@ function SuperAdminClientWallet({ embedded = false }) {
       if (tx.brokerageAmount) {
         totalBrokerage += Number(tx.brokerageAmount) || 0;
       } else if (tx.meta?.brokerageDeducted) {
-        totalBrokerage += Number(tx.meta.brokerageDeducted) || 0;
+        totalBrokerage += Number(tx.meta?.brokerageDeducted) || 0;
       }
     }
 
@@ -15390,7 +15392,58 @@ function SuperAdminClientWallet({ embedded = false }) {
       earnings: totalCreditsToSA - totalDebitsFromSA,
       brokerage: totalBrokerage,
     };
-  }, [transactions, scope, gamesGameId]);
+  }, [summary, scope, gamesGameId]); // Use summary instead of transactions
+
+  // Calculate today vs yesterday earnings comparison
+  const earningsComparison = useMemo(() => {
+    if (scope !== 'games' || !gamesGameId) {
+      return { today: 0, yesterday: 0, comparison: 0 };
+    }
+
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+
+    let todayCredits = 0;
+    let todayDebits = 0;
+    let yesterdayCredits = 0;
+    let yesterdayDebits = 0;
+
+    // Use all transactions from summary for accurate comparison
+    for (const tx of (summary?.transactions || [])) {
+      // Filter by selected game
+      if (gamesGameId && tx.meta?.gameKey !== gamesGameId && tx.meta?.gameId !== gamesGameId) {
+        continue;
+      }
+
+      const amount = Number(tx.amount) || 0;
+      const txType = (tx.type || '').toUpperCase();
+      const txDate = new Date(tx.createdAt).toISOString().split('T')[0];
+
+      // From Super Admin perspective
+      if (txType === 'DEBIT') {
+        // Client lost, SA receives
+        if (txDate === today) todayCredits += amount;
+        else if (txDate === yesterday) yesterdayCredits += amount;
+      } else if (txType === 'CREDIT') {
+        // Client won, SA pays out
+        if (txDate === today) todayDebits += amount;
+        else if (txDate === yesterday) yesterdayDebits += amount;
+      }
+    }
+
+    const todayEarnings = todayCredits - todayDebits;
+    const yesterdayEarnings = yesterdayCredits - yesterdayDebits;
+    const comparison = todayEarnings - yesterdayEarnings;
+
+    return {
+      today: todayEarnings,
+      yesterday: yesterdayEarnings,
+      comparison: comparison,
+      isPositive: comparison > 0,
+      isNegative: comparison < 0,
+      isNeutral: comparison === 0
+    };
+  }, [summary, scope, gamesGameId]);
 
   // Merge related brokerage and games transactions into single rows
   const mergedRows = useMemo(() => {
@@ -15611,18 +15664,41 @@ function SuperAdminClientWallet({ embedded = false }) {
           {/* Game-specific stats boxes */}
           {scope === 'games' && gamesGameId && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-              <div className="rounded-lg border border-purple-500/25 bg-purple-950/15 px-3 py-2">
+              <div className={`rounded-lg border px-3 py-2 ${
+                earningsComparison.isPositive 
+                  ? 'border-green-500/25 bg-green-950/15' 
+                  : earningsComparison.isNegative 
+                    ? 'border-red-500/25 bg-red-950/15'
+                    : 'border-purple-500/25 bg-purple-950/15'
+              }`}>
                 <div className="text-[10px] text-gray-500 uppercase">Today's Earnings (cr − dr)</div>
                 <div
                   className={`text-base font-bold tabular-nums ${
-                    Number(gameStats.earnings || 0) >= 0 ? 'text-purple-300' : 'text-orange-300'
+                    earningsComparison.isPositive 
+                      ? 'text-green-300' 
+                      : earningsComparison.isNegative 
+                        ? 'text-red-300'
+                        : Number(gameStats.earnings || 0) >= 0 
+                          ? 'text-purple-300' 
+                          : 'text-orange-300'
                   }`}
                 >
-                  {Number(gameStats.earnings || 0) >= 0 ? '+' : ''}₹
-                  {Number(gameStats.earnings || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  {Number(earningsComparison.today || 0) >= 0 ? '+' : ''}₹
+                  {Number(earningsComparison.today || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  {earningsComparison.isPositive && (
+                    <span className="ml-2 text-xs text-green-400">↑ vs Yesterday</span>
+                  )}
+                  {earningsComparison.isNegative && (
+                    <span className="ml-2 text-xs text-red-400">↓ vs Yesterday</span>
+                  )}
                 </div>
                 <div className="text-[10px] text-gray-600">
                   {ALL_TX_GAMES_WALLET_OPTIONS.find(g => g.id === gamesGameId)?.label || gamesGameId}
+                  {earningsComparison.yesterday !== 0 && (
+                    <span className="ml-1">
+                      (Yesterday: ₹{Number(earningsComparison.yesterday).toLocaleString('en-IN', { maximumFractionDigits: 2 })})
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="rounded-lg border border-yellow-500/25 bg-yellow-950/15 px-3 py-2">
