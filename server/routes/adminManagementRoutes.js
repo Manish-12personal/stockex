@@ -7160,8 +7160,9 @@ router.get('/nifty-jackpot/bids', protectAdmin, async (req, res) => {
       topWinners,
       bids: bids.map((b, idx) => {
         const rank = idx + 1;
-        const prizePercent = rank <= topWinners ? resolveJackpotPrizePercentForRank(rank, gc) : 0;
-        const prize = rank <= topWinners ? Math.round(totalPool * prizePercent / 100) : 0;
+        // Always calculate prize percentages and amounts for all ranks 1-20 for admin display
+        const prizePercent = rank <= 20 ? resolveJackpotPrizePercentForRank(rank, gc) : 0;
+        const prize = rank <= 20 ? Math.round(totalPool * prizePercent / 100) : 0;
         const dist =
           refOk && b.niftyPriceAtBid != null && Number.isFinite(Number(b.niftyPriceAtBid))
             ? Math.abs(Number(b.niftyPriceAtBid) - Number(refPrice))

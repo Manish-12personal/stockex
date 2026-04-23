@@ -19433,8 +19433,6 @@ const GameSettingsManagement = () => {
       const { data } = await axios.get(`/api/admin/manage/nifty-jackpot/bids?date=${date}`, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
-      console.log('[DEBUG] Jackpot bids data:', data);
-      console.log('[DEBUG] topWinners from backend:', data.topWinners);
       setJackpotBids(data.bids || []);
       setJackpotBidsMeta({
         referencePrice: data.referencePrice,
@@ -20405,9 +20403,6 @@ const GameSettingsManagement = () => {
                           <tbody>
                             {jackpotBids.slice(0, 20).map((b) => {
                               const isWinner = b.rank <= (jackpotBidsMeta?.topWinners || 20);
-                              if (b.rank >= 11 && b.rank <= 20) {
-                                console.log(`[DEBUG] Rank ${b.rank}: isWinner=${isWinner}, topWinners=${jackpotBidsMeta?.topWinners}, prize=${b.prize}`);
-                              }
                               const dist =
                                 b.distanceToReference != null && Number.isFinite(Number(b.distanceToReference))
                                   ? Number(b.distanceToReference).toFixed(2)
@@ -20415,6 +20410,11 @@ const GameSettingsManagement = () => {
                                     ? Math.abs(Number(b.niftyPriceAtBid) - Number(jackpotBidsMeta.referencePrice)).toFixed(2)
                                     : '—';
                               const bidAt = b.bidPlacedAt ? new Date(b.bidPlacedAt) : null;
+                              
+                              // Calculate prize for all ranks 1-20 (not just winners)
+                              const prizePercent = b.prizePercent ?? 0;
+                              const prizeAmount = b.prize ?? 0;
+                              
                               return (
                                 <tr key={b._id} className={`border-t border-dark-700 ${
                                   isWinner ? 'bg-yellow-500/5' : 'bg-dark-800'
@@ -20452,12 +20452,12 @@ const GameSettingsManagement = () => {
                                     {Number(b.amount).toLocaleString('en-IN')}
                                   </td>
                                   <td className="px-3 py-2 text-right tabular-nums text-gray-400">
-                                    {isWinner ? `${b.prizePercent ?? 0}%` : '—'}
+                                    {prizePercent > 0 ? `${prizePercent}%` : '—'}
                                   </td>
                                   <td className={`px-3 py-2 text-right tabular-nums font-medium ${
-                                    isWinner ? 'text-green-400' : 'text-gray-600'
+                                    prizeAmount > 0 ? 'text-green-400' : 'text-gray-600'
                                   }`}>
-                                    {isWinner ? Number(b.prize ?? 0).toLocaleString('en-IN') : '—'}
+                                    {prizeAmount > 0 ? Number(prizeAmount).toLocaleString('en-IN') : '—'}
                                   </td>
                                   <td className="px-3 py-2 text-center">
                                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
