@@ -392,6 +392,7 @@ const UserDashboard = () => {
   const [showWalletTransferModal, setShowWalletTransferModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [showReferralModal, setShowReferralModal] = useState(false);
   const [indicesData, setIndicesData] = useState({});
   const [marketData, setMarketData] = useState({}); // Shared market data for chart and instruments
   const [positionsRefreshKey, setPositionsRefreshKey] = useState(0); // Key to trigger positions refresh
@@ -916,6 +917,12 @@ const UserDashboard = () => {
             <Wallet size={18} /> Add Funds
           </button>
           <button 
+            onClick={() => { setShowReferralModal(true); setShowMobileMenu(false); }}
+            className="w-full px-4 py-2 text-left hover:bg-dark-600 flex items-center gap-2 text-purple-400"
+          >
+            <Share2 size={18} /> Referral Amount
+          </button>
+          <button 
             onClick={() => { setShowSettingsModal(true); setShowMobileMenu(false); }}
             className="w-full px-4 py-2 text-left hover:bg-dark-600 flex items-center gap-2"
           >
@@ -1135,6 +1142,14 @@ const UserDashboard = () => {
       {showNotificationsModal && (
         <NotificationsModal 
           onClose={() => setShowNotificationsModal(false)}
+          user={user}
+        />
+      )}
+
+      {/* Referral Amount Modal */}
+      {showReferralModal && (
+        <ReferralAmountModal 
+          onClose={() => setShowReferralModal(false)}
           user={user}
         />
       )}
@@ -8668,6 +8683,222 @@ const WalletTransferModal = ({ token, onClose, onSuccess }) => {
   );
 };
 
+// Referral Amount Modal Component
+const ReferralAmountModal = ({ onClose, user }) => {
+  const [referralData, setReferralData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchReferralAmounts = async () => {
+      if (!user?.token) return;
+      
+      try {
+        setLoading(true);
+        setError(null);
+        const { data } = await axios.get('/api/user/referral-amounts', {
+          headers: { Authorization: `Bearer ${user.token}` }
+        });
+        setReferralData(data);
+      } catch (err) {
+        console.error('Error fetching referral amounts:', err);
+        setError(err.response?.data?.message || 'Failed to load referral data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchReferralAmounts();
+  }, [user?.token]);
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '—';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="bg-dark-800 rounded-lg p-6 max-w-md w-full mx-4">
+          <div className="flex items-center justify-center gap-3 text-gray-400">
+            <RefreshCw className="animate-spin" size={20} />
+            <span>Loading referral data...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="bg-dark-800 rounded-lg p-6 max-w-md w-full mx-4">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white">Referral Amount</h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-white">
+              <X size={20} />
+            </button>
+          </div>
+          <div className="text-red-400 text-center py-4">
+            <p>{error}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-dark-800 rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Share2 size={20} className="text-purple-400" />
+            Referral Amount
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div className="bg-dark-700 rounded-lg p-4">
+            <div className="text-gray-400 text-sm mb-1">Total Referrals</div>
+            <div className="text-2xl font-bold text-white">{referralData?.totalReferrals || 0}</div>
+          </div>
+          <div className="bg-dark-700 rounded-lg p-4">
+            <div className="text-gray-400 text-sm mb-1">Total Earnings</div>
+            <div className="text-2xl font-bold text-green-400">
+              ₹{(referralData?.totalEarnings || 0).toLocaleString('en-IN')}
+            </div>
+          </div>
+          <div className="bg-dark-700 rounded-lg p-4">
+            <div className="text-gray-400 text-sm mb-1">Active Referrals</div>
+            <div className="text-2xl font-bold text-purple-400">
+              {referralData?.referralAmounts?.filter(r => r.status === 'ACTIVE').length || 0}
+            </div>
+          </div>
+        </div>
+
+        {/* Referral List */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="bg-dark-700 rounded-lg overflow-hidden">
+            <div className="space-y-3 p-4">
+              {referralData?.referralAmounts?.map((referral) => (
+                <div key={referral.id} className="bg-dark-800 rounded-lg p-4 border border-dark-600">
+                  {/* Header with referrer and referred user */}
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-purple-400 font-medium">{referral.referrer?.username}</span>
+                        <span className="text-gray-400">→</span>
+                        <span className="text-green-400 font-medium">{referral.referredUser.username}</span>
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                          referral.status === 'ACTIVE' ? 'bg-green-500/20 text-green-400' :
+                          referral.status === 'COMPLETED' ? 'bg-blue-500/20 text-blue-400' :
+                          'bg-yellow-500/20 text-yellow-400'
+                        }`}>
+                          {referral.status}
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-400">{referral.referredUser.phone}</div>
+                      <div className="text-xs text-gray-500">Referral Code: {referral.referralCode}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-bold text-green-400">
+                        ₹{referral.earnings.toLocaleString('en-IN')}
+                      </div>
+                      <div className="text-xs text-gray-400">Total Earnings</div>
+                    </div>
+                  </div>
+                  
+                  {/* Game-wise Earnings Breakdown */}
+                  {referral.earningsByGame && Object.keys(referral.earningsByGame).length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      <div className="text-xs font-semibold text-gray-300 mb-2">Earnings by Game:</div>
+                      {Object.entries(referral.earningsByGame).map(([gameName, gameData]) => (
+                        <div key={gameName} className="bg-dark-700 rounded p-2">
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-sm font-medium text-cyan-400">{gameName}</span>
+                            <span className="text-sm font-bold text-green-400">
+                              ₹{gameData.totalAmount.toLocaleString('en-IN')}
+                            </span>
+                          </div>
+                          {gameData.entries && gameData.entries.length > 0 && (
+                            <div className="space-y-1 mt-2">
+                              {gameData.entries.slice(0, 3).map((entry, idx) => (
+                                <div key={idx} className="flex justify-between text-xs text-gray-400">
+                                  <span className="truncate flex-1 mr-2">{entry.description}</span>
+                                  <span>₹{entry.amount.toLocaleString('en-IN')}</span>
+                                </div>
+                              ))}
+                              {gameData.entries.length > 3 && (
+                                <div className="text-xs text-gray-500 italic">
+                                  +{gameData.entries.length - 3} more entries...
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* Legacy Bonus Details (if available) */}
+                  {(referral.firstGameWin || referral.firstTradingWin) && (
+                    <div className="border-t border-dark-600 pt-3 space-y-2">
+                      {referral.firstGameWin && (
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">
+                            First Game Win ({referral.firstGameWin.gameName}):
+                          </span>
+                          <div className="text-right">
+                            <span className="text-green-400">₹{referral.firstGameWin.amount.toLocaleString('en-IN')}</span>
+                            <span className="text-gray-500 ml-2">{formatDate(referral.firstGameWin.creditedAt)}</span>
+                          </div>
+                        </div>
+                      )}
+                      {referral.firstTradingWin && (
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">First Trading Win:</span>
+                          <div className="text-right">
+                            <span className="text-green-400">₹{referral.firstTradingWin.amount.toLocaleString('en-IN')}</span>
+                            <span className="text-gray-500 ml-2">{formatDate(referral.firstTradingWin.creditedAt)}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Join Date */}
+                  <div className="text-xs text-gray-500 mt-3 pt-3 border-t border-dark-600">
+                    Referred on: {formatDate(referral.createdAt)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            {referralData?.referralAmounts?.length === 0 && (
+              <div className="text-center py-8 text-gray-400">
+                <Share2 size={48} className="mx-auto mb-4 opacity-50" />
+                <p>No referrals found</p>
+                <p className="text-sm mt-2">Start referring friends to earn rewards!</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 // Helper functions to generate sample chart data
 function generateSampleData() {
   const data = [];
