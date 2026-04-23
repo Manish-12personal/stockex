@@ -3664,7 +3664,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           </div>
 
           {/* RIGHT COLUMN - Betting Controls + Active Trades + History */}
-          <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-y-auto max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             {/* Betting Controls - Always visible when window is open */}
             <div className="space-y-3 flex-shrink-0">
               {/* Current Price Display */}
