@@ -20808,7 +20808,6 @@ const ReferralDistributionSettings = () => {
 
   const updateGameReferralSetting = async (gameKey, field, value) => {
     try {
-      setSaving(true);
       const updatedSettings = {
         ...settings,
         games: {
@@ -20823,16 +20822,23 @@ const ReferralDistributionSettings = () => {
         }
       };
       setSettings(updatedSettings);
+    } catch (error) {
+      console.error('Error updating local state:', error);
+    }
+  };
 
-      await axios.put('/api/admin/manage/game-settings', updatedSettings, {
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      await axios.put('/api/admin/manage/game-settings', settings, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
 
-      setMessage({ type: 'success', text: 'Settings updated successfully' });
+      setMessage({ type: 'success', text: 'Settings saved successfully' });
       setTimeout(() => setMessage({ type: '', text: '' }), 3000);
     } catch (error) {
-      console.error('Error updating settings:', error);
-      setMessage({ type: 'error', text: 'Failed to update settings' });
+      console.error('Error saving settings:', error);
+      setMessage({ type: 'error', text: 'Failed to save settings' });
       fetchSettings(); // Revert on error
     } finally {
       setSaving(false);
@@ -20856,13 +20862,22 @@ const ReferralDistributionSettings = () => {
           </h2>
           <p className="text-gray-400 mt-1">Configure referral reward percentages for each game</p>
         </div>
-        {message.text && (
-          <div className={`px-4 py-2 rounded-lg ${
-            message.type === 'success' ? 'bg-green-600' : 'bg-red-600'
-          }`}>
-            {message.text}
-          </div>
-        )}
+        <div className="flex items-center gap-4">
+          {message.text && (
+            <div className={`px-4 py-2 rounded-lg ${
+              message.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+            }`}>
+              {message.text}
+            </div>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-6 py-2 rounded-lg font-semibold"
+          >
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
