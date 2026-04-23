@@ -22,7 +22,10 @@ const gameConfigSchema = new mongoose.Schema({
   maxTicketsSellPerDay: { type: Number, default: 0 },
   // Referral distribution settings per game
   referralDistribution: {
-    firstWinByTickets: { type: Number, default: 5 } // % of first winning to referrer based on tickets
+    firstWinByTickets: { type: Number, default: 5 }, // % of first winning to referrer based on tickets
+    winPercent: { type: Number, default: 5 }, // % of winning amount to referrer (per game)
+    topRanksOnly: { type: Boolean, default: false }, // Only apply to top X ranks (for jackpot)
+    topRanksCount: { type: Number, default: 3 } // Number of top ranks to apply (for jackpot)
   }
 }, { _id: false });
 
@@ -78,7 +81,10 @@ const gameSettingsSchema = new mongoose.Schema({
       profitBrokerPercent: { type: Number, default: 20 },
       profitAdminPercent: { type: Number, default: 30 },
       startTime: { type: String, default: '09:15:00' },
-      endTime: { type: String, default: '15:44:59' }
+      endTime: { type: String, default: '15:44:59' },
+      referralDistribution: {
+        winPercent: { type: Number, default: 10 }
+      }
     },
     niftyNumber: {
       ...gameConfigSchema.obj,
@@ -109,7 +115,10 @@ const gameSettingsSchema = new mongoose.Schema({
       biddingStartTime: { type: String, default: '09:15' },
       biddingEndTime: { type: String, default: '15:24' },
       startTime: { type: String, default: '09:15:15' },
-      endTime: { type: String, default: '15:44:59' }
+      endTime: { type: String, default: '15:44:59' },
+      referralDistribution: {
+        winPercent: { type: Number, default: 10 }
+      }
     },
     niftyJackpot: {
       ...gameConfigSchema.obj,
@@ -162,7 +171,12 @@ const gameSettingsSchema = new mongoose.Schema({
       },
       brokerageDistribution: { type: mongoose.Schema.Types.Mixed },
       startTime: { type: String, default: '09:15:15' },
-      endTime: { type: String, default: '15:44:59' }
+      endTime: { type: String, default: '15:44:59' },
+      referralDistribution: {
+        winPercent: { type: Number, default: 5 },
+        topRanksOnly: { type: Boolean, default: true },
+        topRanksCount: { type: Number, default: 3 }
+      }
     },
     niftyBracket: {
       ...gameConfigSchema.obj,
@@ -200,7 +214,10 @@ const gameSettingsSchema = new mongoose.Schema({
       /** HH:mm → inclusive through end of that minute (e.g. 15:29 = …:15:29:59) */
       biddingEndTime: { type: String, default: '15:29' },
       startTime: { type: String, default: '09:15:15' },
-      endTime: { type: String, default: '15:44:59' }
+      endTime: { type: String, default: '15:44:59' },
+      referralDistribution: {
+        winPercent: { type: Number, default: 2 }
+      }
     },
     btcUpDown: {
       ...gameConfigSchema.obj,
@@ -228,7 +245,10 @@ const gameSettingsSchema = new mongoose.Schema({
       startTime: { type: String, default: '00:00:01' },
       endTime: { type: String, default: '23:45:00' },
       allowedExpiryTimes: { type: [Number], default: [60, 120, 300, 600, 900] }, // 1m, 2m, 5m, 10m, 15m in seconds
-      defaultExpiryTime: { type: Number, default: 60 } // Default 1 minute
+      defaultExpiryTime: { type: Number, default: 60 }, // Default 1 minute
+      referralDistribution: {
+        winPercent: { type: Number, default: 10 }
+      }
     }
   },
   

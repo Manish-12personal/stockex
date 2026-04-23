@@ -2,15 +2,16 @@ import User from '../models/User.js';
 import Referral from '../models/Referral.js';
 import { atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
+import GameSettings from '../models/GameSettings.js';
 
 /**
- * Credit referral reward for first game win (top 10 only)
+ * Credit referral reward for game win (based on game-specific percentage)
  * @param {string} referredUserId - The user who won
  * @param {number} winAmount - The winning amount
- * @param {string} gameName - Name of the game
- * @param {number} rank - User's rank in the game (for top 10 check)
+ * @param {string} gameType - Game type (e.g., 'niftyUpDown', 'btcUpDown', 'niftyNumber', 'niftyBracket', 'niftyJackpot')
+ * @param {number} rank - User's rank in the game (for top ranks check in jackpot)
  */
-export async function creditReferralGameReward(referredUserId, winAmount, gameName, rank = null) {
+export async function creditReferralGameReward(referredUserId, winAmount, gameType, rank = null) {
   try {
     const referredUser = await User.findById(referredUserId);
     if (!referredUser || !referredUser.referredBy) {
@@ -27,8 +28,20 @@ export async function creditReferralGameReward(referredUserId, winAmount, gameNa
       return { credited: false, reason: 'Already credited first game win' };
     }
 
-    // Check if user is in top 10 (if rank is provided)
-    if (rank !== null && rank > 10) {
+    // Fetch game settings to get referral distribution percentage
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings?.games?.[gameType];
+    const referralConfig = gameConfig?.referralDistribution || {};
+
+    // Check if game has top ranks restriction (e.g., Nifty Jackpot)
+    if (referralConfig.topRanksOnly && rank !== null) {
+      if (rank > referralConfig.topRanksCount) {
+        return { credited: false, reason: `Not in top ${referralConfig.topRanksCount}` };
+      }
+    }
+
+    // Check if user is in top 10 (if rank is provided and no topRanksOnly setting)
+    if (rank !== null && !referralConfig.topRanksOnly && rank > 10) {
       return { credited: false, reason: 'Not in top 10' };
     }
 
@@ -47,8 +60,9 @@ export async function creditReferralGameReward(referredUserId, winAmount, gameNa
       return { credited: false, reason: 'Referrer not found' };
     }
 
-    // Calculate 5% of win amount
-    const rewardAmount = winAmount * 0.05;
+    // Calculate reward amount using game-specific percentage (default to 5% if not set)
+    const rewardPercent = referralConfig.winPercent || 5;
+    const rewardAmount = winAmount * (rewardPercent / 100);
 
     // Credit to referrer's games wallet
     const gw = await atomicGamesWalletUpdate(User, referrer._id, {
@@ -62,14 +76,14 @@ export async function creditReferralGameReward(referredUserId, winAmount, gameNa
       gameId: 'referral',
       entryType: 'credit',
       amount: rewardAmount,
-      description: `Referral bonus: 5% of ${referredUser.username}'s first win in ${gameName}`,
+      description: `Referral bonus: ${rewardPercent}% of ${referredUser.username}'s first win in ${gameType}`,
       meta: {
         referredUser: referredUserId,
         referredUsername: referredUser.username,
-        gameName,
+        gameType,
         winAmount,
         rank,
-        rewardPercent: 5,
+        rewardPercent,
       },
       balanceAfter: gw.balance,
     });
@@ -82,7 +96,7 @@ export async function creditReferralGameReward(referredUserId, winAmount, gameNa
           'firstGameWin.credited': true,
           'firstGameWin.amount': winAmount,
           'firstGameWin.creditedAt': new Date(),
-          'firstGameWin.gameName': gameName,
+          'firstGameWin.gameType': gameType,
           earnings: (await Referral.findOne({ referredUser: referredUserId }))?.earnings + rewardAmount || rewardAmount,
         },
       }
