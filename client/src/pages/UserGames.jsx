@@ -1762,7 +1762,7 @@ function loadLockedWindowLtpsForToday() {
       const wn = Number(k);
       const px = Number(v);
       if (Number.isFinite(wn) && wn > 0 && Number.isFinite(px) && px > 0) {
-        out[wn] = Math.round(px * 100) / 100;
+        out[wn] = Number(Number(px).toFixed(2));
       }
     }
     return out;
@@ -1780,7 +1780,7 @@ function saveLockedWindowLtpsForToday(map) {
       const wn = Number(k);
       const px = Number(v);
       if (Number.isFinite(wn) && wn > 0 && Number.isFinite(px) && px > 0) {
-        safe[wn] = Math.round(px * 100) / 100;
+        safe[wn] = Number(Number(px).toFixed(2));
       }
     }
     localStorage.setItem(
@@ -1947,7 +1947,7 @@ const GameLivePricePanel = ({
       // Special handling for Nifty Bracket - use the price from onSessionClearingUpdate
       // This will be handled in the component itself by updating the LTP tape separately
       
-      const rounded = Math.round(Number(priceToUse) * 100) / 100;
+      const rounded = Number(Number(priceToUse).toFixed(2));
       const istYmd = getIstCalendarYmd();
       const istTime = new Date().toLocaleTimeString('en-IN', {
         timeZone: 'Asia/Kolkata',
