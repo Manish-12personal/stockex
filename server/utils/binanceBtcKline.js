@@ -123,3 +123,36 @@ export async function fetchBtcFifteenMinuteIstWindowOhlc(istDayKey, openRefSec, 
   }
   return null;
 }
+
+const spotRestCache = { t: 0, price: null };
+const SPOT_REST_CACHE_MS = 2500;
+
+/**
+ * Public REST last price — works when Node has no Binance WebSocket (settlement uses this on the server).
+ * Pair with time-guard in autoSettle (only just after result) so we never backfill old windows with "now".
+ */
+export async function fetchBtcUsdtSpotRest() {
+  const now = Date.now();
+  if (
+    spotRestCache.price != null &&
+    Number.isFinite(spotRestCache.price) &&
+    now - spotRestCache.t < SPOT_REST_CACHE_MS
+  ) {
+    return spotRestCache.price;
+  }
+  try {
+    const { data } = await axios.get('https://api.binance.com/api/v3/ticker/price', {
+      params: { symbol: 'BTCUSDT' },
+      timeout: 10000,
+    });
+    const p = parseFloat(data?.price);
+    if (Number.isFinite(p) && p > 0) {
+      spotRestCache.t = now;
+      spotRestCache.price = p;
+      return p;
+    }
+  } catch (e) {
+    console.warn('[binanceBtcKline] spot rest', e?.message || e);
+  }
+  return null;
+}

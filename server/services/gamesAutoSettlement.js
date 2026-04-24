@@ -18,7 +18,7 @@ import GameSettings from '../models/GameSettings.js';
 
 import { resolveBtcUpDownPriceAtIstRef, DEBIT_DESC } from '../utils/btcUpDownOpenPrice.js';
 
-import { fetchBtcFifteenMinuteIstWindowOhlc } from '../utils/binanceBtcKline.js';
+import { fetchBtcFifteenMinuteIstWindowOhlc, fetchBtcUsdtSpotRest } from '../utils/binanceBtcKline.js';
 
 import { resolveNiftyBracketTrade } from './niftyBracketResolve.js';
 
@@ -29,6 +29,7 @@ import { declareNiftyNumberResultForDate } from './niftyNumberDeclareService.js'
 import { settleUpDownUserWindowFromLedger } from './upDownSettlementService.js';
 
 import { getMarketData } from './zerodhaWebSocket.js';
+import { getCryptoPrice } from './binanceWebSocket.js';
 
 
 import { fetchNifty50LastPriceFromKite, fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
@@ -467,7 +468,9 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
   const gc = settings?.games?.btcUpDown || {};
 
-  if (gc.enabled === false) return;
+  if (gc.enabled === false) {
+    return;
+  }
 
   const { startSec, endSec } = getEffectiveBtcSessionBounds(gc);
   const nowSec = currentTotalSecondsIST(new Date(nowMs));
@@ -485,7 +488,9 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
   const dayEnd = endOfISTDayFromKey(today);
 
-
+  const liveTick = getCryptoPrice('BTCUSDT') || getCryptoPrice('BTC');
+  const liveBtc = Number(liveTick?.ltp);
+  const hasLive = Number.isFinite(liveBtc) && liveBtc > 0;
 
   // Fill every window 1..resultDueWindow so longer outages still get GameResult rows.
 
@@ -549,8 +554,33 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
       }
     }
 
+    // Stuck LTP: 15m/1m/ref failed — use Binance WS if present, else public REST (server has no "browser" LTP; REST fixes empty WS).
+    let closeSource = 'ist_15m_1m';
+    if (!w15?.close || !Number.isFinite(w15.close) || w15.close <= 0) {
+      if (nowSec >= resultSec) {
+        const ageAfterResult = nowSec - resultSec;
+        const canUseExternal = ageAfterResult >= 0 && ageAfterResult <= 120;
+        if (canUseExternal) {
+          let ext = hasLive && Number.isFinite(liveBtc) && liveBtc > 0 ? liveBtc : null;
+          let fromWs = ext != null;
+          if (ext == null) {
+            ext = await fetchBtcUsdtSpotRest();
+            fromWs = false;
+          }
+          if (ext != null && Number.isFinite(ext) && ext > 0) {
+            w15 = { ...(w15 || {}), close: ext, open: w15?.open };
+            closeSource = fromWs ? 'binance_ws' : 'binance_spot_rest';
+            console.log(
+              `[btcUpDown] close w=${rw} from ${fromWs ? 'WebSocket' : 'Binance REST spot'} (15m+1m failed) @${fmtT(
+                resultSec
+              )} age=${ageAfterResult}s`
+            );
+          }
+        }
+      }
+    }
+
     const closePx = w15?.close;
-    const closeSource = 'ist_15m_1m';
 
     if (!closePx || !Number.isFinite(closePx) || closePx <= 0) {
       console.warn(`[btcUpDown] skip GameResult w=${rw} day=${today}: no stuck close @ ${fmtT(resultSec)}`);
@@ -561,10 +591,24 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
     let refPx =
       rw === 1
-        ? w15.open
-        : Number(await getPreviousWindowClosePrice(rw - 1, today, dayStart, dayEnd));
+        ? w15?.open
+        : Number((await getPreviousWindowClosePrice(rw - 1, today, dayStart, dayEnd)) || NaN);
     if (rw > 1 && (!Number.isFinite(refPx) || refPx <= 0)) {
-      console.warn(`[btcUpDown] skip GameResult w=${rw}: missing previous window close`);
+      const prevResSec = btcWindowResultSec(rw - 1);
+      const rel = await resolveBtcUpDownPriceAtIstRef({
+        istDayKey: today,
+        refSecSinceMidnightIST: prevResSec,
+        cacheGet: (key) => btcRefPriceCache.get(key),
+        loadPersisted: async () => null,
+        loadLedgerMinEntry: async () => null,
+      });
+      if (rel?.price && Number.isFinite(rel.price) && rel.price > 0) {
+        refPx = rel.price;
+        console.log(`[btcUpDown] ref w=${rw} from Binance @ prev result ${fmtT(prevResSec)} (DB row missing)`);
+      }
+    }
+    if (rw > 1 && (!Number.isFinite(refPx) || refPx <= 0)) {
+      console.warn(`[btcUpDown] skip GameResult w=${rw}: no ref (prev close)`);
       continue;
     }
     if (rw === 1 && (!Number.isFinite(refPx) || refPx <= 0)) {

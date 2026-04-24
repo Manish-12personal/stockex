@@ -77,9 +77,7 @@ import {
 
 const router = express.Router();
 
-/** Throttle: run BTC auto-settlement when the client fetches game results (recovers missed ticks / API blips). */
-let lastBtcGameResultsSettleNudge = 0;
-const BTC_GAME_RESULTS_SETTLE_NUDGE_MS = 4000;
+/** (Reserved) nudge throttling was removed so every /game-results read forces missing GameResult backfill. */
 
 /** Nifty Jackpot: ticket units per bid (new bids store ticketCount; legacy = amount / unit). */
 function niftyJackpotTicketUnitsForBid(bid, oneTicketRs) {
@@ -2230,17 +2228,14 @@ router.get('/game-results/:gameId', protectUser, async (req, res) => {
 
     let results;
     if (gameId === 'btcupdown') {
-      // Nudge: create any missing GameResult rows for *today* before read (15m tick can be late; WS/API blips).
+      // Every fetch: backfill any missing GameResult for today (so 21:16 shows 21:15 LTP, no empty list).
       if (day === getTodayISTString()) {
         const t0 = Date.now();
-        if (t0 - lastBtcGameResultsSettleNudge >= BTC_GAME_RESULTS_SETTLE_NUDGE_MS) {
-          lastBtcGameResultsSettleNudge = t0;
-          try {
-            const gs = await GameSettings.getSettings();
-            await autoSettleBtcUpDown(gs, t0);
-          } catch (e) {
-            console.warn('[game-results] btcupdown settle nudge', e?.message || e);
-          }
+        try {
+          const gs = await GameSettings.getSettings();
+          await autoSettleBtcUpDown(gs, t0);
+        } catch (e) {
+          console.warn('[game-results] btcupdown settle nudge', e?.message || e);
         }
       }
       // BTC: return every window for the IST day (no limit). A descending limit could drop
