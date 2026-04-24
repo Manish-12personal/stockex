@@ -2397,6 +2397,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const currentPriceRef = useRef(null);
   const lastNonZeroPriceRef = useRef(null);
   const capturedWindowEndPriceRef = useRef(null); // Store price captured at exact window end
+  const capturedWindowEndTimeRef = useRef(null); // Store exact window-end clock for diagnostics
   const activeTradesRef = useRef([]);
   activeTradesRef.current = activeTrades;
   const prevWindowNumberRef = useRef(windowInfo.windowNumber);
