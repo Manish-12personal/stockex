@@ -741,10 +741,6 @@ async function autoSettleNiftyUpDown(settings, nowMs) {
   const gc = settings?.games?.niftyUpDown || {};
 
   if (gc.enabled === false) return;
-  
-  // TEMPORARILY DISABLE NIFTY UP/DOWN AUTO-SETTLEMENT TO PREVENT FUTURE RESULTS
-  console.log('[NIFTY] Auto-settlement DISABLED - preventing future results');
-  return;
 
 
 
@@ -788,7 +784,7 @@ async function autoSettleNiftyUpDown(settings, nowMs) {
 
   // Results are due 2 windows after betting window ends
 
-  const resultDueWindow = Math.max(0, Math.floor((elapsed - 2 * D) / D));
+  const resultDueWindow = Math.max(0, Math.floor((elapsed - D) / D));
 
 
 

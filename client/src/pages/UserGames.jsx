@@ -6,8 +6,6 @@ import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { io as socketIO } from 'socket.io-client';
 import LiveChart from '../components/games/LiveChart';
 import GamesWalletGameLedgerPanel from '../components/games/GamesWalletGameLedgerPanel.jsx';
-import NiftyUpDown from '../components/NiftyUpDown.jsx';
-import BtcUpDown from '../components/BtcUpDown.jsx';
 import {
   getBtcUpDownWindowState,
   getEffectiveBtcSessionBounds,
@@ -2794,14 +2792,10 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     // For Nifty, store this price so it can be used when creating the pending window
     if (!isBTC) {
       capturedWindowEndPriceRef.current = windowEndLTP;
-      capturedWindowEndTimeRef.current = formatIstClockFromSec(windowInfo.windowEndSec ?? 0);
-      const fixedLtp = parseFloat(windowEndLTP.toFixed(2));
-      if (Number.isFinite(fixedLtp) && fixedLtp > 0) {
-        setLockedWindowLtps((prev) => {
-          if (Number(prev[prevWinNum]) === fixedLtp) return prev;
-          return { ...prev, [prevWinNum]: fixedLtp };
-        });
-      }
+      // Capture the exact end time for LTP
+      const exactEndTime = formatIstClockFromSec(windowInfo.windowEndSec ?? 0);
+      capturedWindowEndTimeRef.current = exactEndTime;
+      console.log('[LTP] Window changed from', prevWinNum, 'to', windowInfo.windowNumber, 'captured LTP:', windowEndLTP, 'at exact time:', exactEndTime);
       console.log('[LTP] Window changed from', prevWinNum, 'to', windowInfo.windowNumber, 'captured LTP:', windowEndLTP);
     }
     
@@ -2814,8 +2808,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
       settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
     } else {
-      // For Nifty Up/Down, use the correct result time directly - no subtraction
-      resultTimeSecVal = windowInfo.resultTimeSec ?? 0;
+      const Dw = windowInfo.roundDurationSec ?? NIFTY_UP_DOWN_MIN_ROUND_SEC;
+      resultTimeSecVal = (windowInfo.resultTimeSec ?? 0) - Dw;
       resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
       settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
     }
@@ -2833,7 +2827,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         windowNumber: prevWinNum,
         windowEndLTP: lockedLtp,
         windowOpenLTP,
-        ltpTime: !isBTC ? formatIstClockFromSec(windowInfo.windowEndSec ?? 0) : windowInfo.windowStart,
+        ltpTime: !isBTC ? (capturedWindowEndTimeRef.current || formatIstClockFromSec(windowInfo.windowEndSec ?? 0)) : windowInfo.windowStart,
         resultTimeSec: resultTimeSecVal,
         resultEpoch: resultEpochVal,
         settleEpoch: settleEpochVal,
@@ -3073,34 +3067,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           const gr = pickLatestGameResultForWindow(gameResultsRef.current, pw.windowNumber);
           const c = Number(gr?.closePrice);
           const o = Number(gr?.openPrice);
-          
-          // For BTC, ALWAYS use live price if GameResult not available - DON'T WAIT for database
-          if (isBTC) {
-            if (gr && c != null && Number.isFinite(c) && c > 0) {
-              resultPrice = c;
-              console.log(`[BTC] Using stored GameResult for window ${pw.windowNumber}: ₹${c} (result: ${gr.result})`);
-            } else {
-              // NO DATABASE - use live price immediately and settle
-              const livePrice = currentPriceRef.current;
-              if (livePrice != null && Number.isFinite(livePrice) && livePrice > 0) {
-                resultPrice = livePrice;
-                console.log(`[BTC] ✅ IMMEDIATE SETTLE: Using live price for window ${pw.windowNumber}: ₹${livePrice}`);
-              } else {
-                // Use window's LTP if available
-                if (pw.windowEndLTP != null && Number.isFinite(pw.windowEndLTP) && pw.windowEndLTP > 0) {
-                  resultPrice = pw.windowEndLTP;
-                  console.log(`[BTC] ✅ Using window LTP for window ${pw.windowNumber}: ₹${resultPrice}`);
-                } else {
-                  resultPrice = null;
-                  console.warn(`[BTC] ❌ No price available for window ${pw.windowNumber}`);
-                }
-              }
-            }
-          } else {
-            // FOR NIFTY UP/DOWN: COMPLETELY DISABLED - NEVER SETTLE ON CLIENT SIDE
-            resultPrice = null;
-            console.log(`[NIFTY] Window ${pw.windowNumber} - CLIENT SETTLEMENT DISABLED - waiting for server GameResult`);
-          }
+          resultPrice = Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0 ? c : null;
         } else {
           const nextPw = list.find((p) => p.windowNumber === pw.windowNumber + 1);
           const nextLtp =
@@ -3159,7 +3126,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 const existingIndex = btcResults.findIndex(r => r.windowNumber === pw.windowNumber);
                 const resultData = {
                   windowNumber: pw.windowNumber,
-                  resultPrice: resultPx,
+                  resultPrice,
                   marketDirection: direction,
                   timestamp: Date.now()
                 };
@@ -3223,28 +3190,19 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     };
   }, [settlePendingWindowOnServer, refreshBalance, fetchGameResults, isBTC, game.id, user?.token]);
 
-  // Clean up old resolved pending windows - COMPLETELY DISABLED FOR BTC UP/DOWN
+  // Clean up old resolved pending windows
   useEffect(() => {
-    if (isBTC) {
-      console.log('[BTC] CLEANUP COMPLETELY DISABLED - Results will NEVER disappear');
-      return; // Skip cleanup entirely for BTC - DO NOT PROCEED
-    }
-    
-    // Only run cleanup for non-BTC games
     setPendingWindows(prev => {
       if (prev.length <= 1) return prev;
-      
-      // For other games, clean up old resolved entries
       const latestResolved = prev.filter(pw => pw.resolved);
       if (latestResolved.length > 1) {
-        // Keep only the most recent resolved + any still pending
         const pending = prev.filter(pw => !pw.resolved);
         const newest = latestResolved[latestResolved.length - 1];
         return [...pending, newest];
       }
       return prev;
     });
-  }, [isBTC]); // REMOVED pendingWindows from dependencies to prevent cleanup trigger
+  }, [pendingWindows]);
 
   const quickAmounts = [1, 2, 5, 10];
 
@@ -4120,37 +4078,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         </div>
       </div>
 
-      {/* Use Separate Components for Up/Down Games */}
-      {isUpDownGame ? (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          {game.id === 'updown' ? (
-            <NiftyUpDown
-              game={game}
-              user={user}
-              settings={settings}
-              activeTrades={activeTrades}
-              gameResults={gameResults}
-              onSettlePendingWindow={settlePendingWindowOnServer}
-              onRefreshBalance={refreshBalance}
-              onFetchGameResults={fetchGameResults}
-            />
-          ) : (
-            <BtcUpDown
-              game={game}
-              user={user}
-              settings={settings}
-              activeTrades={activeTrades}
-              gameResults={gameResults}
-              onSettlePendingWindow={settlePendingWindowOnServer}
-              onRefreshBalance={refreshBalance}
-              onFetchGameResults={fetchGameResults}
-            />
-          )}
-        </div>
-      ) : (
-        /* 3-Column Desktop Layout / Stacked Mobile - Full Height for other games */
-        <div className="px-3 py-2 flex-1 min-h-0 overflow-y-auto overscroll-y-contain lg:overflow-hidden touch-pan-y">
-          <div className="flex flex-col lg:flex-row gap-3 min-h-min lg:h-full lg:min-h-0">
+      {/* 3-Column Desktop Layout / Stacked Mobile - Full Height */}
+      <div className="px-3 py-2 flex-1 min-h-0 overflow-y-auto overscroll-y-contain lg:overflow-hidden touch-pan-y">
+        <div className="flex flex-col lg:flex-row gap-3 min-h-min lg:h-full lg:min-h-0">
 
           {/* LEFT COLUMN - Trading Window Status */}
           <div className="lg:w-[240px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
@@ -4602,7 +4532,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
         </div>
       </div>
-      )}
       
       {/* Instructions Modal */}
       {showInstructions && (
