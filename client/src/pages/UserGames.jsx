@@ -1700,6 +1700,7 @@ function getIstCalendarYmd() {
 
 const NIFTY_BRACKET_LTP_TAPE_LS = 'stockex_niftyBracket_ltpTape_v1';
 const NIFTY_BRACKET_LTP_TAPE_MAX = 10000;
+const NIFTY_UPDOWN_WINDOW_LTP_LS = 'stockex_niftyUpdown_windowLtp_v1';
 
 function ltpTapeStorageKeyForIstDate(ymd) {
   return `${NIFTY_BRACKET_LTP_TAPE_LS}_${ymd}`;
@@ -1733,6 +1734,54 @@ function saveLtpTapeToStorage(rowsNewestFirst) {
     );
   } catch {
     /* quota or private mode */
+  }
+}
+
+function windowLtpStorageKeyForIstDate(ymd) {
+  return `${NIFTY_UPDOWN_WINDOW_LTP_LS}_${ymd}`;
+}
+
+function loadLockedWindowLtpsForToday() {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const ymd = getIstCalendarYmd();
+    const raw = localStorage.getItem(windowLtpStorageKeyForIstDate(ymd));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const rows = parsed?.rows;
+    if (!rows || typeof rows !== 'object') return {};
+    const out = {};
+    for (const [k, v] of Object.entries(rows)) {
+      const wn = Number(k);
+      const px = Number(v);
+      if (Number.isFinite(wn) && wn > 0 && Number.isFinite(px) && px > 0) {
+        out[wn] = Math.round(px * 100) / 100;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveLockedWindowLtpsForToday(map) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const ymd = getIstCalendarYmd();
+    const safe = {};
+    for (const [k, v] of Object.entries(map || {})) {
+      const wn = Number(k);
+      const px = Number(v);
+      if (Number.isFinite(wn) && wn > 0 && Number.isFinite(px) && px > 0) {
+        safe[wn] = Math.round(px * 100) / 100;
+      }
+    }
+    localStorage.setItem(
+      windowLtpStorageKeyForIstDate(ymd),
+      JSON.stringify({ v: 1, savedAt: Date.now(), rows: safe })
+    );
+  } catch {
+    /* ignore quota/private mode */
   }
 }
 
@@ -2407,6 +2456,10 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const checkTradeResultsInFlightRef = useRef(false);
   // Tracks windows waiting for result (Nifty: boundary tick; BTC: until GameResult after result time)
   const [pendingWindows, setPendingWindows] = useState([]);
+  const [lockedWindowLtps, setLockedWindowLtps] = useState(() =>
+    isBTC ? {} : loadLockedWindowLtpsForToday()
+  );
+  const lockedWindowLtpsRef = useRef(lockedWindowLtps);
   // Always keep the last completed window for display
   const [lastCompletedWindow, setLastCompletedWindow] = useState(null);
   // { windowNumber, windowEndLTP, ltpTime, resultTime, resultPrice, marketDirection, resolved? }
@@ -2455,6 +2508,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   }, [pendingWindows]);
 
   useEffect(() => {
+    lockedWindowLtpsRef.current = lockedWindowLtps;
+  }, [lockedWindowLtps]);
+
+  useEffect(() => {
+    if (isBTC) return;
+    saveLockedWindowLtpsForToday(lockedWindowLtps);
+  }, [isBTC, lockedWindowLtps]);
+
+  useEffect(() => {
     gameResultsRef.current = gameResults;
   }, [gameResults]);
 
@@ -2495,10 +2557,12 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         }
       }
 
-      // For Nifty: use captured price if available, otherwise current price
-      const raw = isBTC ? (currentPriceRef.current || lastNonZeroPriceRef.current) : (capturedWindowEndPriceRef.current || currentPriceRef.current || lastNonZeroPriceRef.current);
+      // For Nifty: use only locked/captured boundary price; never fall back to moving current price.
+      const raw = isBTC
+        ? (currentPriceRef.current || lastNonZeroPriceRef.current)
+        : (capturedWindowEndPriceRef.current ?? lockedWindowLtpsRef.current[prevNum] ?? null);
       if (raw == null || !Number.isFinite(raw) || raw <= 0) {
-        // For Nifty, if we don't have captured price yet, skip creating pending window
+        // For Nifty, if boundary LTP is not captured/locked yet, skip (avoid wrong moving value).
         if (!isBTC) {
           console.log('[LTP] No captured price available for window', prevNum, 'skipping pending window creation');
           return;
@@ -2527,11 +2591,12 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             : Date.now() + Math.max(0, resultTimeSecVal - nowSec) * 1000;
         const prevPendingRow = prev.find((pw) => pw.windowNumber === prevNum - 1);
         const windowOpenLTP = prevPendingRow?.windowEndLTP ?? null;
+        const lockedLtp = !isBTC ? (lockedWindowLtpsRef.current[prevNum] ?? parseFloat(parseFloat(raw).toFixed(2))) : parseFloat(parseFloat(raw).toFixed(2));
         return [
           ...prev,
           {
             windowNumber: prevNum,
-            windowEndLTP: parseFloat(parseFloat(raw).toFixed(2)),
+            windowEndLTP: lockedLtp,
             windowOpenLTP,
             ltpTime: isBTC ? info.windowStart : formatIstClockFromSec(info.windowStartSec ?? 0),
             resultTimeSec: resultTimeSecVal,
@@ -2659,6 +2724,13 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     if (!isBTC) {
       capturedWindowEndPriceRef.current = windowEndLTP;
       capturedWindowEndTimeRef.current = formatIstClockFromSec(windowInfo.windowEndSec ?? 0);
+      const fixedLtp = parseFloat(windowEndLTP.toFixed(2));
+      if (Number.isFinite(fixedLtp) && fixedLtp > 0) {
+        setLockedWindowLtps((prev) => {
+          if (Number(prev[prevWinNum]) === fixedLtp) return prev;
+          return { ...prev, [prevWinNum]: fixedLtp };
+        });
+      }
       console.log('[LTP] Window changed from', prevWinNum, 'to', windowInfo.windowNumber, 'captured LTP:', windowEndLTP);
     }
     
@@ -2683,9 +2755,12 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       const existingIdx = prev.findIndex((pw) => pw.windowNumber === prevWinNum);
       const prevPendingRow = prev.find((pw) => pw.windowNumber === prevWinNum - 1);
       const windowOpenLTP = prevPendingRow?.windowEndLTP ?? null;
+      const lockedLtp = !isBTC
+        ? (lockedWindowLtpsRef.current[prevWinNum] ?? parseFloat(windowEndLTP.toFixed(2)))
+        : parseFloat(windowEndLTP.toFixed(2));
       const row = {
         windowNumber: prevWinNum,
-        windowEndLTP: parseFloat(windowEndLTP.toFixed(2)),
+        windowEndLTP: lockedLtp,
         windowOpenLTP,
         ltpTime: !isBTC ? formatIstClockFromSec(windowInfo.windowEndSec ?? 0) : windowInfo.windowStart,
         resultTimeSec: resultTimeSecVal,
@@ -2707,7 +2782,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           ...ex, 
           windowOpenLTP: existingOpenLTP, 
           trades: mergedTrades,
-          windowEndLTP: parseFloat(windowEndLTP.toFixed(2)), // Always use captured price
+          windowEndLTP: lockedLtp,
           resultTimeSec: resultTimeSecVal,
           resultEpoch: resultEpochVal,
           settleEpoch: settleEpochVal,
@@ -3398,7 +3473,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           source = 'official';
         } else if (pendingWindow && pendingWindow.windowEndLTP) {
           // Prioritize pending window LTP (fixed at window end) over game results
-          ltp = pendingWindow.windowEndLTP;
+          ltp = lockedWindowLtps[winNum] ?? pendingWindow.windowEndLTP;
           // UI must show official window-end clock (e.g. 12:30:00), not random tick second.
           time = niftyWindowEndClock(winNum);
           source = 'pending';
@@ -3485,7 +3560,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       }
       
       return history;
-    }, [windowInfo.windowNumber, pendingWindows, gameResults, gameStartTime, niftyRoundSec]);
+    }, [windowInfo.windowNumber, pendingWindows, gameResults, gameStartTime, niftyRoundSec, lockedWindowLtps]);
 
     if (ltpHistory.length === 0) {
       return (
