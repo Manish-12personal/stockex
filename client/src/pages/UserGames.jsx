@@ -2914,21 +2914,26 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           const c = Number(gr?.closePrice);
           const o = Number(gr?.openPrice);
           
-          // For BTC, prioritize database GameResult over live price
+          // For BTC, ALWAYS use live price if GameResult not available - DON'T WAIT for database
           if (isBTC) {
             if (gr && c != null && Number.isFinite(c) && c > 0) {
               resultPrice = c;
               console.log(`[BTC] Using stored GameResult for window ${pw.windowNumber}: ₹${c} (result: ${gr.result})`);
             } else {
-              console.log(`[BTC] No GameResult for window ${pw.windowNumber} in current state, checking database...`);
-              // Try to fetch from database again
+              // NO DATABASE - use live price immediately and settle
               const livePrice = currentPriceRef.current;
               if (livePrice != null && Number.isFinite(livePrice) && livePrice > 0) {
                 resultPrice = livePrice;
-                console.log(`[BTC] Using live price for window ${pw.windowNumber}: ₹${livePrice} (database may be delayed)`);
+                console.log(`[BTC] ✅ IMMEDIATE SETTLE: Using live price for window ${pw.windowNumber}: ₹${livePrice}`);
               } else {
-                resultPrice = null;
-                console.warn(`[BTC] No price available for window ${pw.windowNumber} - database fetch failed`);
+                // Use window's LTP if available
+                if (pw.windowEndLTP != null && Number.isFinite(pw.windowEndLTP) && pw.windowEndLTP > 0) {
+                  resultPrice = pw.windowEndLTP;
+                  console.log(`[BTC] ✅ Using window LTP for window ${pw.windowNumber}: ₹${resultPrice}`);
+                } else {
+                  resultPrice = null;
+                  console.warn(`[BTC] ❌ No price available for window ${pw.windowNumber}`);
+                }
               }
             }
           } else {
@@ -2975,13 +2980,16 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           const direction =
             diffForDirection > 0 ? 'UP' : diffForDirection < 0 ? 'DOWN' : 'TIE';
 
-          setPendingWindows((prev) =>
-            prev.map((p) =>
+          // Mark as resolved and NEVER remove it
+          setPendingWindows((prev) => {
+            const updated = prev.map((p) =>
               p.windowNumber === pw.windowNumber
-                ? { ...p, resolved: true, resultPrice: resultPx, marketDirection: direction }
+                ? { ...p, resolved: true, resultPrice: resultPx, marketDirection: direction, permanent: true }
                 : p
-            )
-          );
+            );
+            console.log(`[BTC] ✅ Window ${pw.windowNumber} PERMANENTLY resolved with price: ₹${resultPx} (${direction})`);
+            return updated;
+          });
 
           setLastCompletedWindow({
             windowNumber: pw.windowNumber,
