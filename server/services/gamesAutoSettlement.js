@@ -783,11 +783,12 @@ async function autoSettleNiftyUpDown(settings, nowMs) {
 
 
 
-  // Calculate max window number based on current time
+  // Calculate max window number based on current time - only settle when result time has passed
 
   const elapsed = nowSec - marketOpenSec;
 
-  const resultDueWindow = Math.floor(elapsed / D);
+  // Results are due 2 windows after betting window ends
+  const resultDueWindow = Math.max(0, Math.floor((elapsed - D) / D));
 
 
 
