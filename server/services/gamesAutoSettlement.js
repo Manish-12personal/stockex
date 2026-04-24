@@ -671,7 +671,7 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
     try {
 
-      await GameResult.create({
+      const gameResult = await GameResult.create({
 
         gameId: 'btcupdown',
 
@@ -694,6 +694,24 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
         windowEndTime: fmtT(closeRefSec),
 
         resultTime: new Date(nowMs),
+
+        priceSource: closeSource,
+
+        settlementCompleted: true,
+
+        settlementProcessedAt: new Date(nowMs),
+
+        metadata: {
+
+          forcedCreation: closeSource === 'live_websocket_forced',
+
+          resultTimeSec: closeRefSec,
+
+          currentTimeSec: nowSec,
+
+          hasLivePrice: hasLive
+
+        }
 
       });
 

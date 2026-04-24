@@ -3023,11 +3023,18 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     };
   }, [settlePendingWindowOnServer, refreshBalance, fetchGameResults, isBTC, game.id, user?.token]);
 
-  // Clean up old resolved pending windows (remove when next window's result arrives)
+  // Clean up old resolved pending windows - but keep all results for BTC UP/DOWN
   useEffect(() => {
     setPendingWindows(prev => {
       if (prev.length <= 1) return prev;
-      // If the latest entry is resolved, remove all older resolved entries
+      
+      // For BTC UP/DOWN, keep ALL resolved results - don't remove any
+      if (isBTC) {
+        console.log('[BTC] Keeping all resolved results for persistence');
+        return prev;
+      }
+      
+      // For other games, clean up old resolved entries
       const latestResolved = prev.filter(pw => pw.resolved);
       if (latestResolved.length > 1) {
         // Keep only the most recent resolved + any still pending
@@ -3037,7 +3044,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       }
       return prev;
     });
-  }, [pendingWindows]);
+  }, [pendingWindows, isBTC]);
 
   const quickAmounts = [1, 2, 5, 10];
 
@@ -3761,7 +3768,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     }, pollingInterval);
 
     return () => clearInterval(interval);
-  }, [game.id, user.token, isBTC]);
+  }, [game.id, user.token, isBTC, fetchGameResults, checkTradeResults]);
 
   return (
     <div className="h-screen bg-dark-900 text-white flex flex-col overflow-hidden">
