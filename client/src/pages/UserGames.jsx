@@ -2949,15 +2949,21 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             resultPrice = Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0 ? c : null;
           }
         } else {
-          const nextPw = list.find((p) => p.windowNumber === pw.windowNumber + 1);
-          const nextLtp =
-            nextPw?.windowEndLTP != null &&
-            Number.isFinite(nextPw.windowEndLTP) &&
-            nextPw.windowEndLTP > 0
-              ? nextPw.windowEndLTP
-              : null;
-          const raw = nextLtp ?? currentPriceRef.current ?? lastNonZeroPriceRef.current;
-          resultPrice = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null;
+          // For Nifty Up/Down, NEVER use this fallback - only use GameResult
+          if (game.id === 'updown') {
+            resultPrice = null;
+            console.log(`[Nifty] Window ${pw.windowNumber} must wait for GameResult - no fallback allowed`);
+          } else {
+            const nextPw = list.find((p) => p.windowNumber === pw.windowNumber + 1);
+            const nextLtp =
+              nextPw?.windowEndLTP != null &&
+              Number.isFinite(nextPw.windowEndLTP) &&
+              nextPw.windowEndLTP > 0
+                ? nextPw.windowEndLTP
+                : null;
+            const raw = nextLtp ?? currentPriceRef.current ?? lastNonZeroPriceRef.current;
+            resultPrice = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null;
+          }
         }
         if (resultPrice == null) {
           if (isBTC) {
