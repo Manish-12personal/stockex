@@ -1509,14 +1509,30 @@ const getBTCWindowInfo = (openTime, closeTime) => {
     };
   }
   if (st.status === 'cooldown') {
-    const rsw = st.resultSecondForWindow;
+    // On the exact result second (e.g. :15/:30), state is "cooldown" with windowNumber:0; advance +1s so UI shows the open next round.
+    const stNext = getBtcUpDownWindowState(Math.min(nowSec + 1, 86400), gameCfg);
+    if (stNext.status === 'open') {
+      const canTrade = nowSec >= stNext.windowStartSec;
+      const re = stNext.resultEpoch;
+      return {
+        ...stNext,
+        canTrade,
+        message: canTrade ? 'Trading Window Open' : 'Result fixed (DB) — next round opens in 1s',
+        windowStart: fmtSec(stNext.windowStartSec),
+        windowEnd: fmtSec(stNext.windowEndSec),
+        windowOpenSec: stNext.windowStartSec,
+        resultTime: fmtSec(stNext.resultTimeSec),
+        resultEpoch: re,
+        settleTimeSec: stNext.settleTimeSec,
+        settleEpoch: re + 1000,
+      };
+    }
     return {
       ...st,
       canTrade: false,
-      message:
-        rsw != null
-          ? `Result for window #${rsw} prints at this second — next round opens in 1s`
-          : st.message || 'Between windows (IST)',
+      message: st.resultSecondForWindow
+        ? 'Result at quarter-hour — no betting this second'
+        : 'Between windows (IST)',
     };
   }
 
@@ -2541,6 +2557,29 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     );
   }, [gameResults]);
 
+  /** Last 3 completed rounds: stuck LTP = GameResult.closePrice at each result time (e.g. 00:15 / 00:30 / 00:45). */
+  const btcLastThreeResultLtps = useMemo(() => {
+    if (!isBTC) return [];
+    const rows = (gameResults || [])
+      .filter(
+        (r) =>
+          r != null &&
+          Number(r.windowNumber) > 0 &&
+          Number.isFinite(Number(r.closePrice)) &&
+          Number(r.closePrice) > 0
+      )
+      .map((r) => ({ w: Number(r.windowNumber), ltp: Number(r.closePrice) }))
+      .sort((a, b) => a.w - b.w);
+    return rows.slice(-3);
+  }, [isBTC, gameResults]);
+
+  const formatBtcResultIst = useCallback((w) => {
+    const sec = btcResultRefSecForUiWindow(w);
+    const h = Math.floor(sec / 3600) % 24;
+    const m = Math.floor((sec % 3600) / 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+  }, []);
+
   // Track live price from GameLivePricePanel (Socket.IO ticks)
   const handlePriceUpdate = useCallback((price) => {
     currentPriceRef.current = price;
@@ -2672,6 +2711,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     fetchGameResults();
   }, [windowInfo.windowNumber, fetchGameResults]);
 
+  // BTC: poll DB so stuck results always appear (no "gone after refresh")
+  useEffect(() => {
+    if (game.id !== 'btcupdown') return;
+    const t = setInterval(() => {
+      fetchGameResults();
+    }, 4000);
+    return () => clearInterval(t);
+  }, [game.id, fetchGameResults]);
+
   // Helper function to resolve a single trade
   const resolveTrade = useCallback(async (trade) => {
     const exitPrice = currentPriceRef.current || 0;
@@ -2746,11 +2794,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     }
   }, [game.id, user.token, computeUpDownSettlement, refreshBalance, fetchGameResults]);
 
-  // When window number changes, capture LTP and queue for result (both Nifty & BTC).
-  // Always track the closed window so the tracker shows LTP even with no bets; trades resolve when non-empty.
+  // When window number changes, capture LTP and queue for result (Nifty). BTC: results 100% from DB; no client LTP.
   useEffect(() => {
     const prevWinNum = prevWindowNumberRef.current;
     prevWindowNumberRef.current = windowInfo.windowNumber;
+    if (isBTC) return;
 
     if (prevWinNum <= 0 || prevWinNum === windowInfo.windowNumber) return;
 
@@ -3413,7 +3461,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       return null;
     }
 
-    // BTC: only server GameResult (DB) — no live re-pricing; ignore pending/lastCompleted for display
+    // BTC: stuck result price = GameResult.closePrice only (never live). Green/red/yellow = vs previous window, same day.
     if (
       server &&
       server.closePrice != null &&
@@ -3421,28 +3469,47 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       Number(server.closePrice) > 0
     ) {
       const resultWhen = btcRefClock(btcResultRefSecForUiWindow(winNum));
+      const cur = Number(server.closePrice);
+      const prevGr = winNum > 1 ? pickLatestGameResultForWindow(resultsForPick, winNum - 1) : null;
+      const prevC =
+        prevGr && prevGr.closePrice != null && Number.isFinite(Number(prevGr.closePrice))
+          ? Number(prevGr.closePrice)
+          : null;
+      let compareDir = 'tie';
+      if (prevC != null) {
+        if (cur > prevC) compareDir = 'up';
+        else if (cur < prevC) compareDir = 'down';
+        else compareDir = 'tie';
+      } else {
+        compareDir =
+          server.result === 'UP' ? 'up' : server.result === 'DOWN' ? 'down' : 'tie';
+      }
       return {
-        ltp: server.openPrice,
-        ltpWhen: server.ltpTime || '',
+        ltp: cur,
+        ltpWhen: resultWhen,
         resolved: true,
-        resultPrice: server.closePrice,
+        resultPrice: cur,
         marketDirection: server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE',
+        compareDir,
         resultWhen,
         resultAt: resultWhen,
       };
     }
-    if (Number(winNum) === Number(windowInfo.windowNumber) && windowInfo.status === 'open') {
+    const curW = Number(windowInfo.windowNumber) || 0;
+    if (curW > 0 && winNum === curW) {
       return {
-        ltp: null,
-        ltpWhen: '',
+        running: true,
         resolved: false,
-        resultPrice: null,
-        marketDirection: null,
         resultWhen: btcRefClock(btcResultRefSecForUiWindow(winNum)),
-        resultAt: btcRefClock(btcResultRefSecForUiWindow(winNum)),
+        compareDir: 'tie',
       };
     }
-    return null;
+    return {
+      resolved: false,
+      waitingServer: true,
+      resultWhen: btcRefClock(btcResultRefSecForUiWindow(winNum)),
+      compareDir: 'tie',
+    };
   };
 
   const fmtPx = (n) =>
@@ -3788,9 +3855,51 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         );
       }
 
+      if (isBTC && view.running) {
+        return (
+          <div
+            key={winNum}
+            className="bg-dark-800 rounded-xl p-4 border border-dark-600 mb-2 last:mb-0 border-emerald-500/30"
+          >
+            <h3 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-1.5">
+              <BarChart3 size={12} className="text-emerald-400" />
+              Running · #{winNum}
+            </h3>
+            <div className="text-center py-2 space-y-1">
+              <p className="text-emerald-400/95 text-sm font-medium">This round is open</p>
+              <p className="text-gray-500 text-xs">
+                {windowInfo.windowStart} → {windowInfo.windowEnd} · Result prints @ {view.resultWhen} IST (fixed from server)
+              </p>
+            </div>
+          </div>
+        );
+      }
+
       const dir = view.marketDirection;
-      const dirClass =
-        dir === 'UP' ? 'text-green-400' : dir === 'DOWN' ? 'text-red-400' : 'text-yellow-400';
+      const comp = view.compareDir;
+      const useBtcComp = isBTC && comp;
+      const dirClass = useBtcComp
+        ? comp === 'up'
+          ? 'text-green-400'
+          : comp === 'down'
+            ? 'text-red-400'
+            : 'text-yellow-400'
+        : dir === 'UP'
+          ? 'text-green-400'
+          : dir === 'DOWN'
+            ? 'text-red-400'
+            : 'text-yellow-400';
+      const dirLabel = useBtcComp
+        ? comp === 'up'
+          ? 'UP ▲'
+          : comp === 'down'
+            ? 'DOWN ▼'
+            : 'TIE'
+        : dir === 'UP'
+          ? 'UP ▲'
+          : dir === 'DOWN'
+            ? 'DOWN ▼'
+            : 'TIE';
       const title = isBTC
         ? isCurrentWindow
           ? `Running · #${winNum}`
@@ -3817,10 +3926,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                     <span className={`font-bold font-mono tabular-nums ${dirClass}`}>
                       {fmtPx(view.resultPrice)}
                     </span>
-                    <span className={`ml-2 text-xs font-bold ${dirClass}`}>
-                      {dir === 'UP' ? 'UP ▲' : dir === 'DOWN' ? 'DOWN ▼' : 'TIE'}
-                    </span>
+                    <span className={`ml-2 text-xs font-bold ${dirClass}`}>{dirLabel}</span>
                   </div>
+                  {isBTC && (
+                    <div className="text-[9px] text-gray-500 mt-0.5">vs previous window (same day)</div>
+                  )}
                   {view.resultWhen ? (
                     <div className="text-[10px] text-gray-500 mt-1 leading-snug">
                       Result @ {view.resultWhen}
@@ -3830,11 +3940,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 </div>
               ) : (
                 <div className="text-right min-w-0">
-                  {isBTC && isCurrentWindow ? (
-                    <div className="text-green-400/95 text-sm font-medium">This window is open — bet counts for result below</div>
-                  ) : (
-                    <div className="text-yellow-400 text-sm font-medium">Pending (server will fix price in DB)</div>
-                  )}
+                  <div className="text-amber-400/95 text-sm font-medium">
+                    {isBTC && view.waitingServer ? 'Loading result from server…' : 'Pending'}
+                  </div>
                   {view.resultWhen ? (
                     <div className="text-[10px] text-gray-500 mt-1 leading-snug">
                       Result @ {view.resultWhen}
@@ -3857,9 +3965,10 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     return (
       <div className="mb-3 space-y-0">
         {isBTC && (
-          <p className="text-[10px] text-gray-500 mb-2 px-1">
-            Three most recent window results (fixed from server) and one active round.
-          </p>
+          <h3 className="text-xs font-bold text-gray-400 mb-2 flex items-center gap-1.5 px-0.5">
+            <BarChart3 size={12} className="text-purple-400" />
+            Last 3 result prices + current round
+          </h3>
         )}
         {rows.map(({ n, view }) => renderCard(n, view))}
       </div>
@@ -3932,6 +4041,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
   // Fetch active trades and history on mount and when the trading window advances (ledger must stay in sync)
   useEffect(() => {
+    console.log('[DEBUG] GameScreen useEffect triggered for game:', game.id);
     fetchActiveTrades();
     fetchHistory();
     checkTradeResults();
@@ -3944,10 +4054,12 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     
     // Initial fetch for BTC to ensure we have latest data
     if (isBTC) {
+      console.log('[BTC] Initial fetch for game results...');
       fetchGameResults();
     }
-
+    
     const interval = setInterval(() => {
+      console.log('[BTC] Polling for game results...');
       fetchGameResults();
       checkTradeResults();
     }, pollingInterval);
@@ -4009,6 +4121,65 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           <div className="lg:w-[240px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
             <WindowStatusBadge />
             <LTPHistoryPanel />
+            {isBTC && (
+              <div className="bg-dark-800 rounded-xl p-3 border border-cyan-500/35 mb-3">
+                <h3 className="text-xs font-bold text-cyan-200/95 mb-2 flex items-center gap-1.5">
+                  <BarChart3 size={12} className="text-cyan-400" />
+                  Last 3 result LTPs
+                </h3>
+                {btcLastThreeResultLtps.length === 0 ? (
+                  <p className="text-gray-500 text-xs text-center py-2 leading-snug">
+                    No results loaded yet — each :15 / :30 / :45 close will appear here from the server.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {btcLastThreeResultLtps.map((row, idx) => {
+                      const prevInList = idx > 0 ? btcLastThreeResultLtps[idx - 1] : null;
+                      let rel = 'tie';
+                      if (prevInList) {
+                        if (row.ltp > prevInList.ltp) rel = 'up';
+                        else if (row.ltp < prevInList.ltp) rel = 'down';
+                        else rel = 'tie';
+                      }
+                      const relCls =
+                        rel === 'up' ? 'text-green-400' : rel === 'down' ? 'text-red-400' : 'text-amber-300/90';
+                      const t = formatBtcResultIst(row.w);
+                      return (
+                        <li
+                          key={row.w}
+                          className="rounded-lg border border-dark-600 bg-dark-700/50 px-2.5 py-2"
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-0.5">
+                            <span className="text-[11px] text-gray-400 font-medium">
+                              Result @ {t} <span className="text-gray-500">IST</span>
+                            </span>
+                            {prevInList ? (
+                              <span className={`text-[10px] font-semibold ${relCls}`}>
+                                {rel === 'up' ? '↑ vs line above' : rel === 'down' ? '↓ vs line above' : '= same'}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div
+                            className={`text-sm font-mono font-bold tabular-nums ${
+                              prevInList ? relCls : 'text-cyan-300'
+                            }`}
+                          >
+                            ${row.ltp.toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                <p className="text-[10px] text-gray-500 mt-2 leading-snug">
+                  Stuck LTP from the server for each time — compare lines to see if the next price is lower or
+                  higher than the one before (e.g. 00:30 vs 00:15).
+                </p>
+              </div>
+            )}
             <WindowResultTracker />
 
             {/* Game Info Card */}
@@ -5234,6 +5405,7 @@ const NiftyBracketScreen = ({ game, balance, onBack, user, refreshBalance, setti
 
   // Fetch active trades and history on mount / token change
   useEffect(() => {
+    console.log('[DEBUG] GameScreen useEffect triggered for game:', game.id);
     fetchActiveTrades();
     fetchHistory();
     fetchLast5DaysLTP();
