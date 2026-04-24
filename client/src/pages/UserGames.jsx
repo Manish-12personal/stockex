@@ -2649,11 +2649,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     // For Nifty, store this price so it can be used when creating the pending window
     if (!isBTC) {
       capturedWindowEndPriceRef.current = windowEndLTP;
-      // For the PREVIOUS window, use its actual end time, not current window's end time
-      const prevWindowEndTime = formatIstClockFromSec((windowInfo.windowStartSec ?? 0) - (windowInfo.roundDurationSec ?? NIFTY_UP_DOWN_MIN_ROUND_SEC));
-      capturedWindowEndTimeRef.current = prevWindowEndTime;
-      console.log('[LTP] Window changed from', prevWinNum, 'to', windowInfo.windowNumber, 'captured LTP:', windowEndLTP, 'at actual end time:', prevWindowEndTime);
-      console.log('[LTP] This LTP belongs to window', prevWinNum, 'which actually ended at', prevWindowEndTime);
+      capturedWindowEndTimeRef.current = formatIstClockFromSec(windowInfo.windowEndSec ?? 0);
+      console.log('[LTP] Window changed from', prevWinNum, 'to', windowInfo.windowNumber, 'captured LTP:', windowEndLTP);
     }
     
     const nowSecTick = isBTC ? currentTotalSecondsISTLib() : getTotalSecondsIST();
@@ -2681,7 +2678,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         windowNumber: prevWinNum,
         windowEndLTP: parseFloat(windowEndLTP.toFixed(2)),
         windowOpenLTP,
-        ltpTime: !isBTC ? (capturedWindowEndTimeRef.current || formatIstClockFromSec(windowInfo.windowEndSec ?? 0)) : windowInfo.windowStart,
+        ltpTime: !isBTC ? formatIstClockFromSec(windowInfo.windowEndSec ?? 0) : windowInfo.windowStart,
         resultTimeSec: resultTimeSecVal,
         resultEpoch: resultEpochVal,
         settleEpoch: settleEpochVal,
@@ -2939,6 +2936,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                   console.warn(`[BTC] ❌ No price available for window ${pw.windowNumber}`);
                 }
               }
+            }
+          } else if (game.id === 'updown') {
+            // FOR NIFTY UP/DOWN: ONLY use GameResult - NO FALLBACKS, NO EARLY SETTLEMENT
+            if (gr && c != null && Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0) {
+              resultPrice = c;
+              console.log(`[NIFTY] Using GameResult for window ${pw.windowNumber}: ₹${c} (result: ${gr.result})`);
+            } else {
+              resultPrice = null;
+              console.log(`[NIFTY] Window ${pw.windowNumber} PENDING - waiting for GameResult`);
             }
           } else {
             resultPrice = Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0 ? c : null;
