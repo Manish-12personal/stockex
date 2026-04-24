@@ -202,7 +202,17 @@ const gameSettingsSchema = new mongoose.Schema({
       bracketGapPercent: { type: Number, default: 0.1 },
       /** If true, upper/lower are built from live Nifty spot at place time (ignores client entryPrice for centre) */
       bracketAnchorToSpot: { type: Boolean, default: true },
-      /** BUY wins only if LTP > upperTarget; SELL wins only if LTP < lowerTarget (at settle) */
+      /**
+       * At result-time (session close): how to decide win/loss.
+       * 'directionVsEntry' — BUY wins if settlement LTP is above your entry; SELL wins if LTP is below (typical 1D direction bet vs ref).
+       * 'breakPastBands' — BUY only if LTP clears the upper target; SELL only if LTP is below the lower (stricter band breakout).
+       */
+      bracketSessionCloseRule: {
+        type: String,
+        enum: ['directionVsEntry', 'breakPastBands'],
+        default: 'directionVsEntry',
+      },
+      /** For breakPastBands (and intraday touch): BUY wins if LTP > upperTarget; SELL if LTP < lowerTarget. For directionVsEntry: applies to LTP vs entry. */
       bracketStrictLtpComparison: { type: Boolean, default: true },
       expiryMinutes: { type: Number, default: 5 }, // Intraday mode: minutes until expiry
       settleAtResultTime: { type: Boolean, default: true }, // true = settle only at resultTime IST (e.g. 3:31)

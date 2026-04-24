@@ -20114,6 +20114,18 @@ const GameSettingsManagement = () => {
                     </label>
                   </div>
                   <div>
+                    <label className="block text-sm text-gray-400 mb-2">Result-time win rule (when &quot;settle at result time&quot; is on)</label>
+                    <select
+                      value={currentGame?.bracketSessionCloseRule || 'directionVsEntry'}
+                      onChange={e => updateGameSetting(selectedGame, 'bracketSessionCloseRule', e.target.value)}
+                      className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2 text-sm"
+                    >
+                      <option value="directionVsEntry">LTP vs entry — BUY if close above ref, SELL if below (recommended)</option>
+                      <option value="breakPastBands">Outer bands only — BUY if LTP past upper target, SELL if past lower</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">Direction vs ref matches the ledger &quot;ref&quot; (entry) price. Band breakout is stricter and can mark a directional win as a loss if LTP does not clear the full gap.</p>
+                  </div>
+                  <div>
                     <label className="block text-sm text-gray-400 mb-2">Result time (IST)</label>
                     <input
                       type="time"

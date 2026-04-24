@@ -1071,18 +1071,18 @@ const UserGames = () => {
                     <div>
                       <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Star size={12} /> Game Overview</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
-                        <li>1. Two bracket levels are set around the current Nifty price: <span className="text-green-400 font-bold">{gs.bracketGapType === 'percentage' ? `+${gs.bracketGapPercent || 0.1}% (Upper)` : `+${gs.bracketGap || 20} points (Upper)`}</span> and <span className="text-red-400 font-bold">{gs.bracketGapType === 'percentage' ? `-${gs.bracketGapPercent || 0.1}% (Lower)` : `-${gs.bracketGap || 20} points (Lower)`}</span>.</li>
-                        <li>2. Choose <span className="text-green-400 font-bold">BUY</span> (price will hit upper bracket) or <span className="text-red-400 font-bold">SELL</span> (price will hit lower bracket).</li>
-                        <li>3. If your target is hit → <span className="text-green-400 font-bold">WIN {gs.winMultiplier || 2}x</span>!</li>
-                        <li>4. If neither target is hit → <span className="text-red-400 font-bold">You lose</span>.</li>
+                        <li>1. Your order <span className="text-cyan-300 font-bold">ref</span> in the ledger is the Nifty level locked when you bet. Two bracket lines are <span className="text-green-400 font-bold">{gs.bracketGapType === 'percentage' ? `+${gs.bracketGapPercent || 0.1}% (upper)` : `+${gs.bracketGap || 20} pt (upper)`}</span> and <span className="text-red-400 font-bold">{gs.bracketGapType === 'percentage' ? `-${gs.bracketGapPercent || 0.1}% (lower)` : `-${gs.bracketGap || 20} pt (lower)`}</span> from that level.</li>
+                        <li>2. <span className="text-green-400 font-bold">BUY</span> = you expect the index to finish <span className="text-green-400 font-bold">above</span> your ref; <span className="text-red-400 font-bold">SELL</span> = you expect it <span className="text-red-400 font-bold">below</span> your ref (at the scheduled result time, default).</li>
+                        <li>3. If you win, payout is <span className="text-green-400 font-bold">stake × {gs.winMultiplier || 2}</span> (gross; see hierarchy in rules).</li>
+                        <li>4. If you do not win by the settlement rule, the stake is <span className="text-red-400 font-bold">lost</span> (no mid-band refund).</li>
                       </ul>
                     </div>
                     <div>
                       <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Timer size={12} /> Timing</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Market hours: <span className="text-cyan-400 font-bold">{gs.startTime || '09:15'} - {gs.endTime || '15:45'} IST</span>.</li>
-                        <li>2. Trade resolves immediately if the bracket level is hit.</li>
-                        <li>3. If neither target is hit, the trade resolves automatically.</li>
+                        <li>2. Default: one settlement at the result time (e.g. {gs.resultTime || '15:31'} IST) using the latest LTP—live ticks do not close the trade early.</li>
+                        <li>3. If intraday (timer) mode is on in settings, a trade can resolve when a band is touched or when the timer ends.</li>
                       </ul>
                     </div>
                     <div>
@@ -1094,18 +1094,17 @@ const UserGames = () => {
                       </ul>
                     </div>
                     <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
-                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> How You Win</h3>
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> How You Win (result time)</h3>
                       <ul className="text-gray-300 space-y-1.5 pl-1">
-                        <li>1. Current Nifty = 24,000. Upper target = <span className="text-green-400 font-bold">{gs.bracketGapType === 'percentage' ? `24,${String((24000 * (gs.bracketGapPercent || 0.1) / 100)).padStart(3, '0')}` : `24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}`}</span>. Lower target = <span className="text-red-400 font-bold">{gs.bracketGapType === 'percentage' ? `23,{String(1000 - (24000 * (gs.bracketGapPercent || 0.1) / 100)).padStart(3, '0')}` : `23,{String(1000 - (gs.bracketGap || 20)).padStart(3, '0')}`}</span>.</li>
-                        <li>2. You click <span className="text-green-400 font-bold">BUY</span> → You're betting price will reach the upper bracket.</li>
-                        <li>3. If Nifty touches <span className="text-green-400 font-bold">{gs.bracketGapType === 'percentage' ? `24,${String((24000 * (gs.bracketGapPercent || 0.1) / 100)).padStart(3, '0')}` : `24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}`}</span> → <span className="text-green-400 font-bold">WIN {gs.winMultiplier || 2}x!</span></li>
-                        <li>4. If neither level is hit → <span className="text-red-400 font-bold">Trade lost.</span></li>
+                        <li>1. Your <span className="text-cyan-300 font-bold">ref</span> (e.g. 24,000) is the Nifty at order time. Bracket lines are still at <span className="text-green-400 font-bold">+</span> / <span className="text-red-400 font-bold">-</span> spread for context.</li>
+                        <li>2. At the result-time snapshot: <span className="text-green-400 font-bold">BUY</span> wins if the published LTP is <span className="text-green-400 font-bold">above</span> your ref; <span className="text-red-400 font-bold">SELL</span> wins if LTP is <span className="text-red-400 font-bold">below</span> your ref (default: LTP vs entry).</li>
+                        <li>3. Payout: stake × {gs.winMultiplier || 2} on a win; hierarchy may be taken from the Super Admin pool per settings.</li>
+                        <li>4. If LTP is on the wrong side of your ref for your side — <span className="text-red-400 font-bold">trade lost</span> (stake not returned).</li>
                       </ul>
                       <div className="mt-2 bg-dark-700/60 rounded-lg p-2">
                         <div className="text-[10px] text-yellow-400 font-bold mb-1">Example</div>
-                        <div className="text-gray-400">Nifty is at 24,000. You BUY <span className="text-purple-400 font-bold">10 Tkt</span>. Upper target = {gs.bracketGapType === 'percentage' ? `24,${String((24000 * (gs.bracketGapPercent || 0.1) / 100)).padStart(3, '0')}` : `24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}`}.</div>
-                        <div className="text-gray-400">Nifty hits {gs.bracketGapType === 'percentage' ? `24,${String((24000 * (gs.bracketGapPercent || 0.1) / 100)).padStart(3, '0')}` : `24,{String(0 + (gs.bracketGap || 20)).padStart(3, '0')}`} after 2 minutes.</div>
-                        <div className="text-green-400 font-bold mt-1">Result: WIN! You get 10 × {gs.winMultiplier || 2} = {10 * (gs.winMultiplier || 2)} Tkt (full payout, no fee on profit)</div>
+                        <div className="text-gray-400">Ref 24,000. LTP at settlement 24,010 — <span className="text-green-400 font-bold">BUY</span> wins, <span className="text-red-400 font-bold">SELL</span> loses.</div>
+                        <div className="text-green-400 font-bold mt-1">WIN pays stake × {gs.winMultiplier || 2} (gross; per game rules)</div>
                       </div>
                     </div>
                     <div className="bg-cyan-900/20 border border-cyan-500/20 rounded-xl p-3">

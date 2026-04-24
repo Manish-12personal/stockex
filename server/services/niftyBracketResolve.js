@@ -13,7 +13,9 @@ import {
  * Resolve one active Nifty Bracket trade.
  * When trade.settlesAtSessionClose is true, win/loss is decided only at/after expiresAt
  * (result time, e.g. 3:30 PM IST), not when live price touches the band earlier.
- * If at settlement LTP is strictly between the bands (no win condition), the trade is **lost** — no stake refund.
+ * Session-close rule is configurable (`bracketSessionCloseRule`): by default, BUY/SELL wins are decided by
+ * settlement LTP vs **entry** (direction vs ref). With `breakPastBands`, a BUY wins only if LTP clears the
+ * upper band (same for SELL vs lower). If the band rule applies and LTP is strictly between the bands, **lost** — no stake refund.
  *
  * Win: user is credited full gross payout (stake × multiplier); hierarchy / brokerage is funded from
  * the Super Admin pool (same economics as other games).
@@ -42,6 +44,8 @@ export async function resolveNiftyBracketTrade(trade, currentPrice, options = {}
   const gsBracket = await GameSettings.getSettings();
   const gcBr = gsBracket?.games?.niftyBracket || {};
   const strictLtp = gcBr.bracketStrictLtpComparison !== false;
+  const sessionCloseRule =
+    gcBr.bracketSessionCloseRule === 'breakPastBands' ? 'breakPastBands' : 'directionVsEntry';
 
   const expiresAtMs = new Date(trade.expiresAt).getTime();
   const atOrAfterSettlement = now.getTime() >= expiresAtMs;
@@ -58,26 +62,44 @@ export async function resolveNiftyBracketTrade(trade, currentPrice, options = {}
     if (!atOrAfterSettlement && !forceMidRangeAsExpired && !bypassSettlementTime) {
       throw new Error('Trade is still active, no target hit yet');
     }
-    if (hitUpper) {
-      exitPrice = trade.upperTarget;
-      if (trade.prediction === 'BUY') {
-        status = 'won';
-      } else {
-        profit = -stakeAmt;
-        status = 'lost';
-      }
-    } else if (hitLower) {
-      exitPrice = trade.lowerTarget;
-      if (trade.prediction === 'SELL') {
-        status = 'won';
-      } else {
-        profit = -stakeAmt;
-        status = 'lost';
-      }
-    } else {
+    const entryPx = parseFloat(trade.entryPrice);
+    const hasEntry = Number.isFinite(entryPx) && entryPx > 0;
+
+    if (sessionCloseRule === 'directionVsEntry' && hasEntry) {
+      /** Result-time: compare settlement LTP to the reference (entry) — BUY wins if price finished above, SELL if below. */
       exitPrice = price;
-      profit = -stakeAmt;
-      status = 'lost';
+      const upBeats = strictLtp ? price > entryPx : price >= entryPx;
+      const downBeats = strictLtp ? price < entryPx : price <= entryPx;
+      if (trade.prediction === 'BUY' && upBeats) {
+        status = 'won';
+      } else if (trade.prediction === 'SELL' && downBeats) {
+        status = 'won';
+      } else {
+        profit = -stakeAmt;
+        status = 'lost';
+      }
+    } else if (sessionCloseRule === 'breakPastBands' || !hasEntry) {
+      if (hitUpper) {
+        exitPrice = trade.upperTarget;
+        if (trade.prediction === 'BUY') {
+          status = 'won';
+        } else {
+          profit = -stakeAmt;
+          status = 'lost';
+        }
+      } else if (hitLower) {
+        exitPrice = trade.lowerTarget;
+        if (trade.prediction === 'SELL') {
+          status = 'won';
+        } else {
+          profit = -stakeAmt;
+          status = 'lost';
+        }
+      } else {
+        exitPrice = price;
+        profit = -stakeAmt;
+        status = 'lost';
+      }
     }
   } else if (hitUpper) {
     exitPrice = trade.upperTarget;
