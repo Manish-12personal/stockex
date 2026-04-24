@@ -2202,13 +2202,40 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
 router.get('/game-results/:gameId', protectUser, async (req, res) => {
   try {
     const { gameId } = req.params;
-    const limit = parseInt(req.query.limit) || 20;
+    const limitRaw = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 200)) : 20;
     
     if (!['updown', 'btcupdown'].includes(gameId)) {
       return res.status(400).json({ message: 'Invalid game ID' });
     }
-    
-    const results = await GameResult.getRecentResultsWithFallback(gameId, limit);
+
+    const rawDay = req.query.day;
+    const day =
+      typeof rawDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDay.trim())
+        ? rawDay.trim()
+        : getTodayISTString();
+    const dayStart = startOfISTDayFromKey(day);
+    const dayEnd = endOfISTDayFromKey(day);
+    if (!dayStart || !dayEnd) {
+      return res.status(400).json({ message: 'Invalid day' });
+    }
+
+    const includePrevious =
+      req.query.includePrevious === '1' || String(req.query.includePrevious).toLowerCase() === 'true';
+
+    let results = await GameResult.find({
+      gameId,
+      windowDate: { $gte: dayStart, $lt: dayEnd },
+    })
+      .sort({ windowNumber: -1 })
+      .limit(limit)
+      .lean();
+
+    // Optional fallback for admin/debug use; user UI should stay day-scoped.
+    if (results.length === 0 && includePrevious) {
+      results = await GameResult.getRecentResultsWithFallback(gameId, limit);
+    }
+
     res.json(results);
   } catch (error) {
     console.error('Error fetching game results:', error);

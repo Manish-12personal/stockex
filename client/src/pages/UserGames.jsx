@@ -2561,8 +2561,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   // Fetch game results on mount and when window changes
   const fetchGameResults = useCallback(async () => {
     try {
+      const todayIst = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
       const { data } = await axios.get(`/api/user/game-results/${game.id}`, {
-        params: { limit: 20, _ts: Date.now() },
+        params: { limit: 20, day: todayIst, _ts: Date.now() },
         headers: { Authorization: `Bearer ${user.token}` },
       });
       setGameResults(data);
@@ -2900,8 +2901,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         (isBTC || game.id === 'updown')
       ) {
         try {
+          const todayIst = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
           const { data } = await axios.get(`/api/user/game-results/${game.id}`, {
-            params: { limit: 40, _ts: Date.now() },
+            params: { limit: 40, day: todayIst, _ts: Date.now() },
             headers: { Authorization: `Bearer ${user.token}` },
           });
           if (!cancelled) {
