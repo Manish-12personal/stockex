@@ -2937,17 +2937,10 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 }
               }
             }
-          } else if (game.id === 'updown') {
-            // FOR NIFTY UP/DOWN: ONLY use GameResult - NO FALLBACKS, NO EARLY SETTLEMENT
-            if (gr && c != null && Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0) {
-              resultPrice = c;
-              console.log(`[NIFTY] Using GameResult for window ${pw.windowNumber}: ₹${c} (result: ${gr.result})`);
-            } else {
-              resultPrice = null;
-              console.log(`[NIFTY] Window ${pw.windowNumber} PENDING - waiting for GameResult`);
-            }
           } else {
-            resultPrice = Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0 ? c : null;
+            // FOR NIFTY UP/DOWN: COMPLETELY DISABLED - NEVER SETTLE ON CLIENT SIDE
+            resultPrice = null;
+            console.log(`[NIFTY] Window ${pw.windowNumber} - CLIENT SETTLEMENT DISABLED - waiting for server GameResult`);
           }
         } else {
           const nextPw = list.find((p) => p.windowNumber === pw.windowNumber + 1);
