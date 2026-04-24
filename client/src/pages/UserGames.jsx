@@ -3023,15 +3023,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     };
   }, [settlePendingWindowOnServer, refreshBalance, fetchGameResults, isBTC, game.id, user?.token]);
 
-  // Clean up old resolved pending windows - but keep all results for BTC UP/DOWN
+  // Clean up old resolved pending windows - COMPLETELY DISABLED for BTC UP/DOWN
   useEffect(() => {
     setPendingWindows(prev => {
       if (prev.length <= 1) return prev;
       
-      // For BTC UP/DOWN, keep ALL resolved results - don't remove any
+      // COMPLETELY DISABLE CLEANUP FOR BTC UP/DOWN - NEVER REMOVE RESULTS
       if (isBTC) {
-        console.log('[BTC] Keeping all resolved results for persistence');
-        return prev;
+        console.log('[BTC] CLEANUP DISABLED - Keeping ALL results permanently. Current windows:', prev.length);
+        return prev; // Return as-is, no cleanup
       }
       
       // For other games, clean up old resolved entries

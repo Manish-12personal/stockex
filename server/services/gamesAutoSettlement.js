@@ -717,7 +717,7 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
       console.log(
 
-        `[btcUpDown] ✅ GameResult w=${rw} ${result} comparisonPrice=${comparisonPrice} close=${closePx}@${fmtT(closeRefSec)} (openSrc=${resolvedOpen.source} closeSrc=${closeSource})`
+        `[btcUpDown] ✅ GameResult w=${rw} ${result} comparisonPrice=${comparisonPrice} close=${closePx}@${fmtT(closeRefSec)} (openSrc=${resolvedOpen.source} closeSrc=${closeSource}) - PERMANENTLY STORED`
 
       );
 
