@@ -1690,12 +1690,18 @@ const DUMMY_NIFTY_LTP = Number(import.meta.env.VITE_DUMMY_NIFTY_PRICE) || 24050.
 
 /** IST calendar date YYYY-MM-DD (for LTP tape daily bucket). */
 function getIstCalendarYmd() {
-  return new Intl.DateTimeFormat('en-CA', {
+  const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Kolkata',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(new Date());
+  }).formatToParts(new Date());
+  const year = parts.find((p) => p.type === 'year')?.value;
+  const month = parts.find((p) => p.type === 'month')?.value;
+  const day = parts.find((p) => p.type === 'day')?.value;
+  if (year && month && day) return `${year}-${month}-${day}`;
+  // Safe fallback (should rarely hit)
+  return new Date().toISOString().slice(0, 10);
 }
 
 const NIFTY_BRACKET_LTP_TAPE_LS = 'stockex_niftyBracket_ltpTape_v1';
@@ -2689,7 +2695,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   // Fetch game results on mount and when window changes
   const fetchGameResults = useCallback(async () => {
     try {
-      const todayIst = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      const todayIst = getIstCalendarYmd();
       const { data } = await axios.get(`/api/user/game-results/${game.id}`, {
         params: { limit: 20, day: todayIst, _ts: Date.now() },
         headers: { Authorization: `Bearer ${user.token}` },
@@ -3039,7 +3045,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         (isBTC || game.id === 'updown')
       ) {
         try {
-          const todayIst = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+          const todayIst = getIstCalendarYmd();
           const { data } = await axios.get(`/api/user/game-results/${game.id}`, {
             params: { limit: 40, day: todayIst, _ts: Date.now() },
             headers: { Authorization: `Bearer ${user.token}` },
