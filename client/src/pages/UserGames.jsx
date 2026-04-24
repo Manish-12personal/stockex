@@ -6,6 +6,8 @@ import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { io as socketIO } from 'socket.io-client';
 import LiveChart from '../components/games/LiveChart';
 import GamesWalletGameLedgerPanel from '../components/games/GamesWalletGameLedgerPanel.jsx';
+import NiftyUpDown from '../components/NiftyUpDown.jsx';
+import BtcUpDown from '../components/BtcUpDown.jsx';
 import {
   getBtcUpDownWindowState,
   getEffectiveBtcSessionBounds,
@@ -4118,9 +4120,37 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         </div>
       </div>
 
-      {/* 3-Column Desktop Layout / Stacked Mobile - Full Height */}
-      <div className="px-3 py-2 flex-1 min-h-0 overflow-y-auto overscroll-y-contain lg:overflow-hidden touch-pan-y">
-        <div className="flex flex-col lg:flex-row gap-3 min-h-min lg:h-full lg:min-h-0">
+      {/* Use Separate Components for Up/Down Games */}
+      {isUpDownGame ? (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {game.id === 'updown' ? (
+            <NiftyUpDown
+              game={game}
+              user={user}
+              settings={settings}
+              activeTrades={activeTrades}
+              gameResults={gameResults}
+              onSettlePendingWindow={settlePendingWindowOnServer}
+              onRefreshBalance={refreshBalance}
+              onFetchGameResults={fetchGameResults}
+            />
+          ) : (
+            <BtcUpDown
+              game={game}
+              user={user}
+              settings={settings}
+              activeTrades={activeTrades}
+              gameResults={gameResults}
+              onSettlePendingWindow={settlePendingWindowOnServer}
+              onRefreshBalance={refreshBalance}
+              onFetchGameResults={fetchGameResults}
+            />
+          )}
+        </div>
+      ) : (
+        /* 3-Column Desktop Layout / Stacked Mobile - Full Height for other games */
+        <div className="px-3 py-2 flex-1 min-h-0 overflow-y-auto overscroll-y-contain lg:overflow-hidden touch-pan-y">
+          <div className="flex flex-col lg:flex-row gap-3 min-h-min lg:h-full lg:min-h-0">
 
           {/* LEFT COLUMN - Trading Window Status */}
           <div className="lg:w-[240px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto">
@@ -4572,7 +4602,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
         </div>
       </div>
-
+      )}
+      
       {/* Instructions Modal */}
       {showInstructions && (
         <InstructionsModal onClose={() => setShowInstructions(false)} gameId={game.id} />
