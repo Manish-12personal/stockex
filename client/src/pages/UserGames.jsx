@@ -2732,7 +2732,10 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     const fromPending = (pendingWindows || [])
       .flatMap((pw) => {
         const serverResult = pickLatestGameResultForWindow(gameResults, pw.windowNumber);
-        const isResolved = pw.resolved || !!serverResult;
+        const serverResultUsable = isBTC
+          ? !!serverResult
+          : !!serverResult && hasWindowResultPublished(pw.windowNumber);
+        const isResolved = !!pw.resolved || serverResultUsable;
 
         // BTC: prices from GameResult; Nifty: window-end vs result.
         const resultPrice = serverResult?.closePrice ?? (isBTC ? null : pw.resultPrice) ?? null;
@@ -2775,7 +2778,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       });
 
     return fromPending;
-  }, [pendingWindows, gameResults, winMultiplier, isBTC]);
+  }, [pendingWindows, gameResults, winMultiplier, isBTC, hasWindowResultPublished]);
 
   // Pending rows + API ledger wins/losses (server); dedupe by id
   const upDownMergedHistory = useMemo(() => {
@@ -3236,6 +3239,14 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     (n) => n != null
   );
 
+  const hasWindowResultPublished = useCallback((winNum) => {
+    if (!Number.isFinite(Number(winNum))) return false;
+    if (isBTC) return true;
+    const resultSec = niftyResultSecForWindowNum(winNum, gameStartTime, niftyRoundSec);
+    // Keep it pending until the official result second fully passes.
+    return getTotalSecondsIST() >= resultSec + 1;
+  }, [isBTC, gameStartTime, niftyRoundSec]);
+
   const buildWindowView = (winNum) => {
     if (winNum == null || !Number.isFinite(winNum)) return null;
     const pw = pendingWindows.find((p) => p.windowNumber === winNum);
@@ -3258,15 +3269,17 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     // Nifty: prefer live `pendingWindows` so we show the leg you traded (LTP @ …:59) before/without stale GameResult rows
     // (e.g. same window # from an old 1-minute schedule on the same day).
     if (!isBTC) {
+      const resultPublished = hasWindowResultPublished(winNum);
       if (pw) {
         // Always use pending window's windowEndLTP (fixed at window end time) - don't use server openPrice
         const ltpPx = pw.windowEndLTP;
+        const resolvedNow = !!pw.resolved && resultPublished;
         return {
           ltp: ltpPx,
           ltpWhen: pw.ltpTime || niftyLtpClock(),
-          resolved: !!pw.resolved,
-          resultPrice: pw.resolved ? pw.resultPrice : null,
-          marketDirection: pw.resolved ? pw.marketDirection : null,
+          resolved: resolvedNow,
+          resultPrice: resolvedNow ? pw.resultPrice : null,
+          marketDirection: resolvedNow ? pw.marketDirection : null,
           resultWhen: pw.resultTime || niftyResultClock(),
           resultAt: pw.resultTime || niftyResultClock(),
         };
@@ -3274,25 +3287,29 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       if (completed) {
         // Always use completed window's windowEndLTP (fixed at window end time)
         const ltpPx = completed.windowEndLTP;
+        const resolvedNow = resultPublished;
         return {
           ltp: ltpPx,
           ltpWhen: completed.ltpTime || niftyLtpClock(),
-          resolved: true,
-          resultPrice: completed.resultPrice,
-          marketDirection: completed.marketDirection,
+          resolved: resolvedNow,
+          resultPrice: resolvedNow ? completed.resultPrice : null,
+          marketDirection: resolvedNow ? completed.marketDirection : null,
           resultWhen: completed.resultTime || niftyResultClock(),
           resultAt: completed.resultTime || niftyResultClock(),
         };
       }
       if (server) {
         // Only use server if no pending window or completed window data available
+        const hasServerPrice = Number.isFinite(Number(server.closePrice));
+        const resolvedNow = resultPublished && hasServerPrice;
         return {
           ltp: server.openPrice,
           ltpWhen: niftyLtpClock(),
-          resolved: true,
-          resultPrice: server.closePrice,
-          marketDirection:
-            server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE',
+          resolved: resolvedNow,
+          resultPrice: resolvedNow ? server.closePrice : null,
+          marketDirection: resolvedNow
+            ? (server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE')
+            : null,
           resultWhen: niftyResultClock(),
           resultAt: niftyResultClock(),
         };
