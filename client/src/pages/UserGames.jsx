@@ -2417,6 +2417,13 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       ? Number(settings.brokeragePercent)
       : 5;
   const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
+  const hasWindowResultPublished = useCallback((winNum) => {
+    if (!Number.isFinite(Number(winNum))) return false;
+    if (isBTC) return true;
+    const resultSec = niftyResultSecForWindowNum(winNum, gameStartTime, niftyRoundSec);
+    // Keep it pending until the official result second fully passes.
+    return getTotalSecondsIST() >= resultSec + 1;
+  }, [isBTC, gameStartTime, niftyRoundSec]);
 
   const computeUpDownSettlement = useCallback(
     (amountRs, won) => {
@@ -3238,14 +3245,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const trackerWindowNumbers = [windowInfo.windowNumber, prevPrevPrevPrevWindowNumber, prevPrevPrevWindowNumber, prevPrevWindowNumber, prevWindowNumber].filter(
     (n) => n != null
   );
-
-  const hasWindowResultPublished = useCallback((winNum) => {
-    if (!Number.isFinite(Number(winNum))) return false;
-    if (isBTC) return true;
-    const resultSec = niftyResultSecForWindowNum(winNum, gameStartTime, niftyRoundSec);
-    // Keep it pending until the official result second fully passes.
-    return getTotalSecondsIST() >= resultSec + 1;
-  }, [isBTC, gameStartTime, niftyRoundSec]);
 
   const buildWindowView = (winNum) => {
     if (winNum == null || !Number.isFinite(winNum)) return null;
