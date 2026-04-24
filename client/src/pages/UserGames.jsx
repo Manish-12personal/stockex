@@ -2658,6 +2658,14 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     [isBTC, gameResults, btcWindowLtpSnap]
   );
 
+  /** Up/Down "Previous Results" strip: for BTC prefer merged (server + local + snap) so W#70+ always list */
+  const previousResultsStrip = useMemo(() => {
+    const raw = isBTC ? mergedBtcGameResults : gameResults;
+    return [...(raw || [])].sort(
+      (a, b) => Number(b.windowNumber) - Number(a.windowNumber)
+    );
+  }, [isBTC, mergedBtcGameResults, gameResults]);
+
   // Track live price from GameLivePricePanel (Socket.IO ticks)
   const handlePriceUpdate = useCallback((price) => {
     currentPriceRef.current = price;
@@ -3355,32 +3363,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   }, [pendingWindows, isBTC]);
 
   const quickAmounts = [1, 2, 5, 10];
-
-  // Manual settlement for emergency use
-  const handleManualSettlement = async () => {
-    if (!pendingWindows.length) {
-      alert('No pending windows to settle');
-      return;
-    }
-    
-    const latestPending = pendingWindows.find(pw => !pw.resolved);
-    if (!latestPending) {
-      alert('No unresolved windows to settle');
-      return;
-    }
-    
-    try {
-      console.log(`[MANUAL] Settlement for window ${latestPending.windowNumber}`);
-      const resultPrice = latestPending.windowEndLTP || 24000;
-      const resolvedTrades = await settlePendingWindowOnServer(latestPending, resultPrice);
-      console.log(`[MANUAL] Completed: ${resolvedTrades?.length || 0} trades`);
-      await refreshBalance();
-      alert(`Settlement completed! ${resolvedTrades?.length || 0} trades settled`);
-    } catch (error) {
-      console.error('[MANUAL] Settlement failed:', error);
-      alert('Settlement failed: ' + error.message);
-    }
-  };
 
   const handlePlaceBet = async () => {
     if (!betAmount || parseFloat(betAmount) <= 0 || !prediction) return;
@@ -4503,16 +4485,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                     ? `Place Trade - ${parseFloat(betAmount)} Tickets` 
                     : 'Select Amount & Prediction'}
               </button>
-
-              {/* Manual Settlement for Emergency Use */}
-              {pendingWindows.some(pw => !pw.resolved) && (
-                <button
-                  onClick={handleManualSettlement}
-                  className="w-full py-2 rounded-xl font-bold text-xs bg-orange-600 hover:bg-orange-700 text-white transition-all"
-                >
-                  🔧 Manual Settlement
-                </button>
-              )}
             </div>
 
             {/* Active Trades: current window only */}
@@ -4606,25 +4578,35 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 <div className="bg-dark-800 rounded-xl p-2 border border-dark-600 text-center">
                   <RefreshCw className="animate-spin mx-auto text-purple-400" size={14} />
                 </div>
-              ) : gameResults.length === 0 ? (
+              ) : previousResultsStrip.length === 0 ? (
                 <div className="bg-dark-800 rounded-xl p-2 border border-dark-600 text-center">
                   <p className="text-[10px] text-gray-500">No results yet</p>
                 </div>
               ) : (
                 <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin">
-                  {gameResults.slice(0, 10).map((result, idx) => (
+                  {previousResultsStrip.slice(0, 14).map((result, idx) => (
                     <div 
-                      key={result._id || idx} 
+                      key={result._id || `w${result.windowNumber}-${idx}`} 
                       className={`flex-shrink-0 bg-dark-800 rounded-lg px-2 py-1.5 border ${
-                        result.result === 'UP' ? 'border-green-500/30' : 'border-red-500/30'
+                        result.result === 'UP'
+                          ? 'border-green-500/30'
+                          : result.result === 'DOWN'
+                            ? 'border-red-500/30'
+                            : 'border-amber-500/30'
                       }`}
                     >
                       <div className="flex items-center gap-1">
                         <span className="text-[9px] text-gray-500">#{result.windowNumber}</span>
-                        <span className={`text-[10px] font-bold ${
-                          result.result === 'UP' ? 'text-green-400' : 'text-red-400'
-                        }`}>
-                          {result.result === 'UP' ? '▲' : '▼'}
+                        <span
+                          className={`text-[10px] font-bold ${
+                            result.result === 'UP'
+                              ? 'text-green-400'
+                              : result.result === 'DOWN'
+                                ? 'text-red-400'
+                                : 'text-amber-300'
+                          }`}
+                        >
+                          {result.result === 'UP' ? '▲' : result.result === 'DOWN' ? '▼' : '—'}
                         </span>
                       </div>
                     </div>

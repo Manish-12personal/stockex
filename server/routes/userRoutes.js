@@ -2223,17 +2223,28 @@ router.get('/game-results/:gameId', protectUser, async (req, res) => {
     const includePrevious =
       req.query.includePrevious === '1' || String(req.query.includePrevious).toLowerCase() === 'true';
 
-    let results = await GameResult.find({
-      gameId,
-      windowDate: { $gte: dayStart, $lt: dayEnd },
-    })
-      .sort({ windowNumber: -1 })
-      .limit(limit)
-      .lean();
+    let results;
+    if (gameId === 'btcpdown') {
+      // BTC: return every window for the IST day (no limit). A descending limit could drop
+      // lower window #s when many rows exist, breaking W#70–73 + tracker after refresh.
+      results = await GameResult.find({
+        gameId: 'btcpdown',
+        windowDate: { $gte: dayStart, $lt: dayEnd },
+      })
+        .sort({ windowNumber: 1 })
+        .lean();
+    } else {
+      results = await GameResult.find({
+        gameId,
+        windowDate: { $gte: dayStart, $lt: dayEnd },
+      })
+        .sort({ windowNumber: -1 })
+        .limit(limit)
+        .lean();
+    }
 
-    // Optional fallback for admin/debug use; user UI should stay day-scoped.
     if (results.length === 0 && includePrevious) {
-      results = await GameResult.getRecentResultsWithFallback(gameId, limit);
+      results = await GameResult.getRecentResultsWithFallback(gameId, gameId === 'btcpdown' ? 200 : limit);
     }
 
     res.json(results);
