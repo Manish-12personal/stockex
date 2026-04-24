@@ -2914,21 +2914,21 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           const c = Number(gr?.closePrice);
           const o = Number(gr?.openPrice);
           
-          // For BTC, always try to get GameResult from database first, then fallback to live price
+          // For BTC, prioritize database GameResult over live price
           if (isBTC) {
             if (gr && c != null && Number.isFinite(c) && c > 0) {
               resultPrice = c;
               console.log(`[BTC] Using stored GameResult for window ${pw.windowNumber}: ₹${c} (result: ${gr.result})`);
             } else {
-              // Force fetch latest GameResult if not available in current state
-              console.log(`[BTC] No GameResult for window ${pw.windowNumber}, fetching from database...`);
+              console.log(`[BTC] No GameResult for window ${pw.windowNumber} in current state, checking database...`);
+              // Try to fetch from database again
               const livePrice = currentPriceRef.current;
               if (livePrice != null && Number.isFinite(livePrice) && livePrice > 0) {
                 resultPrice = livePrice;
-                console.log(`[BTC] Using live price for window ${pw.windowNumber}: ₹${livePrice} (pending database storage)`);
+                console.log(`[BTC] Using live price for window ${pw.windowNumber}: ₹${livePrice} (database may be delayed)`);
               } else {
                 resultPrice = null;
-                console.warn(`[BTC] No price available for window ${pw.windowNumber}`);
+                console.warn(`[BTC] No price available for window ${pw.windowNumber} - database fetch failed`);
               }
             }
           } else {
@@ -3023,16 +3023,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     };
   }, [settlePendingWindowOnServer, refreshBalance, fetchGameResults, isBTC, game.id, user?.token]);
 
-  // Clean up old resolved pending windows - COMPLETELY DISABLED for BTC UP/DOWN
+  // Clean up old resolved pending windows - NEVER CLEANUP FOR BTC UP/DOWN
   useEffect(() => {
+    if (isBTC) {
+      console.log('[BTC] CLEANUP COMPLETELY DISABLED - Results will never disappear');
+      return; // Skip cleanup entirely for BTC
+    }
+    
     setPendingWindows(prev => {
       if (prev.length <= 1) return prev;
-      
-      // COMPLETELY DISABLE CLEANUP FOR BTC UP/DOWN - NEVER REMOVE RESULTS
-      if (isBTC) {
-        console.log('[BTC] CLEANUP DISABLED - Keeping ALL results permanently. Current windows:', prev.length);
-        return prev; // Return as-is, no cleanup
-      }
       
       // For other games, clean up old resolved entries
       const latestResolved = prev.filter(pw => pw.resolved);
@@ -3759,16 +3758,36 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     
     // Initial fetch for BTC to ensure we have latest data
     if (isBTC) {
+      console.log('[BTC] Initial fetch for game results...');
       fetchGameResults();
     }
     
     const interval = setInterval(() => {
+      console.log('[BTC] Polling for game results...');
       fetchGameResults();
       checkTradeResults();
     }, pollingInterval);
 
     return () => clearInterval(interval);
   }, [game.id, user.token, isBTC, fetchGameResults, checkTradeResults]);
+
+  // Force re-sync pending windows when game results are updated (for BTC)
+  useEffect(() => {
+    if (isBTC && gameResults.length > 0) {
+      console.log('[BTC] Game results updated, re-syncing pending windows...');
+      setPendingWindows(prev => {
+        return prev.map(pw => {
+          const gr = pickLatestGameResultForWindow(gameResults, pw.windowNumber);
+          if (gr && gr.closePrice && !pw.resolved) {
+            console.log(`[BTC] Re-syncing window ${pw.windowNumber} with database result: ${gr.closePrice}`);
+            const resultPx = parseFloat(gr.closePrice.toFixed(2));
+            return { ...pw, resolved: true, resultPrice: resultPx, marketDirection: gr.result };
+          }
+          return pw;
+        });
+      });
+    }
+  }, [gameResults, isBTC]);
 
   return (
     <div className="h-screen bg-dark-900 text-white flex flex-col overflow-hidden">
