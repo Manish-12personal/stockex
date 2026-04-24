@@ -83,12 +83,54 @@ gameResultSchema.statics.getTodayResults = async function(gameId) {
   const start = startOfISTDayFromKey(key);
   const end = endOfISTDayFromKey(key);
   if (!start || !end) return [];
-  return this.find({
+  
+  console.log(`[GameResult] Fetching ${gameId} results for ${key} (${start} to ${end})`);
+  
+  const results = await this.find({
     gameId,
     windowDate: { $gte: start, $lt: end },
   })
     .sort({ windowNumber: -1 })
     .lean();
+    
+  console.log(`[GameResult] Found ${results.length} results for ${gameId} today`);
+  
+  return results;
+};
+
+// Static method to get recent results with fallback to previous days
+gameResultSchema.statics.getRecentResultsWithFallback = async function(gameId, limit = 20) {
+  const today = getTodayISTString();
+  const todayStart = startOfISTDayFromKey(today);
+  const todayEnd = endOfISTDayFromKey(today);
+  
+  // Try today's results first
+  if (todayStart && todayEnd) {
+    const todayResults = await this.find({
+      gameId,
+      windowDate: { $gte: todayStart, $lt: todayEnd },
+    })
+      .sort({ windowNumber: -1 })
+      .limit(limit)
+      .lean();
+      
+    if (todayResults.length > 0) {
+      console.log(`[GameResult] Found ${todayResults.length} results for ${gameId} from today`);
+      return todayResults;
+    }
+  }
+  
+  // Fallback to previous days if no results today
+  console.log(`[GameResult] No results for ${gameId} today, checking previous days...`);
+  
+  const previousResults = await this.find({ gameId })
+    .sort({ windowDate: -1, windowNumber: -1 })
+    .limit(limit)
+    .lean();
+    
+  console.log(`[GameResult] Found ${previousResults.length} results for ${gameId} from previous days`);
+  
+  return previousResults;
 };
 
 const GameResult = mongoose.model('GameResult', gameResultSchema);

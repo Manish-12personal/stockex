@@ -2208,7 +2208,7 @@ router.get('/game-results/:gameId', protectUser, async (req, res) => {
       return res.status(400).json({ message: 'Invalid game ID' });
     }
     
-    const results = await GameResult.getTodayResults(gameId);
+    const results = await GameResult.getRecentResultsWithFallback(gameId, limit);
     res.json(results);
   } catch (error) {
     console.error('Error fetching game results:', error);

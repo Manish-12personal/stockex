@@ -147,7 +147,14 @@ export const getCryptoData = () => cryptoData;
 // Get specific crypto price
 export const getCryptoPrice = (symbol) => {
   const pair = symbol.toUpperCase().includes('USDT') ? symbol.toUpperCase() : `${symbol.toUpperCase()}USDT`;
-  return cryptoData[pair] || cryptoData[symbol.toUpperCase()] || null;
+  const price = cryptoData[pair] || cryptoData[symbol.toUpperCase()] || null;
+  
+  // Log for debugging BTC price availability
+  if (symbol.toUpperCase().includes('BTC') && price) {
+    console.log(`[BTC] Live price: ₹${price.ltp} (${pair}) at ${new Date().toLocaleTimeString()}`);
+  }
+  
+  return price;
 };
 
 // Check if WebSocket is connected

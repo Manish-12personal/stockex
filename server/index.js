@@ -184,9 +184,10 @@ const PORT = process.env.PORT || 5001;
     // Start instrument expiry monitoring
     startInstrumentExpiryMonitoring();
     // Bracket / Up-Down / Jackpot / Nifty Number auto-credits. Off if GAMES_AUTO_SETTLEMENT=false
+    // Increased frequency for faster BTC UP/DOWN results (30 seconds instead of 60)
     setInterval(() => {
       runGamesAutoSettlementTick().catch((e) => console.warn('[gamesAutoSettlement]', e?.message || e));
-    }, 60 * 1000);
+    }, 30 * 1000);
   });
 })().catch((err) => {
   console.error('Fatal startup error:', err);

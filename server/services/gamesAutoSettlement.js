@@ -464,18 +464,15 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
   if (gc.enabled === false) return;
 
-
-
+  // Get live BTC price immediately - prioritize WebSocket for real-time updates
   const btcData = getCryptoPrice('BTCUSDT') || getCryptoPrice('BTC');
-
   const liveBtcPrice = Number(btcData?.ltp);
-
   const hasLive = Number.isFinite(liveBtcPrice) && liveBtcPrice > 0;
 
   if (!hasLive) {
-
     console.warn('[btcUpDown] No live BTC from WebSocket — using Binance 1m for close where needed');
-
+  } else {
+    console.log(`[btcUpDown] Live BTC price available: ₹${liveBtcPrice}`);
   }
 
 
@@ -616,43 +613,40 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
     const closeCacheKey = `${today}|r${closeRefSec}`;
 
-    const resolvedClose = await resolveBtcUpDownPriceAtIstRef({
-
-      istDayKey: today,
-
-      refSecSinceMidnightIST: closeRefSec,
-
-      cacheGet: (key) => btcRefPriceCache.get(key),
-
-      loadPersisted: async () => null,
-
-      loadLedgerMinEntry: async () => null,
-
-    });
-
-
-
-    const closePx = resolvedClose.price;
+    // Use live price for immediate results when available
+    let closePx = null;
+    let closeSource = null;
+    
+    if (hasLive && nowSec >= closeRefSec) {
+      // Use live price immediately when result time has passed
+      closePx = liveBtcPrice;
+      closeSource = 'live_websocket';
+      console.log(`[btcUpDown] Using live price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)}`);
+    } else {
+      // Fall back to cached/Binance price
+      const resolvedClose = await resolveBtcUpDownPriceAtIstRef({
+        istDayKey: today,
+        refSecSinceMidnightIST: closeRefSec,
+        cacheGet: (key) => btcRefPriceCache.get(key),
+        loadPersisted: async () => null,
+        loadLedgerMinEntry: async () => null,
+      });
+      
+      closePx = resolvedClose.price;
+      closeSource = resolvedClose.source;
+    }
 
     if (!closePx || !Number.isFinite(closePx) || closePx <= 0) {
-
       console.warn(`[btcUpDown] skip GameResult w=${rw} day=${today}: no close price (resolver failed)`);
-
       continue;
-
     }
 
 
 
-    if (resolvedClose.source !== 'cache') {
-
+    // Cache the close price for future use
+    if (closeSource !== 'cache') {
       btcRefPriceCache.set(closeCacheKey, closePx);
-
     }
-
-
-
-    const closeSrc = resolvedClose.source;
 
     // Compare with previous window's close price instead of current window's open price
 
@@ -694,7 +688,7 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
       console.log(
 
-        `[btcUpDown] ✅ GameResult w=${rw} ${result} comparisonPrice=${comparisonPrice} close=${closePx}@${fmtT(closeRefSec)} (openSrc=${resolvedOpen.source} closeSrc=${closeSrc})`
+        `[btcUpDown] ✅ GameResult w=${rw} ${result} comparisonPrice=${comparisonPrice} close=${closePx}@${fmtT(closeRefSec)} (openSrc=${resolvedOpen.source} closeSrc=${closeSource})`
 
       );
 
