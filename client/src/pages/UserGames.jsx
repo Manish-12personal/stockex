@@ -2661,8 +2661,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
       settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
     } else {
-      const Dw = windowInfo.roundDurationSec ?? NIFTY_UP_DOWN_MIN_ROUND_SEC;
-      resultTimeSecVal = (windowInfo.resultTimeSec ?? 0) - Dw;
+      // For Nifty Up/Down, use the correct result time directly
+      resultTimeSecVal = windowInfo.resultTimeSec ?? 0;
       resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
       settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
     }
