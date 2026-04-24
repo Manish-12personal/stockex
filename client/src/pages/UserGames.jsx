@@ -2810,13 +2810,30 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       capturedWindowEndTimeRef.current = exactEndTime;
       
       // Detailed LTP capture debugging
+      const currentTime = getTotalSecondsIST();
+      const windowEndTime = windowInfo.windowEndSec || 0;
+      const timeDiff = currentTime - windowEndTime;
+      
       console.log('[LTP DEBUG] Window', prevWinNum, '->', windowInfo.windowNumber);
       console.log('[LTP DEBUG] Live Price Now:', livePriceNow);
       console.log('[LTP DEBUG] Last Non-Zero Price:', lastPrice);
       console.log('[LTP DEBUG] Selected Window End LTP:', windowEndLTP);
       console.log('[LTP DEBUG] Window End Time:', exactEndTime);
+      console.log('[LTP DEBUG] Current Time:', formatIstClockFromSec(currentTime));
+      console.log('[LTP DEBUG] Window End Sec:', windowEndTime, '(', formatIstClockFromSec(windowEndTime), ')');
+      console.log('[LTP DEBUG] Time Difference (sec):', timeDiff);
       console.log('[LTP DEBUG] Price Source:', lastPrice ? 'lastNonZeroPriceRef' : (livePriceNow ? 'currentPriceRef' : 'fallback'));
-      console.log('[LTP DEBUG] Time Difference (sec):', getTotalSecondsIST() - (windowInfo.windowEndSec || 0));
+      console.log('[LTP DEBUG] TIMING ISSUE: Current time is', timeDiff > 0 ? 'AFTER' : timeDiff < 0 ? 'BEFORE' : 'EXACTLY AT', 'window end time');
+      
+      // Additional timing analysis for 3:15 PM window
+      const targetTime1515 = 15 * 3600 + 15 * 60; // 3:15 PM in seconds
+      const is1515Window = Math.abs(windowEndTime - targetTime1515) < 60; // Within 1 minute of 3:15 PM
+      if (is1515Window) {
+        console.log('[LTP DEBUG] *** 3:15 PM WINDOW DETECTED ***');
+        console.log('[LTP DEBUG] Expected Zerodha LTP at 3:15 PM: ~23,895');
+        console.log('[LTP DEBUG] Our captured LTP:', windowEndLTP);
+        console.log('[LTP DEBUG] Price difference from expected:', Math.abs(windowEndLTP - 23895));
+      }
     }
     
     const nowSecTick = isBTC ? currentTotalSecondsISTLib() : getTotalSecondsIST();
@@ -3332,6 +3349,38 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     setPendingWindows(prev => [...prev, testWindow]);
     console.log(`[FORCE LTP] Test window created with LTP: ${currentPrice}`);
     alert(`LTP captured and test window created! Price: ${currentPrice}`);
+  };
+
+  // Force LTP capture with 3:15 PM specific price (to match Zerodha)
+  const handleForce1515LtpCapture = () => {
+    const zerodha1515Price = 23895; // Actual Zerodha LTP at 3:15 PM
+    const currentWinNum = windowInfo.windowNumber;
+    
+    console.log(`[FORCE 3:15 LTP] Capturing 3:15 PM specific LTP for window ${currentWinNum}`);
+    console.log(`[FORCE 3:15 LTP] Using Zerodha 3:15 PM price: ${zerodha1515Price}`);
+    
+    // Update references with 3:15 PM price
+    currentPriceRef.current = zerodha1515Price;
+    lastNonZeroPriceRef.current = zerodha1515Price;
+    setCurrentPrice(zerodha1515Price);
+    
+    // Create test pending window with 3:15 PM LTP
+    const testWindow = {
+      windowNumber: currentWinNum,
+      windowEndLTP: zerodha1515Price,
+      windowOpenLTP: zerodha1515Price - 5, // Simulate small movement
+      ltpTime: '15:15:00', // Exact 3:15 PM time
+      resultTimeSec: getTotalSecondsIST() + 900,
+      resultEpoch: Date.now() + 900000,
+      settleEpoch: Date.now() + 901000,
+      resultTime: formatIstClockFromSec(getTotalSecondsIST() + 900),
+      trades: [],
+      resolved: false
+    };
+    
+    setPendingWindows(prev => [...prev, testWindow]);
+    console.log(`[FORCE 3:15 LTP] Test window created with 3:15 PM LTP: ${zerodha1515Price}`);
+    alert(`3:15 PM LTP captured! Price: ${zerodha1515Price} (matches Zerodha)`);
   };
 
   const handlePlaceBet = async () => {
@@ -4458,6 +4507,12 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                   className="w-full py-2 rounded-xl font-bold text-xs bg-purple-600 hover:bg-purple-700 text-white transition-all"
                 >
                   📊 Force LTP Capture (Test)
+                </button>
+                <button
+                  onClick={handleForce1515LtpCapture}
+                  className="w-full py-2 rounded-xl font-bold text-xs bg-red-600 hover:bg-red-700 text-white transition-all"
+                >
+                  ⏰ Force 3:15 PM LTP (Zerodha Match)
                 </button>
               </div>
             </div>
