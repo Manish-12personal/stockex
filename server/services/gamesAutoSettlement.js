@@ -717,17 +717,9 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
       console.log(
 
-        `[btcUpDown] ✅ GameResult w=${rw} ${result} comparisonPrice=${comparisonPrice} close=${closePx}@${fmtT(closeRefSec)} (openSrc=${resolvedOpen.source} closeSrc=${closeSource}) - STORED IN DATABASE`
+        `[btcUpDown] ✅ GameResult w=${rw} ${result} comparisonPrice=${comparisonPrice} close=${closePx}@${fmtT(closeRefSec)} (openSrc=${resolvedOpen.source} closeSrc=${closeSource}) - STORED`
 
       );
-
-      // Verify the GameResult was actually stored
-      const verifyResult = await GameResult.findOne({ gameId: 'btcupdown', windowNumber: rw, windowDate: { $gte: dayStart, $lt: dayEnd } });
-      if (verifyResult) {
-        console.log(`[btcUpDown] ✅ VERIFIED: Window ${rw} result stored in database with closePrice: ${verifyResult.closePrice}`);
-      } else {
-        console.error(`[btcUpDown] ❌ ERROR: Window ${rw} result NOT found in database after creation!`);
-      }
 
     } catch (e) {
 

@@ -3774,17 +3774,43 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   // Force re-sync pending windows when game results are updated (for BTC)
   useEffect(() => {
     if (isBTC && gameResults.length > 0) {
-      console.log('[BTC] Game results updated, re-syncing pending windows...');
+      console.log(`[BTC] Game results updated (${gameResults.length} results), re-syncing pending windows...`);
+      
+      // Add missing windows from gameResults that aren't in pendingWindows
       setPendingWindows(prev => {
-        return prev.map(pw => {
+        const existingWindowNumbers = new Set(prev.map(pw => pw.windowNumber));
+        const newWindows = [];
+        
+        // Add windows from gameResults that are missing
+        gameResults.forEach(gr => {
+          if (!existingWindowNumbers.has(gr.windowNumber) && gr.closePrice) {
+            console.log(`[BTC] Adding missing window ${gr.windowNumber} from database: ${gr.closePrice}`);
+            const resultPx = parseFloat(gr.closePrice.toFixed(2));
+            newWindows.push({
+              windowNumber: gr.windowNumber,
+              resolved: true,
+              resultPrice: resultPx,
+              marketDirection: gr.result,
+              windowEndLTP: gr.closePrice,
+              ltpTime: gr.resultTime,
+              resultTime: gr.resultTime
+            });
+          }
+        });
+        
+        // Update existing windows with database results
+        const updated = prev.map(pw => {
           const gr = pickLatestGameResultForWindow(gameResults, pw.windowNumber);
-          if (gr && gr.closePrice && !pw.resolved) {
+          if (gr && gr.closePrice) {
             console.log(`[BTC] Re-syncing window ${pw.windowNumber} with database result: ${gr.closePrice}`);
             const resultPx = parseFloat(gr.closePrice.toFixed(2));
             return { ...pw, resolved: true, resultPrice: resultPx, marketDirection: gr.result };
           }
           return pw;
         });
+        
+        // Combine and sort by window number
+        return [...updated, ...newWindows].sort((a, b) => b.windowNumber - a.windowNumber);
       });
     }
   }, [gameResults, isBTC]);
