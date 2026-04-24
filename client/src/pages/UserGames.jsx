@@ -3268,6 +3268,72 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     }
   };
 
+  // Force window change simulation for testing
+  const handleForceWindowChange = () => {
+    const currentWinNum = windowInfo.windowNumber;
+    const nextWinNum = currentWinNum + 1;
+    const currentPrice = currentPriceRef.current || 23897.95;
+    
+    console.log(`[FORCE WINDOW] Simulating window change: ${currentWinNum} -> ${nextWinNum}`);
+    console.log(`[FORCE WINDOW] Using current price: ${currentPrice}`);
+    
+    // Manually trigger LTP capture logic
+    const prevWinNum = prevWindowNumberRef.current;
+    prevWindowNumberRef.current = nextWinNum;
+    
+    // Capture LTP with current price
+    const livePriceNow = currentPrice;
+    const lastPrice = lastNonZeroPriceRef.current;
+    const windowEndLTP = livePriceNow || lastPrice || 0;
+    
+    if (!isBTC) {
+      capturedWindowEndPriceRef.current = windowEndLTP;
+      const exactEndTime = formatIstClockFromSec(getTotalSecondsIST());
+      capturedWindowEndTimeRef.current = exactEndTime;
+      
+      console.log('[FORCE WINDOW] LTP DEBUG - Window', prevWinNum, '->', nextWinNum);
+      console.log('[FORCE WINDOW] LTP DEBUG - Live Price Now:', livePriceNow);
+      console.log('[FORCE WINDOW] LTP DEBUG - Last Non-Zero Price:', lastPrice);
+      console.log('[FORCE WINDOW] LTP DEBUG - Selected Window End LTP:', windowEndLTP);
+      console.log('[FORCE WINDOW] LTP DEBUG - Window End Time:', exactEndTime);
+      console.log('[FORCE WINDOW] LTP DEBUG - Price Source:', livePriceNow ? 'currentPriceRef (forced)' : (lastPrice ? 'lastNonZeroPriceRef' : 'fallback'));
+      
+      alert(`Window change simulated! LTP captured: ${windowEndLTP} at ${exactEndTime}`);
+    }
+  };
+
+  // Force LTP capture with current price
+  const handleForceLtpCapture = () => {
+    const currentPrice = currentPriceRef.current || 23897.95;
+    const currentWinNum = windowInfo.windowNumber;
+    
+    console.log(`[FORCE LTP] Capturing LTP for window ${currentWinNum}`);
+    console.log(`[FORCE LTP] Current price: ${currentPrice}`);
+    
+    // Update references with current price
+    currentPriceRef.current = currentPrice;
+    lastNonZeroPriceRef.current = currentPrice;
+    setCurrentPrice(currentPrice);
+    
+    // Create test pending window with captured LTP
+    const testWindow = {
+      windowNumber: currentWinNum,
+      windowEndLTP: currentPrice,
+      windowOpenLTP: currentPrice - 10, // Simulate some movement
+      ltpTime: formatIstClockFromSec(getTotalSecondsIST()),
+      resultTimeSec: getTotalSecondsIST() + 900, // 15 minutes from now
+      resultEpoch: Date.now() + 900000,
+      settleEpoch: Date.now() + 901000,
+      resultTime: formatIstClockFromSec(getTotalSecondsIST() + 900),
+      trades: [],
+      resolved: false
+    };
+    
+    setPendingWindows(prev => [...prev, testWindow]);
+    console.log(`[FORCE LTP] Test window created with LTP: ${currentPrice}`);
+    alert(`LTP captured and test window created! Price: ${currentPrice}`);
+  };
+
   const handlePlaceBet = async () => {
     if (!betAmount || parseFloat(betAmount) <= 0 || !prediction) return;
     const tokenAmt = parseFloat(betAmount);
@@ -4378,6 +4444,22 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                   🔧 Manual Settlement (Test Only)
                 </button>
               )}
+
+              {/* Testing Controls for Closed Market */}
+              <div className="mt-2 space-y-1">
+                <button
+                  onClick={handleForceWindowChange}
+                  className="w-full py-2 rounded-xl font-bold text-xs bg-blue-600 hover:bg-blue-700 text-white transition-all"
+                >
+                  🔄 Force Window Change (Test)
+                </button>
+                <button
+                  onClick={handleForceLtpCapture}
+                  className="w-full py-2 rounded-xl font-bold text-xs bg-purple-600 hover:bg-purple-700 text-white transition-all"
+                >
+                  📊 Force LTP Capture (Test)
+                </button>
+              </div>
             </div>
 
             {/* Active Trades: current window only */}
