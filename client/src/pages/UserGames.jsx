@@ -2985,10 +2985,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       });
 
       if (resolvedTrades.length > 0) {
+        console.log(`[SETTLEMENT] Sending ${resolvedTrades.length} trades to server API for game ${game.id}`);
         const firstDay = resolvedTrades.find(
           (t) => typeof t.settlementDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.settlementDay)
         )?.settlementDay;
-        await axios.post(
+        const response = await axios.post(
           '/api/user/game-bet/resolve',
           {
             gameId: game.id,
@@ -3010,6 +3011,9 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           },
           { headers: { Authorization: `Bearer ${user.token}` } }
         );
+        console.log(`[SETTLEMENT] Server API response:`, response.data);
+      } else {
+        console.log(`[SETTLEMENT] No trades to resolve for window ${pw.windowNumber}`);
       }
 
       return resolvedTrades;
@@ -3095,7 +3099,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
         settlingWindowNumbersRef.current.add(pw.windowNumber);
         try {
+          const nowSec = getTotalSecondsIST();
+          console.log(`[SETTLEMENT] Window ${pw.windowNumber}: current time=${formatIstClockFromSec(nowSec)}, resultTime=${formatIstClockFromSec(pw.resultTimeSec)}, isDue=${nowSec >= pw.resultTimeSec}`);
+          console.log(`[SETTLEMENT] Calling server for window ${pw.windowNumber} with ${pw.trades?.length || 0} trades, resultPrice: ${resultPrice}`);
           const resolvedTrades = await settlePendingWindowOnServer(pw, resultPrice);
+          console.log(`[SETTLEMENT] Server returned ${resolvedTrades?.length || 0} resolved trades for window ${pw.windowNumber}`);
           if (cancelled) return;
 
           const resultPx = parseFloat(resultPrice.toFixed(2));
@@ -3205,6 +3213,32 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   }, [pendingWindows]);
 
   const quickAmounts = [1, 2, 5, 10];
+
+  // Manual settlement for testing
+  const handleManualSettlement = async () => {
+    if (!pendingWindows.length) {
+      alert('No pending windows to settle');
+      return;
+    }
+    
+    const latestPending = pendingWindows.find(pw => !pw.resolved);
+    if (!latestPending) {
+      alert('No unresolved windows to settle');
+      return;
+    }
+    
+    try {
+      console.log(`[MANUAL] Attempting manual settlement for window ${latestPending.windowNumber}`);
+      const resultPrice = latestPending.windowEndLTP || 24000; // Use LTP or default
+      const resolvedTrades = await settlePendingWindowOnServer(latestPending, resultPrice);
+      console.log(`[MANUAL] Settlement completed: ${resolvedTrades?.length || 0} trades`);
+      await refreshBalance();
+      alert(`Manual settlement completed! ${resolvedTrades?.length || 0} trades settled`);
+    } catch (error) {
+      console.error('[MANUAL] Settlement failed:', error);
+      alert('Manual settlement failed: ' + error.message);
+    }
+  };
 
   const handlePlaceBet = async () => {
     if (!betAmount || parseFloat(betAmount) <= 0 || !prediction) return;
@@ -4306,6 +4340,16 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                     ? `Place Trade - ${parseFloat(betAmount)} Tickets` 
                     : 'Select Amount & Prediction'}
               </button>
+
+              {/* Manual Settlement Button for Testing */}
+              {pendingWindows.some(pw => !pw.resolved) && (
+                <button
+                  onClick={handleManualSettlement}
+                  className="w-full py-2 rounded-xl font-bold text-xs bg-orange-600 hover:bg-orange-700 text-white transition-all"
+                >
+                  🔧 Manual Settlement (Test Only)
+                </button>
+              )}
             </div>
 
             {/* Active Trades: current window only */}
