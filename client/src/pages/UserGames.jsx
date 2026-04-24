@@ -3369,6 +3369,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     const ltpHistory = useMemo(() => {
       const history = [];
       const currentWin = windowInfo.windowNumber;
+      const niftyWindowEndClock = (winNum) =>
+        formatIstClockFromSec(niftyLtpEndSecForWindowNum(winNum, gameStartTime, niftyRoundSec));
       
       // Get last 4 windows (1 hour = 4 x 15min windows), newest first
       for (let i = 0; i < 4; i++) {
@@ -3394,23 +3396,19 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         } else if (pendingWindow && pendingWindow.windowEndLTP) {
           // Prioritize pending window LTP (fixed at window end) over game results
           ltp = pendingWindow.windowEndLTP;
-          time = pendingWindow.ltpTime;
+          // UI must show official window-end clock (e.g. 12:30:00), not random tick second.
+          time = niftyWindowEndClock(winNum);
           source = 'pending';
         } else if (gameResult && gameResult.closePrice) {
           ltp = Number(gameResult.closePrice);
-          time = gameResult.resultTime || gameResult.createdAt;
+          // Nifty LTP history represents window-end LTP, so keep exact boundary clock.
+          time = niftyWindowEndClock(winNum);
           source = 'result';
         }
         
         // If no time available, use a default format
         if (!time && gameResult) {
-          time = new Date().toLocaleTimeString('en-IN', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: true,
-            timeZone: 'Asia/Kolkata'
-          }) + ' IST';
+          time = niftyWindowEndClock(winNum);
         }
         
         if (ltp && ltp > 0) {
@@ -3484,7 +3482,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       }
       
       return history;
-    }, [windowInfo.windowNumber, pendingWindows, gameResults]);
+    }, [windowInfo.windowNumber, pendingWindows, gameResults, gameStartTime, niftyRoundSec]);
 
     if (ltpHistory.length === 0) {
       return (
