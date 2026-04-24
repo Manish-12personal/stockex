@@ -13,9 +13,8 @@ import {
  * Resolve one active Nifty Bracket trade.
  * When trade.settlesAtSessionClose is true, win/loss is decided only at/after expiresAt
  * (result time, e.g. 3:30 PM IST), not when live price touches the band earlier.
- * Session-close rule is configurable (`bracketSessionCloseRule`): by default, BUY/SELL wins are decided by
- * settlement LTP vs **entry** (direction vs ref). With `breakPastBands`, a BUY wins only if LTP clears the
- * upper band (same for SELL vs lower). If the band rule applies and LTP is strictly between the bands, **lost** — no stake refund.
+ * `entryPrice` on the trade is the **spread line** the user bet on (upper for BUY, lower for SELL); `spotAtOrder` is the centre Nifty.
+ * Session-close `directionVsEntry` compares settlement LTP to `entryPrice` (that line). `breakPastBands` uses the same outer-band test vs `upperTarget`/`lowerTarget` (equivalent for wins when those match the chosen side’s line).
  *
  * Win: user is credited full gross payout (stake × multiplier); hierarchy / brokerage is funded from
  * the Super Admin pool (same economics as other games).

@@ -3559,6 +3559,7 @@ router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
 
     const upperTarget = parseFloat((price + gapValue).toFixed(2));
     const lowerTarget = parseFloat((price - gapValue).toFixed(2));
+    const refLine = prediction === 'BUY' ? upperTarget : lowerTarget;
 
     // Atomic debit — balance check + deduction in one MongoDB op (race-safe)
     const gw = await atomicGamesWalletDebit(User, userId, betAmount, { usedMargin: betAmount });
@@ -3575,7 +3576,8 @@ router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
       : new Date(Date.now() + expiryMinutes * 60 * 1000);
     const tradeData = {
       user: userId,
-      entryPrice: price,
+      entryPrice: refLine,
+      spotAtOrder: price,
       upperTarget,
       lowerTarget,
       bracketGap,
@@ -3600,7 +3602,8 @@ router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
       orderPlacedAt: trade.createdAt,
       meta: {
         prediction,
-        entryPrice: price,
+        entryPrice: refLine,
+        spotAtOrder: price,
         tickets: parseFloat((betAmount / tValue).toFixed(2)),
         tokenValue: tValue,
         tradeId: trade._id,
@@ -3612,6 +3615,7 @@ router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
       trade: {
         _id: trade._id,
         entryPrice: trade.entryPrice,
+        spotAtOrder: trade.spotAtOrder,
         upperTarget: trade.upperTarget,
         lowerTarget: trade.lowerTarget,
         prediction: trade.prediction,
@@ -4095,6 +4099,7 @@ router.get('/nifty-bracket/active', protectUser, async (req, res) => {
     res.json(trades.map(t => ({
         _id: t._id,
         entryPrice: t.entryPrice,
+        spotAtOrder: t.spotAtOrder != null ? t.spotAtOrder : null,
         upperTarget: t.upperTarget,
         lowerTarget: t.lowerTarget,
         prediction: t.prediction,
@@ -4122,6 +4127,7 @@ router.get('/nifty-bracket/history', protectUser, async (req, res) => {
     res.json(trades.map(t => ({
       _id: t._id,
       entryPrice: t.entryPrice,
+      spotAtOrder: t.spotAtOrder != null ? t.spotAtOrder : null,
       upperTarget: t.upperTarget,
       lowerTarget: t.lowerTarget,
       prediction: t.prediction,

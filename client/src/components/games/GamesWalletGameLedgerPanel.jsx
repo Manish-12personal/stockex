@@ -229,10 +229,10 @@ export default function GamesWalletGameLedgerPanel({
                         <div className="text-[9px] text-cyan-300/90 mt-0.5 tabular-nums">
                           {row.meta.prediction ? String(row.meta.prediction) : 'Trade'}
                           {row.meta.entryPrice != null && Number.isFinite(Number(row.meta.entryPrice))
-                            ? ` · ref ₹${Number(row.meta.entryPrice).toLocaleString('en-IN', {
+                            ? ` · line ₹${Number(row.meta.entryPrice).toLocaleString('en-IN', {
                                 minimumFractionDigits: 2,
                                 maximumFractionDigits: 2,
-                              })}`
+                              })}${row.meta.spotAtOrder != null && Number.isFinite(Number(row.meta.spotAtOrder)) ? ` (Nifty ${Number(row.meta.spotAtOrder).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} @ order)` : ''}`
                             : ''}
                           {row.meta.tickets != null && Number.isFinite(Number(row.meta.tickets))
                             ? ` · ${Number(row.meta.tickets).toLocaleString('en-IN', { maximumFractionDigits: 2 })} T`

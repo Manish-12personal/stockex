@@ -20123,7 +20123,7 @@ const GameSettingsManagement = () => {
                       <option value="directionVsEntry">LTP vs entry — BUY if close above ref, SELL if below (recommended)</option>
                       <option value="breakPastBands">Outer bands only — BUY if LTP past upper target, SELL if past lower</option>
                     </select>
-                    <p className="text-xs text-gray-500 mt-1">Direction vs ref matches the ledger &quot;ref&quot; (entry) price. Band breakout is stricter and can mark a directional win as a loss if LTP does not clear the full gap.</p>
+                    <p className="text-xs text-gray-500 mt-1">Trades store the spread <span className="text-gray-400">line</span> (upper for BUY, lower for SELL), not raw Nifty LTP. &quot;LTP vs entry&quot; compares settlement LTP to that line. &quot;Outer bands only&quot; uses the same bands; for new trades the outcome usually matches if settings are consistent.</p>
                   </div>
                   <div>
                     <label className="block text-sm text-gray-400 mb-2">Result time (IST)</label>

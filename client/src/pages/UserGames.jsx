@@ -1071,8 +1071,8 @@ const UserGames = () => {
                     <div>
                       <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Star size={12} /> Game Overview</h3>
                       <ul className="text-gray-300 space-y-1 pl-1">
-                        <li>1. Your order <span className="text-cyan-300 font-bold">ref</span> in the ledger is the Nifty level locked when you bet. Two bracket lines are <span className="text-green-400 font-bold">{gs.bracketGapType === 'percentage' ? `+${gs.bracketGapPercent || 0.1}% (upper)` : `+${gs.bracketGap || 20} pt (upper)`}</span> and <span className="text-red-400 font-bold">{gs.bracketGapType === 'percentage' ? `-${gs.bracketGapPercent || 0.1}% (lower)` : `-${gs.bracketGap || 20} pt (lower)`}</span> from that level.</li>
-                        <li>2. <span className="text-green-400 font-bold">BUY</span> = you expect the index to finish <span className="text-green-400 font-bold">above</span> your ref; <span className="text-red-400 font-bold">SELL</span> = you expect it <span className="text-red-400 font-bold">below</span> your ref (at the scheduled result time, default).</li>
+                        <li>1. Nifty 50 (spot) is used as the <span className="text-gray-300 font-bold">centre</span> to build two levels: <span className="text-green-400 font-bold">upper = spot + spread</span> and <span className="text-red-400 font-bold">lower = spot − spread</span> ({gs.bracketGapType === 'percentage' ? `±${gs.bracketGapPercent || 0.1}%` : `±${gs.bracketGap || 20} pt`}).</li>
+                        <li>2. You are not betting on the raw LTP. <span className="text-green-400 font-bold">BUY</span> = bet on the <span className="text-green-400 font-bold">upper</span> line; <span className="text-red-400 font-bold">SELL</span> = bet on the <span className="text-red-400 font-bold">lower</span> line. The order history shows that <span className="text-cyan-300 font-bold">line</span> (and the spot at order, when available).</li>
                         <li>3. If you win, payout is <span className="text-green-400 font-bold">stake × {gs.winMultiplier || 2}</span> (gross; see hierarchy in rules).</li>
                         <li>4. If you do not win by the settlement rule, the stake is <span className="text-red-400 font-bold">lost</span> (no mid-band refund).</li>
                       </ul>
@@ -1096,14 +1096,14 @@ const UserGames = () => {
                     <div className="bg-yellow-900/20 border border-yellow-500/20 rounded-xl p-3">
                       <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> How You Win (result time)</h3>
                       <ul className="text-gray-300 space-y-1.5 pl-1">
-                        <li>1. Your <span className="text-cyan-300 font-bold">ref</span> (e.g. 24,000) is the Nifty at order time. Bracket lines are still at <span className="text-green-400 font-bold">+</span> / <span className="text-red-400 font-bold">-</span> spread for context.</li>
-                        <li>2. At the result-time snapshot: <span className="text-green-400 font-bold">BUY</span> wins if the published LTP is <span className="text-green-400 font-bold">above</span> your ref; <span className="text-red-400 font-bold">SELL</span> wins if LTP is <span className="text-red-400 font-bold">below</span> your ref (default: LTP vs entry).</li>
+                        <li>1. If spot is 24,000, upper ≈ 24,020 and lower ≈ 23,980. Your <span className="text-cyan-300 font-bold">line</span> in history is 24,020 for <span className="text-green-400 font-bold">BUY</span> or 23,980 for <span className="text-red-400 font-bold">SELL</span> — not 24,000.</li>
+                        <li>2. At result time: <span className="text-green-400 font-bold">BUY</span> wins if LTP is <span className="text-green-400 font-bold">above the upper</span> line; <span className="text-red-400 font-bold">SELL</span> wins if LTP is <span className="text-red-400 font-bold">below the lower</span> line (strict LTP rules follow admin &quot;Strict LTP&quot; toggle).</li>
                         <li>3. Payout: stake × {gs.winMultiplier || 2} on a win; hierarchy may be taken from the Super Admin pool per settings.</li>
                         <li>4. If LTP is on the wrong side of your ref for your side — <span className="text-red-400 font-bold">trade lost</span> (stake not returned).</li>
                       </ul>
                       <div className="mt-2 bg-dark-700/60 rounded-lg p-2">
                         <div className="text-[10px] text-yellow-400 font-bold mb-1">Example</div>
-                        <div className="text-gray-400">Ref 24,000. LTP at settlement 24,010 — <span className="text-green-400 font-bold">BUY</span> wins, <span className="text-red-400 font-bold">SELL</span> loses.</div>
+                        <div className="text-gray-400">Spot 24,000 → upper 24,020. LTP at settlement 24,025 &gt; 24,020 — <span className="text-green-400 font-bold">BUY</span> (upper) wins. LTP 23,999 — <span className="text-red-400 font-bold">SELL</span> (lower) wins if LTP &lt; 23,980.</div>
                         <div className="text-green-400 font-bold mt-1">WIN pays stake × {gs.winMultiplier || 2} (gross; per game rules)</div>
                       </div>
                     </div>

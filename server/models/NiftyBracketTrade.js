@@ -11,10 +11,18 @@ const niftyBracketTradeSchema = new mongoose.Schema({
     ref: 'Admin',
     default: null
   },
-  // Trade details
+  /**
+   * Price line this bet is placed on: upper target for BUY, lower target for SELL
+   * (not the centre / spot Nifty—see `spotAtOrder`).
+   */
   entryPrice: {
     type: Number,
     required: true
+  },
+  /** Nifty 50 (centre) LTP/spot at order time, used to build the band */
+  spotAtOrder: {
+    type: Number,
+    default: null
   },
   upperTarget: {
     type: Number,

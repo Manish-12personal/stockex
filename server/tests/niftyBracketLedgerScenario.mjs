@@ -1,7 +1,7 @@
 /**
- * Nifty Bracket ledger scenario (LTP 23951) — session-close `directionVsEntry` (default in production):
- * BUY wins iff LTP > centre (entry); SELL wins iff LTP < centre; else **lost** (stake kept).
- * (Legacy `breakPastBands`: BUY iff LTP > upper; SELL iff LTP < lower.)
+ * Nifty Bracket ledger scenario (LTP 23951) — bet is on the spread line:
+ * BUY on **upper** (centre+gap) → win iff LTP > upper; SELL on **lower** (centre−gap) → win iff LTP < lower.
+ * Session-close `directionVsEntry` uses `entryPrice` = that line, so it matches this.
  *
  * Run: cd server && node tests/niftyBracketLedgerScenario.mjs
  */
@@ -45,11 +45,10 @@ function settleTrade(prediction, centre) {
   const hitUpper = LTP > upper;
   const hitLower = LTP < lower;
   let status;
-  /* directionVsEntry (session close, default) */
   if (prediction === 'BUY') {
-    status = LTP > centre ? 'won' : 'lost';
+    status = hitUpper ? 'won' : 'lost';
   } else {
-    status = LTP < centre ? 'won' : 'lost';
+    status = hitLower ? 'won' : 'lost';
   }
   return { status, upper, lower, hitUpper, hitLower };
 }
@@ -142,7 +141,7 @@ function printTable6(grossCredits, userNet) {
 }
 
 function run() {
-  console.log('=== Nifty Bracket — detailed ledger (LTP 23951, session-close vs entry) ===');
+  console.log('=== Nifty Bracket — detailed ledger (LTP 23951, bet on spread line) ===');
   console.log(`Stake/trade: ${rupee(STAKE)} | Gross/win: ${rupee(GROSS_WIN)} | Gap: ±${BRACKET_GAP}`);
 
   const rows = TRADES.map((t) => {
@@ -184,24 +183,24 @@ function run() {
 
   console.log(`\nSummary: ${lostCount} lost | ${winCount} won\n`);
 
-  assertApprox(lostCount, 2, 'lost count');
-  assertApprox(winCount, 8, 'win count');
+  assertApprox(lostCount, 4, 'lost count');
+  assertApprox(winCount, 6, 'win count');
 
-  assertApprox(byUser.Manish, 8500, 'Manish net delta');
-  assertApprox(byUser.Hari, 13_500, 'Hari net delta');
+  assertApprox(byUser.Manish, -1000, 'Manish net delta');
+  assertApprox(byUser.Hari, 4000, 'Hari net delta');
   assertApprox(byUser.Aayush, 4000, 'Aayush net delta');
 
-  assertApprox(final.Manish, 108_500, 'Manish final balance');
-  assertApprox(final.Hari, 123_500, 'Hari final balance');
+  assertApprox(final.Manish, 99_000, 'Manish final balance');
+  assertApprox(final.Hari, 114_000, 'Hari final balance');
   assertApprox(final.Aayush, 122_000, 'Aayush final balance');
 
-  assertApprox(saHierarchyTotal, 8360, 'total SA hierarchy debit');
-  assertApprox(winsByUser.Manish, 3, 'Manish wins');
-  assertApprox(winsByUser.Hari, 3, 'Hari wins');
+  assertApprox(saHierarchyTotal, 6270, 'total SA hierarchy debit');
+  assertApprox(winsByUser.Manish, 2, 'Manish wins');
+  assertApprox(winsByUser.Hari, 2, 'Hari wins');
   assertApprox(winsByUser.Aayush, 2, 'Aayush wins');
 
-  assertApprox(grossCredits, 76_000, 'gross win credits');
-  assertApprox(userNet, 26_000, 'aggregate user net');
+  assertApprox(grossCredits, 57_000, 'gross win credits');
+  assertApprox(userNet, 7000, 'aggregate user net');
 
   console.log('niftyBracketLedgerScenario: all assertions passed.');
 }
