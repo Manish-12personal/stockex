@@ -2661,8 +2661,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
       settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
     } else {
-      // For Nifty Up/Down, use the correct result time directly
-      resultTimeSecVal = windowInfo.resultTimeSec ?? 0;
+      const Dw = windowInfo.roundDurationSec ?? NIFTY_UP_DOWN_MIN_ROUND_SEC;
+      resultTimeSecVal = (windowInfo.resultTimeSec ?? 0) - Dw;
       resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
       settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
     }
@@ -2936,34 +2936,19 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 }
               }
             }
-          } else if (game.id === 'updown') {
-            // For Nifty Up/Down, ONLY use GameResult - wait for proper result time
-            if (gr && c != null && Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0) {
-              resultPrice = c;
-              console.log(`[Nifty] Using GameResult for window ${pw.windowNumber}: ₹${c} (result: ${gr.result})`);
-            } else {
-              resultPrice = null;
-              console.log(`[Nifty] Window ${pw.windowNumber} pending - waiting for result time`);
-            }
           } else {
             resultPrice = Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0 ? c : null;
           }
         } else {
-          // For Nifty Up/Down, NEVER use this fallback - only use GameResult
-          if (game.id === 'updown') {
-            resultPrice = null;
-            console.log(`[Nifty] Window ${pw.windowNumber} must wait for GameResult - no fallback allowed`);
-          } else {
-            const nextPw = list.find((p) => p.windowNumber === pw.windowNumber + 1);
-            const nextLtp =
-              nextPw?.windowEndLTP != null &&
-              Number.isFinite(nextPw.windowEndLTP) &&
-              nextPw.windowEndLTP > 0
-                ? nextPw.windowEndLTP
-                : null;
-            const raw = nextLtp ?? currentPriceRef.current ?? lastNonZeroPriceRef.current;
-            resultPrice = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null;
-          }
+          const nextPw = list.find((p) => p.windowNumber === pw.windowNumber + 1);
+          const nextLtp =
+            nextPw?.windowEndLTP != null &&
+            Number.isFinite(nextPw.windowEndLTP) &&
+            nextPw.windowEndLTP > 0
+              ? nextPw.windowEndLTP
+              : null;
+          const raw = nextLtp ?? currentPriceRef.current ?? lastNonZeroPriceRef.current;
+          resultPrice = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null;
         }
         if (resultPrice == null) {
           if (isBTC) {
