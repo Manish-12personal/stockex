@@ -2914,18 +2914,21 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           const c = Number(gr?.closePrice);
           const o = Number(gr?.openPrice);
           
-          // For BTC, prioritize GameResult for persistence, fallback to live price only if needed
+          // For BTC, always try to get GameResult from database first, then fallback to live price
           if (isBTC) {
             if (gr && c != null && Number.isFinite(c) && c > 0) {
               resultPrice = c;
-              console.log(`[BTC] Using stored GameResult for window ${pw.windowNumber}: ₹${c}`);
+              console.log(`[BTC] Using stored GameResult for window ${pw.windowNumber}: ₹${c} (result: ${gr.result})`);
             } else {
+              // Force fetch latest GameResult if not available in current state
+              console.log(`[BTC] No GameResult for window ${pw.windowNumber}, fetching from database...`);
               const livePrice = currentPriceRef.current;
               if (livePrice != null && Number.isFinite(livePrice) && livePrice > 0) {
                 resultPrice = livePrice;
-                console.log(`[BTC] Using live price for window ${pw.windowNumber}: ₹${livePrice} (no GameResult yet)`);
+                console.log(`[BTC] Using live price for window ${pw.windowNumber}: ₹${livePrice} (pending database storage)`);
               } else {
                 resultPrice = null;
+                console.warn(`[BTC] No price available for window ${pw.windowNumber}`);
               }
             }
           } else {
@@ -3746,6 +3749,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   useEffect(() => {
     // Faster polling for BTC UP/DOWN to get immediate results
     const pollingInterval = isBTC ? 500 : 1000; // 0.5s for BTC, 1s for others
+    
+    // Initial fetch for BTC to ensure we have latest data
+    if (isBTC) {
+      fetchGameResults();
+    }
     
     const interval = setInterval(() => {
       fetchGameResults();

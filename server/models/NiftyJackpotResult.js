@@ -5,7 +5,8 @@ const niftyJackpotResultSchema = new mongoose.Schema({
   resultDate: {
     type: String,
     required: true,
-    unique: true
+    unique: true,
+    index: true
   },
   // Locked Nifty price at result time
   lockedPrice: {
@@ -31,10 +32,41 @@ const niftyJackpotResultSchema = new mongoose.Schema({
   resultDeclaredAt: {
     type: Date,
     default: null
-  }
+  },
+  // Total number of bids for this date
+  totalBids: {
+    type: Number,
+    default: 0
+  },
+  // Total prize amount distributed
+  totalPrizeDistributed: {
+    type: Number,
+    default: 0
+  },
+  // Number of winners
+  totalWinners: {
+    type: Number,
+    default: 0
+  },
+  // Winning numbers (if applicable)
+  winningNumbers: [{
+    type: Number
+  }],
+  // Prize distribution details
+  prizeDistribution: [{
+    rank: Number,
+    bidId: mongoose.Schema.Types.ObjectId,
+    userId: mongoose.Schema.Types.ObjectId,
+    prize: Number,
+    winningNumber: Number
+  }]
 }, {
   timestamps: true
 });
+
+// Compound index for efficient queries
+niftyJackpotResultSchema.index({ resultDate: 1, resultDeclared: 1 });
+niftyJackpotResultSchema.index({ resultDeclared: 1, createdAt: -1 });
 
 const NiftyJackpotResult = mongoose.model('NiftyJackpotResult', niftyJackpotResultSchema);
 

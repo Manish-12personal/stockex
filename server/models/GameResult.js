@@ -10,7 +10,8 @@ const gameResultSchema = new mongoose.Schema({
   },
   windowNumber: {
     type: Number,
-    required: true
+    required: true,
+    index: true
   },
   windowDate: {
     type: Date,
@@ -55,14 +56,35 @@ const gameResultSchema = new mongoose.Schema({
     default: 0
   },
   windowStartTime: {
-    type: String
+    type: String,
+    required: true
   },
   windowEndTime: {
-    type: String
+    type: String,
+    required: true
   },
   resultTime: {
     type: Date,
     default: Date.now
+  },
+  // Enhanced fields for complete data tracking
+  priceSource: {
+    type: String,
+    enum: ['live_websocket', 'binance', 'cache', 'kite', 'forced'],
+    default: 'live_websocket'
+  },
+  settlementCompleted: {
+    type: Boolean,
+    default: true
+  },
+  settlementProcessedAt: {
+    type: Date,
+    default: Date.now
+  },
+  // Additional metadata for debugging
+  metadata: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
   }
 }, { timestamps: true });
 
@@ -104,33 +126,27 @@ gameResultSchema.statics.getRecentResultsWithFallback = async function(gameId, l
   const todayStart = startOfISTDayFromKey(today);
   const todayEnd = endOfISTDayFromKey(today);
   
-  // Try today's results first
-  if (todayStart && todayEnd) {
-    const todayResults = await this.find({
-      gameId,
-      windowDate: { $gte: todayStart, $lt: todayEnd },
-    })
-      .sort({ windowNumber: -1 })
-      .limit(limit)
-      .lean();
-      
-    if (todayResults.length > 0) {
-      console.log(`[GameResult] Found ${todayResults.length} results for ${gameId} from today`);
-      return todayResults;
-    }
-  }
+  console.log(`[GameResult] Fetching results for ${gameId} with limit ${limit}`);
   
-  // Fallback to previous days if no results today
-  console.log(`[GameResult] No results for ${gameId} today, checking previous days...`);
-  
-  const previousResults = await this.find({ gameId })
+  // Always try to get most recent results regardless of date
+  const recentResults = await this.find({ gameId })
     .sort({ windowDate: -1, windowNumber: -1 })
     .limit(limit)
     .lean();
     
-  console.log(`[GameResult] Found ${previousResults.length} results for ${gameId} from previous days`);
+  console.log(`[GameResult] Found ${recentResults.length} total recent results for ${gameId}`);
   
-  return previousResults;
+  // If we have recent results, return them
+  if (recentResults.length > 0) {
+    // Log the latest result for debugging
+    const latest = recentResults[0];
+    console.log(`[GameResult] Latest result: Window #${latest.windowNumber}, Result: ${latest.result}, Price: ₹${latest.closePrice}, Date: ${latest.windowDate}`);
+    return recentResults;
+  }
+  
+  // If no results at all, return empty array
+  console.log(`[GameResult] No results found for ${gameId} in database`);
+  return [];
 };
 
 const GameResult = mongoose.model('GameResult', gameResultSchema);

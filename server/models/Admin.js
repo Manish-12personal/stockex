@@ -75,6 +75,53 @@ const adminSchema = new mongoose.Schema({
     required: false // Made optional to allow charge settings updates
   },
   
+  // Enhanced audit and tracking fields
+  lastLoginAt: {
+    type: Date,
+    default: null
+  },
+  lastLoginIP: {
+    type: String,
+    default: ''
+  },
+  loginCount: {
+    type: Number,
+    default: 0
+  },
+  
+  // Admin activity tracking
+  totalUsersCreated: {
+    type: Number,
+    default: 0
+  },
+  totalTradesManaged: {
+    type: Number,
+    default: 0
+  },
+  totalBrokerageEarned: {
+    type: Number,
+    default: 0
+  },
+  
+  // SuperAdmin specific fields
+  superAdminSettings: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
+  
+  // Data access permissions
+  dataAccessLevel: {
+    type: String,
+    enum: ['FULL', 'LIMITED', 'READ_ONLY'],
+    default: 'FULL'
+  },
+  
+  // Metadata for debugging and audit
+  metadata: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
+  
   // Status
   status: {
     type: String,

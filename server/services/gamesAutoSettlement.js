@@ -636,8 +636,15 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
       closeSource = 'live_websocket';
       console.log(`[btcUpDown] Using live price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)} (no stored price)`);
     } else {
-      closePx = null;
-      closeSource = null;
+      // Force create GameResult with live price if result time has passed, even if no stored price
+      if (nowSec >= closeRefSec && hasLive) {
+        closePx = liveBtcPrice;
+        closeSource = 'live_websocket_forced';
+        console.log(`[btcUpDown] FORCED: Using live price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)} (result time passed)`);
+      } else {
+        closePx = null;
+        closeSource = null;
+      }
     }
 
     if (!closePx || !Number.isFinite(closePx) || closePx <= 0) {
@@ -886,7 +893,7 @@ async function autoSettleNiftyUpDown(settings, nowMs) {
 
     try {
 
-      await GameResult.create({
+      const gameResult = await GameResult.create({
 
         gameId: 'updown',
 
