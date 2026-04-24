@@ -18,6 +18,8 @@ import GameSettings from '../models/GameSettings.js';
 
 import { resolveBtcUpDownPriceAtIstRef, DEBIT_DESC } from '../utils/btcUpDownOpenPrice.js';
 
+import { fetchBtcFifteenMinuteIstWindowOhlc } from '../utils/binanceBtcKline.js';
+
 import { resolveNiftyBracketTrade } from './niftyBracketResolve.js';
 
 import { declareNiftyJackpotResult, NiftyJackpotDeclareError } from './niftyJackpotDeclare.js';
@@ -28,7 +30,6 @@ import { settleUpDownUserWindowFromLedger } from './upDownSettlementService.js';
 
 import { getMarketData } from './zerodhaWebSocket.js';
 
-import { getCryptoPrice } from './binanceWebSocket.js';
 
 import { fetchNifty50LastPriceFromKite, fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
 
@@ -40,9 +41,13 @@ import {
 
   getEffectiveBtcSessionBounds,
 
+  getBtcMaxWindowForSession,
+
   BTC_QUARTER_SEC,
 
-  betStartSecForK,
+  btcWindowBettingStartSec,
+
+  btcWindowResultSec,
 
   btcResultRefSecForUiWindow,
 
@@ -464,60 +469,15 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
   if (gc.enabled === false) return;
 
-  // Get live BTC price immediately - prioritize WebSocket for real-time updates
-  const btcData = getCryptoPrice('BTCUSDT') || getCryptoPrice('BTC');
-  const liveBtcPrice = Number(btcData?.ltp);
-  const hasLive = Number.isFinite(liveBtcPrice) && liveBtcPrice > 0;
-
-  if (!hasLive) {
-    console.warn('[btcUpDown] No live BTC from WebSocket — using Binance 1m for close where needed');
-  } else {
-    console.log(`[btcUpDown] Live BTC price available: ₹${liveBtcPrice}`);
-  }
-
-
-
   const { startSec, endSec } = getEffectiveBtcSessionBounds(gc);
-
-  // Same IST clock as lib + bet validation (Intl); avoids mismatch with toLocaleTimeString parsing.
-
   const nowSec = currentTotalSecondsIST(new Date(nowMs));
+  if (nowSec < startSec) return;
 
-  if (nowSec < startSec || nowSec >= endSec) return;
-
-
-
-  const st = getBtcUpDownWindowState(nowSec, gc);
-
-  let currentWindowNumber;
-
-  if (st.status === 'open') {
-
-    currentWindowNumber = st.windowNumber;
-
-  } else if (st.status === 'cooldown') {
-
-    const elapsed = Math.max(0, nowSec - startSec);
-
-    currentWindowNumber = Math.max(1, Math.floor(elapsed / BTC_QUARTER_SEC) + 1);
-
-  } else {
-
-    return;
-
-  }
-
-
+  const maxW = getBtcMaxWindowForSession(gc);
+  const resultDueWindow = nowSec > endSec ? maxW : Math.min(maxW, Math.floor(nowSec / BTC_QUARTER_SEC));
+  if (resultDueWindow < 1) return;
 
   const today = getTodayISTString();
-
-
-
-  // GameResult is due for window = currentWindowNumber − 1 (baseline at window start; close at result quarter-hour).
-
-  const resultDueWindow = currentWindowNumber - 1;
-
-  if (resultDueWindow < 1) return;
 
 
 
@@ -557,163 +517,107 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
 
 
-    // UI: result for window #rw is at btcResultRefSecForUiWindow(rw). Do not publish GameResult until that IST instant.
-
-    const resultSec = btcResultRefSecForUiWindow(rw);
-
+    const resultSec = btcWindowResultSec(rw);
     if (nowSec < resultSec) continue;
 
-
-
-    const openRefSec = betStartSecForK(rw - 1);
-
+    const openRefSec = btcWindowBettingStartSec(rw);
     const openCacheKey = `${today}|r${openRefSec}`;
 
-    const resolvedOpen = await resolveBtcUpDownPriceAtIstRef({
-
-      istDayKey: today,
-
-      refSecSinceMidnightIST: openRefSec,
-
-      cacheGet: (key) => btcRefPriceCache.get(key),
-
-      loadPersisted: async () => null,
-
-      loadLedgerMinEntry: async () => null,
-
-    });
-
-
-
-    const openPrice = resolvedOpen.price;
-
-    if (!openPrice || !Number.isFinite(openPrice)) {
-
-      console.warn(
-
-        `[btcUpDown] skip GameResult w=${rw} day=${today}: could not resolve open price (window start @ ${fmtT(openRefSec)})`
-
-      );
-
-      continue;
-
+    const resolveIst15m = () => fetchBtcFifteenMinuteIstWindowOhlc(today, openRefSec, resultSec);
+    let w15 = await resolveIst15m();
+    if (!w15?.open || !w15?.close) {
+      await new Promise((r) => setTimeout(r, 600));
+      w15 = await resolveIst15m();
     }
 
-
-
-    if (resolvedOpen.source !== 'cache') {
-
-      btcRefPriceCache.set(openCacheKey, openPrice);
-
-    }
-
-
-
-    const closeRefSec = resultSec;
-
-    const closeCacheKey = `${today}|r${closeRefSec}`;
-
-    // ALWAYS use live price if available and result time has passed - prioritize persistence
-    let closePx = null;
-    let closeSource = null;
-    
-    // If result time has passed and we have live price, ALWAYS use it
-    if (hasLive && nowSec >= closeRefSec) {
-      closePx = liveBtcPrice;
-      closeSource = 'live_websocket';
-      console.log(`[btcUpDown] ✅ Using live price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)} (result time passed)`);
-    } else {
-      // Try to get stored/cached price only if live price not available
-      const resolvedClose = await resolveBtcUpDownPriceAtIstRef({
-        istDayKey: today,
-        refSecSinceMidnightIST: closeRefSec,
-        cacheGet: (key) => btcRefPriceCache.get(key),
-        loadPersisted: async () => null,
-        loadLedgerMinEntry: async () => null,
-      });
-      
-      if (resolvedClose.price && Number.isFinite(resolvedClose.price) && resolvedClose.price > 0) {
-        closePx = resolvedClose.price;
-        closeSource = resolvedClose.source;
-        console.log(`[btcUpDown] Using stored price for window ${rw}: ₹${closePx} (${closeSource})`);
-      } else {
-        closePx = null;
-        closeSource = null;
-        console.warn(`[btcUpDown] ❌ No price available for window ${rw} - skipping`);
+    if (!w15?.close || !Number.isFinite(w15.close)) {
+      const resolveCloseCall = () =>
+        resolveBtcUpDownPriceAtIstRef({
+          istDayKey: today,
+          refSecSinceMidnightIST: resultSec,
+          cacheGet: (key) => btcRefPriceCache.get(key),
+          loadPersisted: async () => null,
+          loadLedgerMinEntry: async () => null,
+        });
+      let resolvedClose = await resolveCloseCall();
+      if (!resolvedClose?.price || !Number.isFinite(resolvedClose.price) || resolvedClose.price <= 0) {
+        await new Promise((r) => setTimeout(r, 600));
+        resolvedClose = await resolveCloseCall();
+      }
+      if (resolvedClose?.price && Number.isFinite(resolvedClose.price) && resolvedClose.price > 0) {
+        w15 = { ...w15, close: resolvedClose.price, open: w15?.open };
       }
     }
 
+    const closePx = w15?.close;
+    const closeSource = 'ist_15m_1m';
+
     if (!closePx || !Number.isFinite(closePx) || closePx <= 0) {
-      console.warn(`[btcUpDown] skip GameResult w=${rw} day=${today}: no close price (resolver failed)`);
+      console.warn(`[btcUpDown] skip GameResult w=${rw} day=${today}: no stuck close @ ${fmtT(resultSec)}`);
       continue;
     }
 
+    btcRefPriceCache.set(`${today}|r${resultSec}`, closePx);
 
+    let refPx =
+      rw === 1
+        ? w15.open
+        : Number(await getPreviousWindowClosePrice(rw - 1, today, dayStart, dayEnd));
+    if (rw > 1 && (!Number.isFinite(refPx) || refPx <= 0)) {
+      console.warn(`[btcUpDown] skip GameResult w=${rw}: missing previous window close`);
+      continue;
+    }
+    if (rw === 1 && (!Number.isFinite(refPx) || refPx <= 0)) {
+      const resolveOpenCall = () =>
+        resolveBtcUpDownPriceAtIstRef({
+          istDayKey: today,
+          refSecSinceMidnightIST: openRefSec,
+          cacheGet: (key) => btcRefPriceCache.get(key),
+          loadPersisted: async () => null,
+          loadLedgerMinEntry: async () => null,
+        });
+      let ro = await resolveOpenCall();
+      if (!ro?.price) {
+        await new Promise((r) => setTimeout(r, 600));
+        ro = await resolveOpenCall();
+      }
+      refPx = ro?.price;
+    }
+    if (!Number.isFinite(refPx) || refPx <= 0) {
+      console.warn(`[btcUpDown] skip GameResult w=${rw}: no ref (open) price`);
+      continue;
+    }
+    btcRefPriceCache.set(openCacheKey, refPx);
 
-    // ALWAYS cache the close price for future use and persistence
-    btcRefPriceCache.set(closeCacheKey, closePx);
-    console.log(`[btcUpDown] 💾 Cached price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)}`);
-
-    // Compare with previous window's close price instead of current window's open price
-
-    const prevWindowClosePrice = rw > 1 ? await getPreviousWindowClosePrice(rw - 1, today, dayStart, dayEnd) : null;
-
-    const comparisonPrice = prevWindowClosePrice || openPrice;
-
-    const priceChange = closePx - comparisonPrice;
-
+    const openPrice = refPx;
+    const priceChange = closePx - openPrice;
     const result = priceChange > 0 ? 'UP' : priceChange < 0 ? 'DOWN' : 'TIE';
 
     try {
-
       const gameResult = await GameResult.create({
-
         gameId: 'btcupdown',
-
         windowNumber: rw,
-
         windowDate: dayStart,
-
         openPrice,
-
         closePrice: closePx,
-
         priceChange,
-
-        priceChangePercent: comparisonPrice > 0 ? (priceChange / comparisonPrice) * 100 : 0,
-
+        priceChangePercent: openPrice > 0 ? (priceChange / openPrice) * 100 : 0,
         result,
-
         windowStartTime: fmtT(openRefSec),
-
-        windowEndTime: fmtT(closeRefSec),
-
+        windowEndTime: fmtT(resultSec),
         resultTime: new Date(nowMs),
-
         priceSource: closeSource,
-
         settlementCompleted: true,
-
         settlementProcessedAt: new Date(nowMs),
-
         metadata: {
-
-          forcedCreation: closeSource === 'live_websocket_forced',
-
-          resultTimeSec: closeRefSec,
-
+          resultTimeSec: resultSec,
           currentTimeSec: nowSec,
-
-          hasLivePrice: hasLive
-
-        }
-
+          windowOhlcOpen: w15.open,
+        },
       });
 
       console.log(
-
-        `[btcUpDown] ✅ GameResult w=${rw} ${result} comparisonPrice=${comparisonPrice} close=${closePx}@${fmtT(closeRefSec)} (openSrc=${resolvedOpen.source} closeSrc=${closeSource}) - STORED`
-
+        `[btcUpDown] ✅ GameResult w=${rw} ${result} ref=$${refPx} close=$${closePx}@${fmtT(resultSec)} - STORED`
       );
 
     } catch (e) {

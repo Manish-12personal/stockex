@@ -26,6 +26,7 @@ import {
   creditNiftyJackpotGrossHierarchyFromPool,
 } from '../services/gameProfitDistribution.js';
 import { resolveNiftyBracketTrade } from '../services/niftyBracketResolve.js';
+import { autoSettleBtcUpDown } from '../services/gamesAutoSettlement.js';
 import { getNextBracketSettlementDateIST } from '../utils/niftyBracketSettlementTime.js';
 import {
   creditBtcUpDownSuperAdminPool,
@@ -38,7 +39,7 @@ import {
   btcOpenRefSecForUiWindow,
   getBtcUpDownWindowState,
 } from '../../lib/btcUpDownWindows.js';
-import { fetchBtcUsdt1mCloseAtIstRef } from '../utils/binanceBtcKline.js';
+import { fetchBtcFifteenMinuteIstWindowOhlc, fetchBtcUsdt1mCloseAtIstRef } from '../utils/binanceBtcKline.js';
 import { resolveBtcUpDownPriceAtIstRef } from '../utils/btcUpDownOpenPrice.js';
 import {
   validateNiftyUpDownBetPlacement,
@@ -75,6 +76,10 @@ import {
 } from '../utils/gameStakeSideLimits.js';
 
 const router = express.Router();
+
+/** Throttle: run BTC auto-settlement when the client fetches game results (recovers missed ticks / API blips). */
+let lastBtcGameResultsSettleNudge = 0;
+const BTC_GAME_RESULTS_SETTLE_NUDGE_MS = 4000;
 
 /** Nifty Jackpot: ticket units per bid (new bids store ticketCount; legacy = amount / unit). */
 function niftyJackpotTicketUnitsForBid(bid, oneTicketRs) {
@@ -2225,6 +2230,19 @@ router.get('/game-results/:gameId', protectUser, async (req, res) => {
 
     let results;
     if (gameId === 'btcupdown') {
+      // Nudge: create any missing GameResult rows for *today* before read (15m tick can be late; WS/API blips).
+      if (day === getTodayISTString()) {
+        const t0 = Date.now();
+        if (t0 - lastBtcGameResultsSettleNudge >= BTC_GAME_RESULTS_SETTLE_NUDGE_MS) {
+          lastBtcGameResultsSettleNudge = t0;
+          try {
+            const gs = await GameSettings.getSettings();
+            await autoSettleBtcUpDown(gs, t0);
+          } catch (e) {
+            console.warn('[game-results] btcupdown settle nudge', e?.message || e);
+          }
+        }
+      }
       // BTC: return every window for the IST day (no limit). A descending limit could drop
       // lower window #s when many rows exist, breaking W#70–73 + tracker after refresh.
       results = await GameResult.find({
@@ -2289,8 +2307,8 @@ router.get('/btc-updown/window-ltps', protectUser, async (req, res) => {
 });
 
 /**
- * Window-open (baseline) price for UI window #W — Binance 1m at first second of the betting window,
- * or published GameResult.openPrice when that window has settled.
+ * Window-open (15m "O" / baseline) for UI window #W — same as Zerodha 15m: first 1m open in the IST round, or
+ * published GameResult.openPrice when that window has settled.
  */
 router.get('/btc-updown/canonical-open/:windowNumber', protectUser, async (req, res) => {
   try {
@@ -2306,6 +2324,7 @@ router.get('/btc-updown/canonical-open/:windowNumber', protectUser, async (req, 
     const dayStart = startOfISTDayFromKey(day);
     const dayEnd = endOfISTDayFromKey(day);
     const refSec = btcOpenRefSecForUiWindow(W);
+    const resSec = btcResultRefSecForUiWindow(W);
 
     if (dayStart && dayEnd) {
       const row = await GameResult.findOne({
@@ -2331,10 +2350,17 @@ router.get('/btc-updown/canonical-open/:windowNumber', protectUser, async (req, 
     let source = null;
     let sampledAt = null;
     try {
-      const b = Number(await fetchBtcUsdt1mCloseAtIstRef(day, refSec));
-      if (Number.isFinite(b) && b > 0) {
-        px = b;
-        source = 'binance';
+      const w15 = await fetchBtcFifteenMinuteIstWindowOhlc(day, refSec, resSec);
+      if (w15?.open && Number.isFinite(w15.open) && w15.open > 0) {
+        px = w15.open;
+        source = 'binance_15m_ist';
+      }
+      if (px == null) {
+        const b = Number(await fetchBtcUsdt1mCloseAtIstRef(day, refSec));
+        if (Number.isFinite(b) && b > 0) {
+          px = b;
+          source = 'binance_1m_fallback';
+        }
       }
     } catch {
       /* fall through */

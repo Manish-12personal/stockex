@@ -5,7 +5,7 @@ const DEBIT_DESC =
   /Up\/Down.*bet.*\(UP\)|Up\/Down.*bet.*\(DOWN\)/i;
 
 /**
- * Resolve official BTCUSDT price at an IST calendar second (Binance 1m candle close).
+ * Resolve price at a single IST second (Binance 1m candle **close** for that minute) — used as fallback; settlement uses **15m IST window** O/C in `binanceBtcKline.js`.
  * Cache key: `${istDayKey}|r${refSec}`. Order: cache → loadPersisted → Binance → ledger fallback.
  */
 export async function resolveBtcUpDownPriceAtIstRef({
