@@ -613,37 +613,33 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
     const closeCacheKey = `${today}|r${closeRefSec}`;
 
-    // Always try to get stored price first for persistence, then fallback to live price
+    // ALWAYS use live price if available and result time has passed - prioritize persistence
     let closePx = null;
     let closeSource = null;
     
-    // First try to get stored/cached price for persistence
-    const resolvedClose = await resolveBtcUpDownPriceAtIstRef({
-      istDayKey: today,
-      refSecSinceMidnightIST: closeRefSec,
-      cacheGet: (key) => btcRefPriceCache.get(key),
-      loadPersisted: async () => null,
-      loadLedgerMinEntry: async () => null,
-    });
-    
-    if (resolvedClose.price && Number.isFinite(resolvedClose.price) && resolvedClose.price > 0) {
-      closePx = resolvedClose.price;
-      closeSource = resolvedClose.source;
-      console.log(`[btcUpDown] Using stored price for window ${rw}: ₹${closePx} (${closeSource})`);
-    } else if (hasLive && nowSec >= closeRefSec) {
-      // Use live price only if no stored price available and result time has passed
+    // If result time has passed and we have live price, ALWAYS use it
+    if (hasLive && nowSec >= closeRefSec) {
       closePx = liveBtcPrice;
       closeSource = 'live_websocket';
-      console.log(`[btcUpDown] Using live price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)} (no stored price)`);
+      console.log(`[btcUpDown] ✅ Using live price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)} (result time passed)`);
     } else {
-      // Force create GameResult with live price if result time has passed, even if no stored price
-      if (nowSec >= closeRefSec && hasLive) {
-        closePx = liveBtcPrice;
-        closeSource = 'live_websocket_forced';
-        console.log(`[btcUpDown] FORCED: Using live price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)} (result time passed)`);
+      // Try to get stored/cached price only if live price not available
+      const resolvedClose = await resolveBtcUpDownPriceAtIstRef({
+        istDayKey: today,
+        refSecSinceMidnightIST: closeRefSec,
+        cacheGet: (key) => btcRefPriceCache.get(key),
+        loadPersisted: async () => null,
+        loadLedgerMinEntry: async () => null,
+      });
+      
+      if (resolvedClose.price && Number.isFinite(resolvedClose.price) && resolvedClose.price > 0) {
+        closePx = resolvedClose.price;
+        closeSource = resolvedClose.source;
+        console.log(`[btcUpDown] Using stored price for window ${rw}: ₹${closePx} (${closeSource})`);
       } else {
         closePx = null;
         closeSource = null;
+        console.warn(`[btcUpDown] ❌ No price available for window ${rw} - skipping`);
       }
     }
 
@@ -654,10 +650,9 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
 
 
-    // Cache the close price for future use
-    if (closeSource !== 'cache') {
-      btcRefPriceCache.set(closeCacheKey, closePx);
-    }
+    // ALWAYS cache the close price for future use and persistence
+    btcRefPriceCache.set(closeCacheKey, closePx);
+    console.log(`[btcUpDown] 💾 Cached price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)}`);
 
     // Compare with previous window's close price instead of current window's open price
 
