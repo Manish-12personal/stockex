@@ -2980,7 +2980,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           const direction =
             diffForDirection > 0 ? 'UP' : diffForDirection < 0 ? 'DOWN' : 'TIE';
 
-          // Mark as resolved and NEVER remove it
+          // Mark as resolved and NEVER remove it - SAVE TO LOCALSTORAGE
           setPendingWindows((prev) => {
             const updated = prev.map((p) =>
               p.windowNumber === pw.windowNumber
@@ -2988,6 +2988,34 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 : p
             );
             console.log(`[BTC] ✅ Window ${pw.windowNumber} PERMANENTLY resolved with price: ₹${resultPx} (${direction})`);
+            
+            // Save to localStorage for persistence across refreshes
+            if (isBTC) {
+              try {
+                const btcResults = JSON.parse(localStorage.getItem('btc_results') || '[]');
+                const existingIndex = btcResults.findIndex(r => r.windowNumber === pw.windowNumber);
+                const resultData = {
+                  windowNumber: pw.windowNumber,
+                  resultPrice: resultPx,
+                  marketDirection: direction,
+                  timestamp: Date.now()
+                };
+                
+                if (existingIndex >= 0) {
+                  btcResults[existingIndex] = resultData;
+                } else {
+                  btcResults.push(resultData);
+                }
+                
+                // Keep only last 50 results
+                const sorted = btcResults.sort((a, b) => b.windowNumber - a.windowNumber).slice(0, 50);
+                localStorage.setItem('btc_results', JSON.stringify(sorted));
+                console.log(`[BTC] 💾 Saved to localStorage: Window ${pw.windowNumber}`);
+              } catch (e) {
+                console.error('[BTC] Failed to save to localStorage:', e);
+              }
+            }
+            
             return updated;
           });
 
@@ -3031,13 +3059,14 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     };
   }, [settlePendingWindowOnServer, refreshBalance, fetchGameResults, isBTC, game.id, user?.token]);
 
-  // Clean up old resolved pending windows - NEVER CLEANUP FOR BTC UP/DOWN
+  // Clean up old resolved pending windows - COMPLETELY DISABLED FOR BTC UP/DOWN
   useEffect(() => {
     if (isBTC) {
-      console.log('[BTC] CLEANUP COMPLETELY DISABLED - Results will never disappear');
-      return; // Skip cleanup entirely for BTC
+      console.log('[BTC] CLEANUP COMPLETELY DISABLED - Results will NEVER disappear');
+      return; // Skip cleanup entirely for BTC - DO NOT PROCEED
     }
     
+    // Only run cleanup for non-BTC games
     setPendingWindows(prev => {
       if (prev.length <= 1) return prev;
       
@@ -3051,7 +3080,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       }
       return prev;
     });
-  }, [pendingWindows, isBTC]);
+  }, [isBTC]); // REMOVED pendingWindows from dependencies to prevent cleanup trigger
 
   const quickAmounts = [1, 2, 5, 10];
 
@@ -3779,6 +3808,42 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     return () => clearInterval(interval);
   }, [game.id, user.token, isBTC, fetchGameResults, checkTradeResults]);
 
+  // Restore BTC results from localStorage on page load
+  useEffect(() => {
+    if (isBTC) {
+      try {
+        const btcResults = JSON.parse(localStorage.getItem('btc_results') || '[]');
+        if (btcResults.length > 0) {
+          console.log(`[BTC] 📂 Restoring ${btcResults.length} results from localStorage...`);
+          setPendingWindows(prev => {
+            const existingWindowNumbers = new Set(prev.map(pw => pw.windowNumber));
+            const restoredWindows = [];
+            
+            btcResults.forEach(r => {
+              if (!existingWindowNumbers.has(r.windowNumber)) {
+                console.log(`[BTC] Restored window ${r.windowNumber}: ₹${r.resultPrice} (${r.marketDirection})`);
+                restoredWindows.push({
+                  windowNumber: r.windowNumber,
+                  resolved: true,
+                  resultPrice: r.resultPrice,
+                  marketDirection: r.marketDirection,
+                  permanent: true,
+                  windowEndLTP: r.resultPrice,
+                  ltpTime: new Date(r.timestamp),
+                  resultTime: new Date(r.timestamp)
+                });
+              }
+            });
+            
+            return [...prev, ...restoredWindows].sort((a, b) => b.windowNumber - a.windowNumber);
+          });
+        }
+      } catch (e) {
+        console.error('[BTC] Failed to restore from localStorage:', e);
+      }
+    }
+  }, [isBTC]); // Run only once on mount
+
   // Force re-sync pending windows when game results are updated (for BTC)
   useEffect(() => {
     if (isBTC && gameResults.length > 0) {
@@ -3801,7 +3866,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
               marketDirection: gr.result,
               windowEndLTP: gr.closePrice,
               ltpTime: gr.resultTime,
-              resultTime: gr.resultTime
+              resultTime: gr.resultTime,
+              permanent: true
             });
           }
         });
@@ -3812,7 +3878,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           if (gr && gr.closePrice) {
             console.log(`[BTC] Re-syncing window ${pw.windowNumber} with database result: ${gr.closePrice}`);
             const resultPx = parseFloat(gr.closePrice.toFixed(2));
-            return { ...pw, resolved: true, resultPrice: resultPx, marketDirection: gr.result };
+            return { ...pw, resolved: true, resultPrice: resultPx, marketDirection: gr.result, permanent: true };
           }
           return pw;
         });
