@@ -783,7 +783,8 @@ async function autoSettleNiftyUpDown(settings, nowMs) {
   const elapsed = nowSec - marketOpenSec;
 
   // Results are due 2 windows after betting window ends
-  const resultDueWindow = Math.max(0, Math.floor((elapsed - D) / D));
+
+  const resultDueWindow = Math.max(0, Math.floor((elapsed - 2 * D) / D));
 
 
 
