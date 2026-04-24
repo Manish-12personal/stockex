@@ -2591,18 +2591,10 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
   // Track live price from GameLivePricePanel (Socket.IO ticks)
   const handlePriceUpdate = useCallback((price) => {
-    const prevPrice = currentPriceRef.current;
     currentPriceRef.current = price;
     if (price != null && Number.isFinite(price) && price > 0) {
       setCurrentPrice(price);
       lastNonZeroPriceRef.current = price;
-      
-      // Log significant price changes for debugging
-      if (Math.abs((price || 0) - (prevPrice || 0)) > 1) {
-        console.log('[PRICE UPDATE] Live price changed:', prevPrice, '->', price, 'at', new Date().toLocaleTimeString('en-IN'));
-      }
-    } else {
-      console.log('[PRICE UPDATE] Invalid price received:', price);
     }
   }, []);
 
@@ -2809,31 +2801,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       const exactEndTime = formatIstClockFromSec(windowInfo.windowEndSec ?? 0);
       capturedWindowEndTimeRef.current = exactEndTime;
       
-      // Detailed LTP capture debugging
-      const currentTime = getTotalSecondsIST();
-      const windowEndTime = windowInfo.windowEndSec || 0;
-      const timeDiff = currentTime - windowEndTime;
-      
-      console.log('[LTP DEBUG] Window', prevWinNum, '->', windowInfo.windowNumber);
-      console.log('[LTP DEBUG] Live Price Now:', livePriceNow);
-      console.log('[LTP DEBUG] Last Non-Zero Price:', lastPrice);
-      console.log('[LTP DEBUG] Selected Window End LTP:', windowEndLTP);
-      console.log('[LTP DEBUG] Window End Time:', exactEndTime);
-      console.log('[LTP DEBUG] Current Time:', formatIstClockFromSec(currentTime));
-      console.log('[LTP DEBUG] Window End Sec:', windowEndTime, '(', formatIstClockFromSec(windowEndTime), ')');
-      console.log('[LTP DEBUG] Time Difference (sec):', timeDiff);
-      console.log('[LTP DEBUG] Price Source:', lastPrice ? 'lastNonZeroPriceRef' : (livePriceNow ? 'currentPriceRef' : 'fallback'));
-      console.log('[LTP DEBUG] TIMING ISSUE: Current time is', timeDiff > 0 ? 'AFTER' : timeDiff < 0 ? 'BEFORE' : 'EXACTLY AT', 'window end time');
-      
-      // Additional timing analysis for 3:15 PM window
-      const targetTime1515 = 15 * 3600 + 15 * 60; // 3:15 PM in seconds
-      const is1515Window = Math.abs(windowEndTime - targetTime1515) < 60; // Within 1 minute of 3:15 PM
-      if (is1515Window) {
-        console.log('[LTP DEBUG] *** 3:15 PM WINDOW DETECTED ***');
-        console.log('[LTP DEBUG] Expected Zerodha LTP at 3:15 PM: ~23,895');
-        console.log('[LTP DEBUG] Our captured LTP:', windowEndLTP);
-        console.log('[LTP DEBUG] Price difference from expected:', Math.abs(windowEndLTP - 23895));
-      }
+      // Production LTP capture - use live price for accuracy
+      console.log('[LTP] Window', prevWinNum, '->', windowInfo.windowNumber, 'captured LTP:', windowEndLTP, 'at', exactEndTime);
     }
     
     const nowSecTick = isBTC ? currentTotalSecondsISTLib() : getTotalSecondsIST();
@@ -3001,13 +2970,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       const marketWentUp = priceDiff > 0;
       const marketWentDown = priceDiff < 0;
 
-      // Settlement price debugging
-      console.log('[SETTLEMENT DEBUG] Window', pw.windowNumber, 'settlement prices:');
-      console.log('[SETTLEMENT DEBUG] GameResult open:', gr?.openPrice, 'close:', gr?.closePrice);
-      console.log('[SETTLEMENT DEBUG] Window LTP open:', pw.windowOpenLTP, 'end:', pw.windowEndLTP);
-      console.log('[SETTLEMENT DEBUG] Final openPx:', openPx, 'closePx:', closePx);
-      console.log('[SETTLEMENT DEBUG] Price diff:', priceDiff, 'wentUp:', marketWentUp, 'wentDown:', marketWentDown);
-      console.log('[SETTLEMENT DEBUG] Using resultPrice:', resultPrice);
+      // Settlement logging for production monitoring
+      console.log('[SETTLEMENT] Window', pw.windowNumber, 'openPx:', openPx, 'closePx:', closePx, 'diff:', priceDiff.toFixed(2), 'result:', marketWentUp ? 'UP' : marketWentDown ? 'DOWN' : 'TIE');
 
       const resolvedTrades = (pw.trades || []).map((trade) => {
         const amt = Number(trade.amount);
@@ -3132,14 +3096,19 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           if (isBTC) {
             console.warn('[BTC] Settlement waiting for price (window %s)', pw.windowNumber);
           } else if (game.id === 'updown') {
-            console.warn(
-              '[UpDown] Nifty settlement waiting for official GameResult (window %s)',
-              pw.windowNumber
-            );
+            // For Nifty Up/Down, if no GameResult available, use captured window LTP
+            const fallbackPrice = pw.windowEndLTP;
+            if (fallbackPrice != null && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
+              console.log('[SETTLEMENT] Using fallback window LTP for Nifty Up/Down (window %s): %s', pw.windowNumber, fallbackPrice);
+              resultPrice = fallbackPrice;
+            } else {
+              console.warn('[UpDown] Nifty settlement waiting for price (window %s)', pw.windowNumber);
+              continue;
+            }
           } else {
             console.warn('[UpDown] Settlement waiting for valid price (window %s)', pw.windowNumber);
+            continue;
           }
-          continue;
         }
 
         settlingWindowNumbersRef.current.add(pw.windowNumber);
@@ -3259,7 +3228,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
   const quickAmounts = [1, 2, 5, 10];
 
-  // Manual settlement for testing
+  // Manual settlement for emergency use
   const handleManualSettlement = async () => {
     if (!pendingWindows.length) {
       alert('No pending windows to settle');
@@ -3273,114 +3242,16 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     }
     
     try {
-      console.log(`[MANUAL] Attempting manual settlement for window ${latestPending.windowNumber}`);
-      const resultPrice = latestPending.windowEndLTP || 24000; // Use LTP or default
+      console.log(`[MANUAL] Settlement for window ${latestPending.windowNumber}`);
+      const resultPrice = latestPending.windowEndLTP || 24000;
       const resolvedTrades = await settlePendingWindowOnServer(latestPending, resultPrice);
-      console.log(`[MANUAL] Settlement completed: ${resolvedTrades?.length || 0} trades`);
+      console.log(`[MANUAL] Completed: ${resolvedTrades?.length || 0} trades`);
       await refreshBalance();
-      alert(`Manual settlement completed! ${resolvedTrades?.length || 0} trades settled`);
+      alert(`Settlement completed! ${resolvedTrades?.length || 0} trades settled`);
     } catch (error) {
       console.error('[MANUAL] Settlement failed:', error);
-      alert('Manual settlement failed: ' + error.message);
+      alert('Settlement failed: ' + error.message);
     }
-  };
-
-  // Force window change simulation for testing
-  const handleForceWindowChange = () => {
-    const currentWinNum = windowInfo.windowNumber;
-    const nextWinNum = currentWinNum + 1;
-    const currentPrice = currentPriceRef.current || 23897.95;
-    
-    console.log(`[FORCE WINDOW] Simulating window change: ${currentWinNum} -> ${nextWinNum}`);
-    console.log(`[FORCE WINDOW] Using current price: ${currentPrice}`);
-    
-    // Manually trigger LTP capture logic
-    const prevWinNum = prevWindowNumberRef.current;
-    prevWindowNumberRef.current = nextWinNum;
-    
-    // Capture LTP with current price
-    const livePriceNow = currentPrice;
-    const lastPrice = lastNonZeroPriceRef.current;
-    const windowEndLTP = livePriceNow || lastPrice || 0;
-    
-    if (!isBTC) {
-      capturedWindowEndPriceRef.current = windowEndLTP;
-      const exactEndTime = formatIstClockFromSec(getTotalSecondsIST());
-      capturedWindowEndTimeRef.current = exactEndTime;
-      
-      console.log('[FORCE WINDOW] LTP DEBUG - Window', prevWinNum, '->', nextWinNum);
-      console.log('[FORCE WINDOW] LTP DEBUG - Live Price Now:', livePriceNow);
-      console.log('[FORCE WINDOW] LTP DEBUG - Last Non-Zero Price:', lastPrice);
-      console.log('[FORCE WINDOW] LTP DEBUG - Selected Window End LTP:', windowEndLTP);
-      console.log('[FORCE WINDOW] LTP DEBUG - Window End Time:', exactEndTime);
-      console.log('[FORCE WINDOW] LTP DEBUG - Price Source:', livePriceNow ? 'currentPriceRef (forced)' : (lastPrice ? 'lastNonZeroPriceRef' : 'fallback'));
-      
-      alert(`Window change simulated! LTP captured: ${windowEndLTP} at ${exactEndTime}`);
-    }
-  };
-
-  // Force LTP capture with current price
-  const handleForceLtpCapture = () => {
-    const currentPrice = currentPriceRef.current || 23897.95;
-    const currentWinNum = windowInfo.windowNumber;
-    
-    console.log(`[FORCE LTP] Capturing LTP for window ${currentWinNum}`);
-    console.log(`[FORCE LTP] Current price: ${currentPrice}`);
-    
-    // Update references with current price
-    currentPriceRef.current = currentPrice;
-    lastNonZeroPriceRef.current = currentPrice;
-    setCurrentPrice(currentPrice);
-    
-    // Create test pending window with captured LTP
-    const testWindow = {
-      windowNumber: currentWinNum,
-      windowEndLTP: currentPrice,
-      windowOpenLTP: currentPrice - 10, // Simulate some movement
-      ltpTime: formatIstClockFromSec(getTotalSecondsIST()),
-      resultTimeSec: getTotalSecondsIST() + 900, // 15 minutes from now
-      resultEpoch: Date.now() + 900000,
-      settleEpoch: Date.now() + 901000,
-      resultTime: formatIstClockFromSec(getTotalSecondsIST() + 900),
-      trades: [],
-      resolved: false
-    };
-    
-    setPendingWindows(prev => [...prev, testWindow]);
-    console.log(`[FORCE LTP] Test window created with LTP: ${currentPrice}`);
-    alert(`LTP captured and test window created! Price: ${currentPrice}`);
-  };
-
-  // Force LTP capture with 3:15 PM specific price (to match Zerodha)
-  const handleForce1515LtpCapture = () => {
-    const zerodha1515Price = 23895; // Actual Zerodha LTP at 3:15 PM
-    const currentWinNum = windowInfo.windowNumber;
-    
-    console.log(`[FORCE 3:15 LTP] Capturing 3:15 PM specific LTP for window ${currentWinNum}`);
-    console.log(`[FORCE 3:15 LTP] Using Zerodha 3:15 PM price: ${zerodha1515Price}`);
-    
-    // Update references with 3:15 PM price
-    currentPriceRef.current = zerodha1515Price;
-    lastNonZeroPriceRef.current = zerodha1515Price;
-    setCurrentPrice(zerodha1515Price);
-    
-    // Create test pending window with 3:15 PM LTP
-    const testWindow = {
-      windowNumber: currentWinNum,
-      windowEndLTP: zerodha1515Price,
-      windowOpenLTP: zerodha1515Price - 5, // Simulate small movement
-      ltpTime: '15:15:00', // Exact 3:15 PM time
-      resultTimeSec: getTotalSecondsIST() + 900,
-      resultEpoch: Date.now() + 900000,
-      settleEpoch: Date.now() + 901000,
-      resultTime: formatIstClockFromSec(getTotalSecondsIST() + 900),
-      trades: [],
-      resolved: false
-    };
-    
-    setPendingWindows(prev => [...prev, testWindow]);
-    console.log(`[FORCE 3:15 LTP] Test window created with 3:15 PM LTP: ${zerodha1515Price}`);
-    alert(`3:15 PM LTP captured! Price: ${zerodha1515Price} (matches Zerodha)`);
   };
 
   const handlePlaceBet = async () => {
@@ -4484,37 +4355,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                     : 'Select Amount & Prediction'}
               </button>
 
-              {/* Manual Settlement Button for Testing */}
+              {/* Manual Settlement for Emergency Use */}
               {pendingWindows.some(pw => !pw.resolved) && (
                 <button
                   onClick={handleManualSettlement}
                   className="w-full py-2 rounded-xl font-bold text-xs bg-orange-600 hover:bg-orange-700 text-white transition-all"
                 >
-                  🔧 Manual Settlement (Test Only)
+                  🔧 Manual Settlement
                 </button>
               )}
-
-              {/* Testing Controls for Closed Market */}
-              <div className="mt-2 space-y-1">
-                <button
-                  onClick={handleForceWindowChange}
-                  className="w-full py-2 rounded-xl font-bold text-xs bg-blue-600 hover:bg-blue-700 text-white transition-all"
-                >
-                  🔄 Force Window Change (Test)
-                </button>
-                <button
-                  onClick={handleForceLtpCapture}
-                  className="w-full py-2 rounded-xl font-bold text-xs bg-purple-600 hover:bg-purple-700 text-white transition-all"
-                >
-                  📊 Force LTP Capture (Test)
-                </button>
-                <button
-                  onClick={handleForce1515LtpCapture}
-                  className="w-full py-2 rounded-xl font-bold text-xs bg-red-600 hover:bg-red-700 text-white transition-all"
-                >
-                  ⏰ Force 3:15 PM LTP (Zerodha Match)
-                </button>
-              </div>
             </div>
 
             {/* Active Trades: current window only */}
