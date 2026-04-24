@@ -2793,6 +2793,23 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
       console.log(
         `[RESOLVE] Trade: Amount=₹${amount}, Won=${won}, PnL=₹${pnl}, Brokerage=₹${brokerage} officialOpen=${officialOpen} officialClose=${officialClose}`
       );
+      
+      // Debug logging for Rena's trade
+      if (req.user.username === 'rena' || req.user.userCode === 'rena') {
+        console.log('[RESOLVE DEBUG] Rena Trade Details:', {
+          tradeId: trade.id,
+          prediction,
+          amount,
+          won,
+          pnl,
+          creditTotal,
+          brokerage,
+          officialOpen,
+          officialClose,
+          windowNumber,
+          gameId
+        });
+      }
 
       totalMarginDec += amount;
 

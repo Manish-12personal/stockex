@@ -2742,7 +2742,21 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
     // Send to backend first — only update UI if wallet credit succeeds
     try {
-      await axios.post('/api/user/game-bet/resolve', {
+      console.log('[NIFTY BRACKET DEBUG] Sending settlement request:', {
+        gameId: game.id,
+        tradeId: trade.id,
+        amount: resolvedTrade.amount,
+        won: resolvedTrade.won,
+        pnl: resolvedTrade.pnl,
+        grossWin: resolvedTrade.grossWin,
+        prediction: resolvedTrade.prediction,
+        windowNumber: resolvedTrade.windowNumber,
+        entryPrice: resolvedTrade.entryPrice,
+        exitPrice: resolvedTrade.exitPrice,
+        brokerage: resolvedTrade.brokerage
+      });
+
+      const response = await axios.post('/api/user/game-bet/resolve', {
         gameId: game.id,
         settlementDay:
           typeof trade.settlementDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(trade.settlementDay)
@@ -2766,6 +2780,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       }, {
         headers: { Authorization: `Bearer ${user.token}` }
       });
+
+      console.log('[NIFTY BRACKET DEBUG] Settlement response:', response.data);
 
       refreshBalance();
       fetchGameResults();
@@ -2978,6 +2994,23 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         const won =
           (trade.prediction === 'UP' && marketWentUp) || (trade.prediction === 'DOWN' && marketWentDown);
         const { brokerage, pnl, grossWin } = computeUpDownSettlement(amt, won);
+        
+        // Debug logging for Rena's trade
+        console.log('[SETTLEMENT DEBUG] Trade:', {
+          tradeId: trade.id,
+          prediction: trade.prediction,
+          amount: amt,
+          marketWentUp,
+          marketWentDown,
+          won,
+          pnl,
+          grossWin,
+          brokerage,
+          openPx,
+          closePx,
+          priceDiff
+        });
+        
         return {
           ...trade,
           amount: amt,

@@ -180,6 +180,23 @@ export async function resolveNiftyBracketTrade(trade, currentPrice, options = {}
 
   if (status === 'won') {
     const winCredit = stakeSafe + profit;
+    console.log('[NIFTY BRACKET DEBUG] Winning trade settlement:', {
+      tradeId: trade._id,
+      userId: userIdForTrade,
+      stake: stakeSafe,
+      profit,
+      winCredit,
+      brokerageAmount,
+      balanceBefore: gwBracket.balance - balanceInc,
+      balanceAfter: gwBracket.balance,
+      prediction: trade.prediction,
+      entryPrice: trade.entryPrice,
+      exitPrice,
+      currentPrice: price,
+      upperTarget: trade.upperTarget,
+      lowerTarget: trade.lowerTarget
+    });
+    
     if (Number.isFinite(winCredit) && winCredit > 0) {
       await recordGamesWalletLedger(userIdForTrade, {
         gameId: 'niftyBracket',
@@ -199,7 +216,24 @@ export async function resolveNiftyBracketTrade(trade, currentPrice, options = {}
           tokenValue: tvBracket,
         },
       });
+      
+      console.log('[NIFTY BRACKET DEBUG] Credit ledger entry created successfully');
+    } else {
+      console.warn('[NIFTY BRACKET DEBUG] Invalid winCredit amount:', winCredit);
     }
+  } else {
+    console.log('[NIFTY BRACKET DEBUG] Losing trade settlement:', {
+      tradeId: trade._id,
+      userId: userIdForTrade,
+      stake: stakeSafe,
+      status,
+      prediction: trade.prediction,
+      entryPrice: trade.entryPrice,
+      exitPrice,
+      currentPrice: price,
+      upperTarget: trade.upperTarget,
+      lowerTarget: trade.lowerTarget
+    });
   }
   if (status === 'lost' && stakeSafe > 0) {
     const userDoc = await User.findById(userIdForTrade);
