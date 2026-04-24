@@ -2936,6 +2936,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 }
               }
             }
+          } else if (game.id === 'updown') {
+            // For Nifty Up/Down, ONLY use GameResult - wait for proper result time
+            if (gr && c != null && Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0) {
+              resultPrice = c;
+              console.log(`[Nifty] Using GameResult for window ${pw.windowNumber}: ₹${c} (result: ${gr.result})`);
+            } else {
+              resultPrice = null;
+              console.log(`[Nifty] Window ${pw.windowNumber} pending - waiting for result time`);
+            }
           } else {
             resultPrice = Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0 ? c : null;
           }
