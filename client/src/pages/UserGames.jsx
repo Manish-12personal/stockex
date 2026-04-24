@@ -2914,14 +2914,19 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           const c = Number(gr?.closePrice);
           const o = Number(gr?.openPrice);
           
-          // For BTC, prioritize live price if GameResult not available yet
-          if (isBTC && (!gr || c == null)) {
-            const livePrice = currentPriceRef.current;
-            if (livePrice != null && Number.isFinite(livePrice) && livePrice > 0) {
-              resultPrice = livePrice;
-              console.log(`[BTC] Using live price for window ${pw.windowNumber}: ₹${livePrice}`);
+          // For BTC, prioritize GameResult for persistence, fallback to live price only if needed
+          if (isBTC) {
+            if (gr && c != null && Number.isFinite(c) && c > 0) {
+              resultPrice = c;
+              console.log(`[BTC] Using stored GameResult for window ${pw.windowNumber}: ₹${c}`);
             } else {
-              resultPrice = null;
+              const livePrice = currentPriceRef.current;
+              if (livePrice != null && Number.isFinite(livePrice) && livePrice > 0) {
+                resultPrice = livePrice;
+                console.log(`[BTC] Using live price for window ${pw.windowNumber}: ₹${livePrice} (no GameResult yet)`);
+              } else {
+                resultPrice = null;
+              }
             }
           } else {
             resultPrice = Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0 ? c : null;
@@ -3748,7 +3753,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     }, pollingInterval);
 
     return () => clearInterval(interval);
-  }, [game.id, user.token]);
+  }, [game.id, user.token, isBTC]);
 
   return (
     <div className="h-screen bg-dark-900 text-white flex flex-col overflow-hidden">

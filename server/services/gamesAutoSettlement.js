@@ -613,27 +613,31 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
     const closeCacheKey = `${today}|r${closeRefSec}`;
 
-    // Use live price for immediate results when available
+    // Always try to get stored price first for persistence, then fallback to live price
     let closePx = null;
     let closeSource = null;
     
-    if (hasLive && nowSec >= closeRefSec) {
-      // Use live price immediately when result time has passed
-      closePx = liveBtcPrice;
-      closeSource = 'live_websocket';
-      console.log(`[btcUpDown] Using live price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)}`);
-    } else {
-      // Fall back to cached/Binance price
-      const resolvedClose = await resolveBtcUpDownPriceAtIstRef({
-        istDayKey: today,
-        refSecSinceMidnightIST: closeRefSec,
-        cacheGet: (key) => btcRefPriceCache.get(key),
-        loadPersisted: async () => null,
-        loadLedgerMinEntry: async () => null,
-      });
-      
+    // First try to get stored/cached price for persistence
+    const resolvedClose = await resolveBtcUpDownPriceAtIstRef({
+      istDayKey: today,
+      refSecSinceMidnightIST: closeRefSec,
+      cacheGet: (key) => btcRefPriceCache.get(key),
+      loadPersisted: async () => null,
+      loadLedgerMinEntry: async () => null,
+    });
+    
+    if (resolvedClose.price && Number.isFinite(resolvedClose.price) && resolvedClose.price > 0) {
       closePx = resolvedClose.price;
       closeSource = resolvedClose.source;
+      console.log(`[btcUpDown] Using stored price for window ${rw}: ₹${closePx} (${closeSource})`);
+    } else if (hasLive && nowSec >= closeRefSec) {
+      // Use live price only if no stored price available and result time has passed
+      closePx = liveBtcPrice;
+      closeSource = 'live_websocket';
+      console.log(`[btcUpDown] Using live price for window ${rw}: ₹${closePx} at ${fmtT(closeRefSec)} (no stored price)`);
+    } else {
+      closePx = null;
+      closeSource = null;
     }
 
     if (!closePx || !Number.isFinite(closePx) || closePx <= 0) {
