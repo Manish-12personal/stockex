@@ -2913,8 +2913,19 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           const gr = pickLatestGameResultForWindow(gameResultsRef.current, pw.windowNumber);
           const c = Number(gr?.closePrice);
           const o = Number(gr?.openPrice);
-          resultPrice =
-            Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0 ? c : null;
+          
+          // For BTC, prioritize live price if GameResult not available yet
+          if (isBTC && (!gr || c == null)) {
+            const livePrice = currentPriceRef.current;
+            if (livePrice != null && Number.isFinite(livePrice) && livePrice > 0) {
+              resultPrice = livePrice;
+              console.log(`[BTC] Using live price for window ${pw.windowNumber}: ₹${livePrice}`);
+            } else {
+              resultPrice = null;
+            }
+          } else {
+            resultPrice = Number.isFinite(c) && c > 0 && Number.isFinite(o) && o > 0 ? c : null;
+          }
         } else {
           const nextPw = list.find((p) => p.windowNumber === pw.windowNumber + 1);
           const nextLtp =
@@ -2927,12 +2938,14 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           resultPrice = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null;
         }
         if (resultPrice == null) {
-          if (!isBTC && game.id === 'updown') {
+          if (isBTC) {
+            console.warn('[BTC] Settlement waiting for price (window %s)', pw.windowNumber);
+          } else if (game.id === 'updown') {
             console.warn(
               '[UpDown] Nifty settlement waiting for official GameResult (window %s)',
               pw.windowNumber
             );
-          } else if (!isBTC) {
+          } else {
             console.warn('[UpDown] Settlement waiting for valid price (window %s)', pw.windowNumber);
           }
           continue;
@@ -2995,7 +3008,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
     const interval = setInterval(() => {
       tick();
-    }, 1000);
+    }, isBTC ? 500 : 1000); // Faster for BTC
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -3726,10 +3739,13 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
   // Check for results + server window results periodically (keeps tracker/history in sync after auto-settle)
   useEffect(() => {
+    // Faster polling for BTC UP/DOWN to get immediate results
+    const pollingInterval = isBTC ? 500 : 1000; // 0.5s for BTC, 1s for others
+    
     const interval = setInterval(() => {
       fetchGameResults();
       checkTradeResults();
-    }, 1000);
+    }, pollingInterval);
 
     return () => clearInterval(interval);
   }, [game.id, user.token]);
