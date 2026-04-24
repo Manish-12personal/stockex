@@ -2591,10 +2591,18 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
   // Track live price from GameLivePricePanel (Socket.IO ticks)
   const handlePriceUpdate = useCallback((price) => {
+    const prevPrice = currentPriceRef.current;
     currentPriceRef.current = price;
     if (price != null && Number.isFinite(price) && price > 0) {
       setCurrentPrice(price);
       lastNonZeroPriceRef.current = price;
+      
+      // Log significant price changes for debugging
+      if (Math.abs((price || 0) - (prevPrice || 0)) > 1) {
+        console.log('[PRICE UPDATE] Live price changed:', prevPrice, '->', price, 'at', new Date().toLocaleTimeString('en-IN'));
+      }
+    } else {
+      console.log('[PRICE UPDATE] Invalid price received:', price);
     }
   }, []);
 
@@ -2784,10 +2792,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
     if (prevWinNum <= 0 || prevWinNum === windowInfo.windowNumber) return;
 
-    // Capture the price at the exact moment window changes - this is the fixed LTP
+    // Capture the price at the exact moment window changes - prioritize live price for accuracy
+    const livePriceNow = currentPriceRef.current;
+    const lastPrice = lastNonZeroPriceRef.current;
+    
+    // For Nifty Up/Down, always use live price if available to match real-time data
+    // Only fall back to lastPrice if livePrice is not available
     const windowEndLTP = isBTC 
-      ? (lastNonZeroPriceRef.current || currentPriceRef.current || 0)
-      : (lastNonZeroPriceRef.current || currentPriceRef.current || 0);
+      ? (livePriceNow || lastPrice || 0)
+      : (livePriceNow || lastPrice || 0);
     
     // For Nifty, store this price so it can be used when creating the pending window
     if (!isBTC) {
@@ -2795,8 +2808,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       // Capture the exact end time for LTP
       const exactEndTime = formatIstClockFromSec(windowInfo.windowEndSec ?? 0);
       capturedWindowEndTimeRef.current = exactEndTime;
-      console.log('[LTP] Window changed from', prevWinNum, 'to', windowInfo.windowNumber, 'captured LTP:', windowEndLTP, 'at exact time:', exactEndTime);
-      console.log('[LTP] Window changed from', prevWinNum, 'to', windowInfo.windowNumber, 'captured LTP:', windowEndLTP);
+      
+      // Detailed LTP capture debugging
+      console.log('[LTP DEBUG] Window', prevWinNum, '->', windowInfo.windowNumber);
+      console.log('[LTP DEBUG] Live Price Now:', livePriceNow);
+      console.log('[LTP DEBUG] Last Non-Zero Price:', lastPrice);
+      console.log('[LTP DEBUG] Selected Window End LTP:', windowEndLTP);
+      console.log('[LTP DEBUG] Window End Time:', exactEndTime);
+      console.log('[LTP DEBUG] Price Source:', lastPrice ? 'lastNonZeroPriceRef' : (livePriceNow ? 'currentPriceRef' : 'fallback'));
+      console.log('[LTP DEBUG] Time Difference (sec):', getTotalSecondsIST() - (windowInfo.windowEndSec || 0));
     }
     
     const nowSecTick = isBTC ? currentTotalSecondsISTLib() : getTotalSecondsIST();
@@ -2963,6 +2983,14 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       const priceDiff = openPx != null ? closePx - openPx : closePx - pw.windowEndLTP;
       const marketWentUp = priceDiff > 0;
       const marketWentDown = priceDiff < 0;
+
+      // Settlement price debugging
+      console.log('[SETTLEMENT DEBUG] Window', pw.windowNumber, 'settlement prices:');
+      console.log('[SETTLEMENT DEBUG] GameResult open:', gr?.openPrice, 'close:', gr?.closePrice);
+      console.log('[SETTLEMENT DEBUG] Window LTP open:', pw.windowOpenLTP, 'end:', pw.windowEndLTP);
+      console.log('[SETTLEMENT DEBUG] Final openPx:', openPx, 'closePx:', closePx);
+      console.log('[SETTLEMENT DEBUG] Price diff:', priceDiff, 'wentUp:', marketWentUp, 'wentDown:', marketWentDown);
+      console.log('[SETTLEMENT DEBUG] Using resultPrice:', resultPrice);
 
       const resolvedTrades = (pw.trades || []).map((trade) => {
         const amt = Number(trade.amount);
