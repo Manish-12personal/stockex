@@ -1701,6 +1701,7 @@ function getIstCalendarYmd() {
 const NIFTY_BRACKET_LTP_TAPE_LS = 'stockex_niftyBracket_ltpTape_v1';
 const NIFTY_BRACKET_LTP_TAPE_MAX = 10000;
 const NIFTY_UPDOWN_WINDOW_LTP_LS = 'stockex_niftyUpdown_windowLtp_v1';
+const BTC_UPDOWN_RESULTS_LS = 'stockex_btcUpdown_results_v1';
 
 function ltpTapeStorageKeyForIstDate(ymd) {
   return `${NIFTY_BRACKET_LTP_TAPE_LS}_${ymd}`;
@@ -1782,6 +1783,68 @@ function saveLockedWindowLtpsForToday(map) {
     );
   } catch {
     /* ignore quota/private mode */
+  }
+}
+
+function btcResultsStorageKeyForIstDate(ymd) {
+  return `${BTC_UPDOWN_RESULTS_LS}_${ymd}`;
+}
+
+function loadBtcResultsFromStorageForToday() {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const ymd = getIstCalendarYmd();
+    const raw = localStorage.getItem(btcResultsStorageKeyForIstDate(ymd));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
+    return rows
+      .map((r) => ({
+        windowNumber: Number(r.windowNumber),
+        resultPrice: Number(r.resultPrice),
+        marketDirection: r.marketDirection,
+        timestamp: Number(r.timestamp) || Date.now(),
+      }))
+      .filter(
+        (r) =>
+          Number.isFinite(r.windowNumber) &&
+          r.windowNumber > 0 &&
+          Number.isFinite(r.resultPrice) &&
+          r.resultPrice > 0
+      )
+      .sort((a, b) => b.windowNumber - a.windowNumber)
+      .slice(0, 120);
+  } catch {
+    return [];
+  }
+}
+
+function saveBtcResultsToStorageForToday(rows) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const ymd = getIstCalendarYmd();
+    const safe = (rows || [])
+      .map((r) => ({
+        windowNumber: Number(r.windowNumber),
+        resultPrice: Number(r.resultPrice),
+        marketDirection: r.marketDirection,
+        timestamp: Number(r.timestamp) || Date.now(),
+      }))
+      .filter(
+        (r) =>
+          Number.isFinite(r.windowNumber) &&
+          r.windowNumber > 0 &&
+          Number.isFinite(r.resultPrice) &&
+          r.resultPrice > 0
+      )
+      .sort((a, b) => b.windowNumber - a.windowNumber)
+      .slice(0, 120);
+    localStorage.setItem(
+      btcResultsStorageKeyForIstDate(ymd),
+      JSON.stringify({ v: 1, savedAt: Date.now(), rows: safe })
+    );
+  } catch {
+    /* ignore */
   }
 }
 
@@ -3083,7 +3146,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             // Save to localStorage for persistence across refreshes
             if (isBTC) {
               try {
-                const btcResults = JSON.parse(localStorage.getItem('btc_results') || '[]');
+                const legacy = JSON.parse(localStorage.getItem('btc_results') || '[]');
+                const btcResults = Array.isArray(legacy) ? legacy : [];
                 const existingIndex = btcResults.findIndex(r => r.windowNumber === pw.windowNumber);
                 const resultData = {
                   windowNumber: pw.windowNumber,
@@ -3101,6 +3165,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                 // Keep only last 50 results
                 const sorted = btcResults.sort((a, b) => b.windowNumber - a.windowNumber).slice(0, 50);
                 localStorage.setItem('btc_results', JSON.stringify(sorted));
+                saveBtcResultsToStorageForToday(sorted);
                 console.log(`[BTC] 💾 Saved to localStorage: Window ${pw.windowNumber}`);
               } catch (e) {
                 console.error('[BTC] Failed to save to localStorage:', e);
@@ -3907,7 +3972,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   useEffect(() => {
     if (isBTC) {
       try {
-        const btcResults = JSON.parse(localStorage.getItem('btc_results') || '[]');
+        const todayRows = loadBtcResultsFromStorageForToday();
+        const legacyRows = JSON.parse(localStorage.getItem('btc_results') || '[]');
+        const btcResults = Array.isArray(todayRows) && todayRows.length > 0
+          ? todayRows
+          : (Array.isArray(legacyRows) ? legacyRows : []);
         if (btcResults.length > 0) {
           console.log(`[BTC] 📂 Restoring ${btcResults.length} results from localStorage...`);
           setPendingWindows(prev => {
@@ -3943,6 +4012,19 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   useEffect(() => {
     if (isBTC && gameResults.length > 0) {
       console.log(`[BTC] Game results updated (${gameResults.length} results), re-syncing pending windows...`);
+      try {
+        const persisted = gameResults
+          .filter((gr) => Number.isFinite(Number(gr.windowNumber)) && Number(gr.closePrice) > 0)
+          .map((gr) => ({
+            windowNumber: Number(gr.windowNumber),
+            resultPrice: Number(gr.closePrice),
+            marketDirection: gr.result,
+            timestamp: new Date(gr.resultTime || gr.createdAt || Date.now()).getTime(),
+          }));
+        if (persisted.length > 0) saveBtcResultsToStorageForToday(persisted);
+      } catch (e) {
+        console.warn('[BTC] Failed to persist DB results to storage:', e?.message || e);
+      }
       
       // Add missing windows from gameResults that aren't in pendingWindows
       setPendingWindows(prev => {
