@@ -3509,9 +3509,13 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     windowInfo.windowNumber > 3 ? windowInfo.windowNumber - 3 : null;
   const prevPrevPrevPrevWindowNumber =
     windowInfo.windowNumber > 4 ? windowInfo.windowNumber - 4 : null;
-  const trackerWindowNumbers = [windowInfo.windowNumber, prevPrevPrevPrevWindowNumber, prevPrevPrevWindowNumber, prevPrevWindowNumber, prevWindowNumber].filter(
-    (n) => n != null
-  );
+  /** BTC: show a longer chain so W#N does not vanish as soon as the current window moves forward. */
+  const BTC_TRACKER_PAST = 16;
+  const trackerWindowNumbers = isBTC
+    ? Array.from({ length: Math.min(BTC_TRACKER_PAST, windowInfo.windowNumber) }, (_, i) => windowInfo.windowNumber - i)
+    : [windowInfo.windowNumber, prevPrevPrevPrevWindowNumber, prevPrevPrevWindowNumber, prevPrevWindowNumber, prevWindowNumber].filter(
+        (n) => n != null
+      );
 
   const buildWindowView = (winNum) => {
     if (winNum == null || !Number.isFinite(winNum)) return null;

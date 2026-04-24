@@ -1036,7 +1036,7 @@ async function aggregateDayStakeDebits(gameId, dayStart, dayEnd, descRegex) {
 
 /**
  * Live pool / order-book style stats for all fantasy games (all users, same shapes the hub uses).
- * Keys: btcpdown, updown, niftyNumber, niftyBracket, niftyJackpot (ledger gameIds).
+ * Keys: btcupdown, updown, niftyNumber, niftyBracket, niftyJackpot (ledger gameIds).
  */
 router.get('/games/live-activity', protectUser, async (req, res) => {
   try {
@@ -2224,11 +2224,11 @@ router.get('/game-results/:gameId', protectUser, async (req, res) => {
       req.query.includePrevious === '1' || String(req.query.includePrevious).toLowerCase() === 'true';
 
     let results;
-    if (gameId === 'btcpdown') {
+    if (gameId === 'btcupdown') {
       // BTC: return every window for the IST day (no limit). A descending limit could drop
       // lower window #s when many rows exist, breaking W#70–73 + tracker after refresh.
       results = await GameResult.find({
-        gameId: 'btcpdown',
+        gameId: 'btcupdown',
         windowDate: { $gte: dayStart, $lt: dayEnd },
       })
         .sort({ windowNumber: 1 })
@@ -2244,7 +2244,7 @@ router.get('/game-results/:gameId', protectUser, async (req, res) => {
     }
 
     if (results.length === 0 && includePrevious) {
-      results = await GameResult.getRecentResultsWithFallback(gameId, gameId === 'btcpdown' ? 200 : limit);
+      results = await GameResult.getRecentResultsWithFallback(gameId, gameId === 'btcupdown' ? 200 : limit);
     }
 
     res.json(results);
