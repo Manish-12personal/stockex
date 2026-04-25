@@ -31,7 +31,8 @@ import User from './models/User.js';
 import Trade from './models/Trade.js';
 import MarketState from './models/MarketState.js';
 import TradingService from './services/tradingService.js';
-import { runGamesAutoSettlementTick } from './services/gamesAutoSettlement.js';
+import { runGamesAutoSettlementTick, autoSettleBtcUpDown } from './services/gamesAutoSettlement.js';
+import GameSettings from './models/GameSettings.js';
 import { runInstrumentAvailabilityTicks } from './services/instrumentAvailabilityJobs.js';
 import { startInstrumentExpiryMonitoring } from './services/instrumentExpiryService.js';
 import { autoSquareIntradayOnlyTrades } from './services/eodAutoSquareOffService.js';
@@ -188,6 +189,22 @@ const PORT = process.env.PORT || 5001;
     setInterval(() => {
       runGamesAutoSettlementTick().catch((e) => console.warn('[gamesAutoSettlement]', e?.message || e));
     }, 30 * 1000);
+
+    // Dedicated fast BTC Up/Down settlement loop — runs server-side every 5s regardless of whether
+    // any user is on the page, so each :15/:30/:45/:00 close publishes a GameResult within seconds
+    // (user sees "Last 3 result LTPs" + tracker "Result" stick almost immediately). Protected by
+    // a single-flight guard inside autoSettleBtcUpDown, so overlapping ticks deduplicate.
+    const fastBtcTick = async () => {
+      if (String(process.env.GAMES_AUTO_SETTLEMENT || '').toLowerCase() === 'false') return;
+      try {
+        const settings = await GameSettings.getSettings().catch(() => null);
+        await autoSettleBtcUpDown(settings, Date.now());
+      } catch (e) {
+        console.warn('[btcUpDownFastLoop]', e?.message || e);
+      }
+    };
+    fastBtcTick();
+    setInterval(fastBtcTick, 5 * 1000);
   });
 })().catch((err) => {
   console.error('Fatal startup error:', err);

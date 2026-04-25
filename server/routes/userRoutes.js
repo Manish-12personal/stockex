@@ -2228,15 +2228,14 @@ router.get('/game-results/:gameId', protectUser, async (req, res) => {
 
     let results;
     if (gameId === 'btcupdown') {
-      // Every fetch: backfill any missing GameResult for today (so 21:16 shows 21:15 LTP, no empty list).
+      // Fire-and-forget nudge so the response returns immediately even if Binance is slow — the
+      // single-flight guard inside autoSettleBtcUpDown deduplicates concurrent nudges across users
+      // and the 5s fast loop. Client polls every 500ms so a fresh row (e.g. the just-closed :15
+      // window) shows up on the very next fetch, no page refresh needed.
       if (day === getTodayISTString()) {
-        const t0 = Date.now();
-        try {
-          const gs = await GameSettings.getSettings();
-          await autoSettleBtcUpDown(gs, t0);
-        } catch (e) {
-          console.warn('[game-results] btcupdown settle nudge', e?.message || e);
-        }
+        GameSettings.getSettings()
+          .then((gs) => autoSettleBtcUpDown(gs, Date.now()))
+          .catch((e) => console.warn('[game-results] btcupdown settle nudge', e?.message || e));
       }
       // BTC: return every window for the IST day (no limit). A descending limit could drop
       // lower window #s when many rows exist, breaking W#70–73 + tracker after refresh.

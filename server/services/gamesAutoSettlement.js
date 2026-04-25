@@ -457,14 +457,36 @@ const niftyRefPriceCache = new Map();
 
 
 /**
+ * Single-flight guard: many callers (fast interval, general tick, per-user GET nudge) can hit
+ * autoSettleBtcUpDown at the same second. Running once at a time avoids duplicate Binance fetches
+ * and duplicate-key (11000) races on GameResult unique index.
+ */
+let _btcSettleInFlight = null;
 
+/**
  * BTC Up/Down: create GameResult rows from live price (or Binance 1m at result second) + open resolution.
-
+ *
+ * - Fills the most recent window first (so the user's visible round stops showing "Loading result from
+ *   server…" within seconds of the :15/:30/:45/:00 close), then backfills older missing windows.
+ * - Idempotent + single-flight so the dedicated 5s interval, 30s general tick, and the /game-results
+ *   per-request nudge can all safely call it without stampedes.
+ *
  * Exported for ops backfill after deploy (call with fresh settings + Date.now()).
-
  */
 
 export async function autoSettleBtcUpDown(settings, nowMs) {
+  if (_btcSettleInFlight) return _btcSettleInFlight;
+  _btcSettleInFlight = (async () => {
+    try {
+      await _autoSettleBtcUpDownInner(settings, nowMs);
+    } finally {
+      _btcSettleInFlight = null;
+    }
+  })();
+  return _btcSettleInFlight;
+}
+
+async function _autoSettleBtcUpDownInner(settings, nowMs) {
 
   const gc = settings?.games?.btcUpDown || {};
 
@@ -504,10 +526,34 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
   };
 
+  // Find the windows that are missing today in one round-trip, so we only hit Binance for real gaps
+  // (prevents iterating 1..95 with a findOne each, which on a slow DB could eat the whole tick).
+  const existingRows = await GameResult.find({
+    gameId: 'btcupdown',
+    windowDate: { $gte: dayStart, $lt: dayEnd },
+  })
+    .select({ windowNumber: 1 })
+    .lean();
+  const existingSet = new Set(
+    existingRows.map((r) => Number(r.windowNumber)).filter((n) => Number.isFinite(n))
+  );
 
-
+  const missing = [];
   for (let rw = 1; rw <= resultDueWindow; rw++) {
+    if (existingSet.has(rw)) continue;
+    const resultSec = btcWindowResultSec(rw);
+    if (nowSec < resultSec) continue;
+    missing.push(rw);
+  }
+  if (missing.length === 0) return;
 
+  // Priority: newest first so the user's visible round "sticks" within one poll of the 5s fast loop,
+  // then older backfills in descending order so the tracker's 3 recent cards fill before older history.
+  missing.sort((a, b) => b - a);
+
+  for (const rw of missing) {
+
+    // Re-check just-in-case another single-flight caller finished a row between the find and now.
     const existing = await GameResult.findOne({
 
       gameId: 'btcupdown',
@@ -523,7 +569,6 @@ export async function autoSettleBtcUpDown(settings, nowMs) {
 
 
     const resultSec = btcWindowResultSec(rw);
-    if (nowSec < resultSec) continue;
 
     const openRefSec = btcWindowBettingStartSec(rw);
     const openCacheKey = `${today}|r${openRefSec}`;
@@ -969,21 +1014,15 @@ export async function runGamesAutoSettlementTick() {
 
 
   // ---------- BTC Up/Down: publish GameResult before consuming it in Up/Down loop (same tick) ----------
-
-  if (now - lastBtcSettleRun >= MIN_MS) {
-
-    lastBtcSettleRun = now;
-
-    try {
-
-      await autoSettleBtcUpDown(settings, now);
-
-    } catch (e) {
-
-      console.warn('[gamesAutoSettlement] btcUpDown settle', e?.message || e);
-
-    }
-
+  // No MIN_MS gate here: the dedicated fast loop in server/index.js calls autoSettleBtcUpDown
+  // every 5s, and the function itself is protected by a single-flight guard, so overlapping
+  // general-tick calls just attach to the in-flight promise and settle users' pending wallet
+  // credits immediately instead of waiting up to 45s.
+  lastBtcSettleRun = now;
+  try {
+    await autoSettleBtcUpDown(settings, now);
+  } catch (e) {
+    console.warn('[gamesAutoSettlement] btcUpDown settle', e?.message || e);
   }
 
 
