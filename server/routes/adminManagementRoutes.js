@@ -3493,13 +3493,14 @@ router.get('/all-transactions', protectAdmin, superAdminOnly, async (req, res) =
   }
 });
 
-/** Ledger `gameId` values used for the five games (see `GamesWalletLedger` / user games-wallet API). */
+/** Ledger `gameId` values for each game (see `GamesWalletLedger` / user games-wallet API). */
 const SUPER_ADMIN_GAMES_LEDGER_GAME_IDS = [
   'updown',
   'btcupdown',
   'niftyNumber',
   'niftyBracket',
   'niftyJackpot',
+  'btcJackpot',
 ];
 
 /** Description prefix before " — …" for pool debits when `meta.gameKey` is missing (legacy rows). */
@@ -3509,6 +3510,7 @@ const GAMES_LEDGER_GAME_ID_TO_DESC_PREFIX = {
   niftyNumber: 'Nifty Number',
   niftyBracket: 'Nifty Bracket',
   niftyJackpot: 'Nifty Jackpot',
+  btcJackpot: 'BTC Jackpot',
 };
 
 const GAMES_POOL_DEBIT_KINDS = ['JACKPOT_GROSS_HIERARCHY_POOL_DEBIT', 'GAME_WIN_BROKERAGE_POOL_DEBIT'];

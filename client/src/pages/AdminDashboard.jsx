@@ -12,6 +12,7 @@ import { groupNseFoMarketWatch } from '../utils/nseFnOSectors.js';
 import io from 'socket.io-client';
 import { WALLET_LEDGER_GAME_OPTIONS } from '../constants/walletLedgerGames.js';
 import AdminFundTransfer from '../components/AdminFundTransfer';
+import BtcJackpotAdminPanel from '../components/admin/BtcJackpotAdminPanel.jsx';
 import {
   Users,
   LogOut,
@@ -14368,13 +14369,14 @@ const ALL_TX_SEGMENTS = [
   },
 ];
 
-/** `GamesWalletLedger.gameId` for the five games (labels match user-facing names). */
+/** `GamesWalletLedger.gameId` for each game (labels match user-facing names). */
 const ALL_TX_GAMES_WALLET_OPTIONS = [
   { id: 'updown', label: 'Nifty Up/Down' },
   { id: 'btcupdown', label: 'BTC Up/Down' },
   { id: 'niftyNumber', label: 'Nifty Number' },
   { id: 'niftyBracket', label: 'Nifty Bracket' },
   { id: 'niftyJackpot', label: 'Nifty Jackpot' },
+  { id: 'btcJackpot', label: 'BTC Jackpot' },
 ];
 
 // Control Hierarchy Wallet - SuperAdmin controls releasing temporary wallet funds
@@ -19314,7 +19316,8 @@ const GameSettingsManagement = () => {
     { id: 'btcUpDown', name: 'BTC Up/Down', icon: Bitcoin, color: 'text-orange-400', needsZerodha: false },
     { id: 'niftyNumber', name: 'Nifty Number', icon: Hash, color: 'text-purple-400', needsZerodha: true },
     { id: 'niftyBracket', name: 'Nifty Bracket', icon: Target, color: 'text-cyan-400', needsZerodha: true },
-    { id: 'niftyJackpot', name: 'Nifty Jackpot', icon: Trophy, color: 'text-yellow-400', needsZerodha: true }
+    { id: 'niftyJackpot', name: 'Nifty Jackpot', icon: Trophy, color: 'text-yellow-400', needsZerodha: true },
+    { id: 'btcJackpot', name: 'BTC Jackpot', icon: Bitcoin, color: 'text-yellow-400', needsZerodha: false }
   ];
 
   useEffect(() => {
@@ -19684,6 +19687,11 @@ const GameSettingsManagement = () => {
               </button>
             </div>
 
+            {selectedGame === 'btcJackpot' && (
+              <BtcJackpotAdminPanel adminToken={admin?.token} />
+            )}
+
+            {selectedGame !== 'btcJackpot' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Win Settings — not used for Nifty Jackpot (rank prizes from pool / spot reference) */}
               {selectedGame !== 'niftyJackpot' && (
@@ -20660,6 +20668,7 @@ const GameSettingsManagement = () => {
                 </>
               )}
             </div>
+            )}
           </div>
         </div>
       )}
@@ -21035,7 +21044,8 @@ const ReferralDistributionSettings = () => {
     { key: 'btcUpDown', name: 'BTC Up/Down', icon: '₿' },
     { key: 'niftyBracket', name: 'Nifty Bracket', icon: '🎯' },
     { key: 'niftyNumber', name: 'Nifty Number', icon: '🔢' },
-    { key: 'niftyJackpot', name: 'Nifty Jackpot', icon: '🎰' }
+    { key: 'niftyJackpot', name: 'Nifty Jackpot', icon: '🎰' },
+    { key: 'btcJackpot', name: 'BTC Jackpot', icon: '₿' },
   ];
 
   useEffect(() => {
@@ -21132,7 +21142,21 @@ const ReferralDistributionSettings = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {games.map(game => (
+        {games.map((game) => {
+          const isJackpotBankPercent =
+            game.key === 'niftyJackpot' || game.key === 'btcJackpot';
+          const isUpDownOneTicket = game.key === 'btcUpDown' || game.key === 'niftyUpDown';
+          const percentFieldLabel = isJackpotBankPercent
+            ? '% of the bank'
+            : isUpDownOneTicket
+              ? '% of one ticket (current price)'
+              : '% of ticket price';
+          const percentFieldHint = isJackpotBankPercent
+            ? 'Percentage of the total Bank (prize pool) to give to the referrer when applicable'
+            : isUpDownOneTicket
+              ? 'Uses the current ticket price from this game\'s settings (or global token value). Credited once when the referred user gets their first win in this game — not on every window.'
+              : 'Percentage of the ticket price (stake per ticket) to give to the referrer when applicable';
+          return (
           <div key={game.key} className="bg-dark-800 rounded-lg p-6">
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
               <span className="text-2xl">{game.icon}</span>
@@ -21141,7 +21165,7 @@ const ReferralDistributionSettings = () => {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm text-gray-400 mb-2">
-                  % of Winning Amount
+                  {percentFieldLabel}
                 </label>
                 <input
                   type="number"
@@ -21154,11 +21178,11 @@ const ReferralDistributionSettings = () => {
                   className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Percentage of winning amount to give to referrer
+                  {percentFieldHint}
                 </p>
               </div>
 
-              {game.key === 'niftyJackpot' && (
+              {(game.key === 'niftyJackpot' || game.key === 'btcJackpot') && (
                 <>
                   <div>
                     <label className="block text-sm text-gray-400 mb-2">
@@ -21200,14 +21224,26 @@ const ReferralDistributionSettings = () => {
               )}
             </div>
           </div>
-        ))}
+        );
+        })}
       </div>
 
       <div className="mt-6 p-4 rounded-lg bg-purple-900/20 border border-purple-500/30">
         <h4 className="font-bold text-purple-300 mb-2">How Referral Distribution Works</h4>
         <ul className="text-sm text-gray-300 space-y-1">
-          <li>• When a referred user wins for the first time in a game, the referrer gets a percentage of the winning amount</li>
-          <li>• The percentage is based on the tickets purchased by the referred user</li>
+          <li>
+            • <span className="text-purple-200">BTC / Nifty Up/Down</span>: one payment per referred user on their{' '}
+            <span className="text-purple-200">first win in that game</span>; amount = % of the then-current one-ticket
+            price from game settings
+          </li>
+          <li>
+            • Other number/bracket games: percentage of the <span className="text-purple-200">ticket price</span> (stake
+            per ticket) as configured
+          </li>
+          <li>
+            • <span className="text-purple-200">Nifty / BTC Jackpot</span> use <span className="text-purple-200">% of the Bank</span>{' '}
+            (the prize pool), with optional &quot;Top Ranks Only&quot; limits
+          </li>
         </ul>
       </div>
     </div>
@@ -28565,6 +28601,7 @@ const TransactionSlipsManagement = () => {
             <option value="niftyNumber">Nifty Number</option>
             <option value="niftyBracket">Nifty Bracket</option>
             <option value="niftyJackpot">Nifty Jackpot</option>
+            <option value="btcJackpot">BTC Jackpot</option>
           </select>
           <input
             type="date"

@@ -27,6 +27,7 @@ import {
 } from '../services/gameProfitDistribution.js';
 import { resolveNiftyBracketTrade } from '../services/niftyBracketResolve.js';
 import { autoSettleBtcUpDown } from '../services/gamesAutoSettlement.js';
+import { creditReferralPerWinFromGameSettings } from '../services/referralPerWin.js';
 import { getNextBracketSettlementDateIST } from '../utils/niftyBracketSettlementTime.js';
 import {
   creditBtcUpDownSuperAdminPool,
@@ -856,7 +857,8 @@ router.get('/games-wallet/ledger', protectUser, async (req, res) => {
 
 // Referral earnings feed for the user's Wallet page "Total Referral Amount" tab.
 // Aggregates credits from three disjoint sources into one descending-time list:
-//   1) GamesWalletLedger  gameId='referral' credits  — first-game-win referral bonuses (creditReferralGameReward).
+//   1) GamesWalletLedger  gameId='referral' credits  — per-game first-win (creditReferralGameReward) and
+//      Up/Down first win one-ticket (creditReferralPerWinFromGameSettings).
 //   2) WalletLedger       reason='REFERRAL_COMMISSION' — per-segment profit distribution referral shares
 //                         (distributeGameProfit → Super Admin share forwarded to referral client; segment
 //                         meta is games/mcx/crypto/forex). Enum was expanded so these now actually persist.
@@ -4129,6 +4131,7 @@ router.post('/updown/manual-settle', protectUser, async (req, res) => {
     let totalLoss = 0;
     let totalBrokerage = 0;
     let settledCount = 0;
+    let totalWinningStakeForReferral = 0;
     const ledgerEntries = [];
     const hierarchyJobsManual = [];
 
@@ -4147,6 +4150,7 @@ router.post('/updown/manual-settle', protectUser, async (req, res) => {
       let creditTotal = 0;
       if (won) {
         const grossWin = amount * winMult;
+        totalWinningStakeForReferral += amount;
         if (useGrossPrizeHierarchyManual && userDocManual) {
           const grossBreakdown = await computeNiftyJackpotGrossHierarchyBreakdown(
             userDocManual,
@@ -4272,6 +4276,19 @@ router.post('/updown/manual-settle', protectUser, async (req, res) => {
           ledgerGameId: 'updown',
           skipUserRebate: true,
         });
+      }
+    }
+
+    if (Number(totalWinningStakeForReferral) > 0) {
+      const gt = gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
+      try {
+        await creditReferralPerWinFromGameSettings(req.user._id, totalWinningStakeForReferral, gt, {
+          windowNumber: wn,
+          settlementDay,
+          gameId,
+        });
+      } catch (refErr) {
+        console.warn('[updown/manual-settle] referral per-win failed:', refErr?.message || refErr);
       }
     }
 

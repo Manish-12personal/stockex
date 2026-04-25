@@ -28,6 +28,7 @@ const GAME_SETTINGS_KEY = {
   'niftynumber': 'niftyNumber',
   'niftybracket': 'niftyBracket',
   'niftyjackpot': 'niftyJackpot',
+  'btcjackpot': 'btcJackpot',
 };
 
 /** False when global games off, maintenance, or this game is disabled in GameSettings */
@@ -50,6 +51,7 @@ function ledgerGameIdFromUi(uiId) {
     niftynumber: 'niftyNumber',
     niftybracket: 'niftyBracket',
     niftyjackpot: 'niftyJackpot',
+    btcjackpot: 'btcJackpot',
   };
   return m[uiId] || uiId;
 }
@@ -415,6 +417,18 @@ const UserGames = () => {
       prize: 'Top Prizes',
       players: '2.5K',
       timeframe: '1 Day'
+    },
+    {
+      id: 'btcjackpot',
+      name: 'BTC Jackpot',
+      description: 'Predict the BTC USD close — nearest bidders share the Bank at 23:30 IST.',
+      icon: Bitcoin,
+      color: 'from-yellow-500 to-amber-500',
+      bgColor: 'bg-yellow-900/20',
+      borderColor: 'border-yellow-500/30',
+      prize: 'Top 20 Prizes',
+      players: '—',
+      timeframe: '1 Day'
     }
   ];
 
@@ -457,6 +471,19 @@ const UserGames = () => {
     if (activeGame === 'niftyjackpot') {
       return (
         <NiftyJackpotScreen
+          game={games.find(g => g.id === activeGame)}
+          balance={gamesBalance}
+          onBack={() => setActiveGame(null)}
+          user={user}
+          refreshBalance={fetchGamesBalance}
+          settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
+          tokenValue={resolveGameTicketPrice(gameSettings, GAME_SETTINGS_KEY[activeGame])}
+        />
+      );
+    }
+    if (activeGame === 'btcjackpot') {
+      return (
+        <BtcJackpotScreen
           game={games.find(g => g.id === activeGame)}
           balance={gamesBalance}
           onBack={() => setActiveGame(null)}
@@ -6978,6 +7005,752 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
               <div className="bg-dark-800/50 rounded-lg p-2 text-[10px] text-gray-500 text-center">
                 <Zap size={10} className="inline mr-1 text-yellow-400" />
                 Ranking uses your predicted level vs live spot (then vs locked close). Tap again for another ticket (up to daily limit).
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==================== BTC JACKPOT SCREEN ====================
+// Standalone BTC-Jackpot user screen. Intentionally mirrors the NiftyJackpotScreen
+// layout 1:1 (3-column grid, prize ladder, live top-5, bank card, ticket form)
+// so the game feels identical — only the symbol, endpoints and USD currency change.
+const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue = 500 }) => {
+  const [todayBid, setTodayBid] = useState(null);
+  const [todayBids, setTodayBids] = useState([]);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [leaderboardSpot, setLeaderboardSpot] = useState(null);
+  const [myRank, setMyRank] = useState(null);
+  const [totalBids, setTotalBids] = useState(0);
+  const [totalPool, setTotalPool] = useState(0);
+  const [ticketsToday, setTicketsToday] = useState(0);
+  const [totalStakedToday, setTotalStakedToday] = useState(0);
+  const [bidHistory, setBidHistory] = useState([]);
+  const [placing, setPlacing] = useState(false);
+  const [modifyingBidId, setModifyingBidId] = useState(null);
+  const [message, setMessage] = useState(null);
+  const [lockedPrice, setLockedPrice] = useState(null);
+  const [priceLocked, setPriceLocked] = useState(false);
+  const [lockedAt, setLockedAt] = useState(null);
+  const [predictedPriceInput, setPredictedPriceInput] = useState('');
+  const [predictionDrafts, setPredictionDrafts] = useState({});
+  const spotPrefillDoneRef = useRef(false);
+
+  const topWinners = settings?.topWinners || 20;
+  const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
+
+  const showJackpotOffHoursTestHint =
+    import.meta.env.DEV ||
+    import.meta.env.VITE_BTC_JACKPOT_TEST_BIDDING === 'true' ||
+    import.meta.env.VITE_BTC_JACKPOT_TEST_BIDDING === '1';
+
+  const oneTicketRs = Number(tokenValue) || Number(settings?.ticketPrice) || 500;
+  const toTokens = (rs) => (oneTicketRs > 0 ? parseFloat((rs / oneTicketRs).toFixed(2)) : 0);
+  const balanceTokens = toTokens(balance);
+
+  const prizeStructureRows = useMemo(() => {
+    const n = Math.max(1, Math.min(100, Number(topWinners) || 20));
+    const ladder = Array.isArray(settings?.prizePercentages) ? settings.prizePercentages : [];
+    const pctByRank = new Map(
+      ladder.map((row) => [Number(row.rank) || 0, Number(row.percent) || 0])
+    );
+    return Array.from({ length: n }, (_, i) => {
+      const rank = i + 1;
+      return { rank, percent: pctByRank.get(rank) || 0 };
+    });
+  }, [topWinners, settings]);
+
+  const formatBtcBidPx = useCallback(
+    (px) =>
+      px != null && Number.isFinite(Number(px))
+        ? `$${Number(px).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : null,
+    []
+  );
+  const btcAtBidDisplay = useCallback((v) => formatBtcBidPx(v) || '—', [formatBtcBidPx]);
+
+  const parseBtcPredictedPriceClient = (raw) => {
+    const n = parseFloat(String(raw ?? '').replace(/,/g, '').trim());
+    if (!Number.isFinite(n) || n <= 0) return { ok: false, error: 'Enter your predicted BTC price' };
+    if (n < 1 || n > 10000000) return { ok: false, error: 'Predicted BTC must be between 1 and 10,000,000 USD' };
+    return { ok: true, value: Math.round(n * 100) / 100 };
+  };
+
+  const fetchTodayBid = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/user/btc-jackpot/today', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      const bids = Array.isArray(data?.bids) ? data.bids : [];
+      setTodayBids(bids);
+      setTodayBid(bids[0] || null);
+      setTicketsToday(Number(data?.ticketsUsed) || bids.length);
+      setTotalStakedToday(Number(data?.totalStaked) || bids.reduce((s, b) => s + (Number(b.amount) || 0), 0));
+    } catch (error) {
+      console.error('Error fetching BTC Jackpot today:', error);
+    }
+  }, [user?.token]);
+
+  const fetchLeaderboard = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/user/btc-jackpot/leaderboard', {
+        headers: { Authorization: `Bearer ${user.token}` },
+        params: { limit: 200, _ts: Date.now() },
+      });
+      const winners = Array.isArray(data?.winners) ? data.winners : [];
+      // Map server winners to the shape used by the Nifty-style Live Top 5 UI.
+      const mapped = winners.map((w) => ({
+        bidId: w.bidId,
+        userId: null,
+        name: w.isOwnBid ? 'You' : (w.maskedUsername || 'Player'),
+        amount: Number(w.ticketCount || 1) * (Number(settings?.ticketPrice) || oneTicketRs),
+        niftyPriceAtBid: w.predictedBtc,
+        bidTime: w.createdAt,
+        isOwnBid: !!w.isOwnBid,
+        poolPercent: Number(w.poolPercent) || 0,
+        projectedPrize: Number(w.projectedPrize) || 0,
+        tied: !!w.tied,
+        tiedGroupSize: Number(w.tiedGroupSize) || 1,
+        distance: Number(w.distance) || null,
+        rank: Number(w.rank) || null,
+      }));
+      setLeaderboard(mapped);
+      setLeaderboardSpot(
+        data?.spot != null && Number.isFinite(Number(data.spot)) ? Number(data.spot) : null
+      );
+      setTotalPool(Number(data?.totalPool) || 0);
+      setTotalBids(mapped.length);
+      const me = mapped.find((m) => m.isOwnBid);
+      setMyRank(me?.rank ?? null);
+    } catch (error) {
+      console.error('Error fetching BTC Jackpot leaderboard:', error);
+    }
+  }, [user?.token, settings?.ticketPrice, oneTicketRs]);
+
+  const fetchBank = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/user/btc-jackpot/bank', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      if (data?.lockedBtcPrice != null) {
+        setLockedPrice(Number(data.lockedBtcPrice));
+        setPriceLocked(!!data.resultDeclared || Number(data.lockedBtcPrice) > 0);
+        setLockedAt(data.resultDeclaredAt || data.lockedAt || null);
+      } else {
+        setLockedPrice(null);
+        setPriceLocked(false);
+        setLockedAt(null);
+      }
+      // Keep totalPool authoritative from bank if leaderboard hasn't loaded yet.
+      setTotalPool((cur) => cur || Number(data?.totalStake) || 0);
+    } catch (error) {
+      console.error('Error fetching BTC Jackpot bank:', error);
+    }
+  }, [user?.token]);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const { data } = await axios.get('/api/user/btc-jackpot/history?days=14', {
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      // Flatten per-date groups into a flat bid list for the Your History panel.
+      const groups = Array.isArray(data?.history) ? data.history : [];
+      const flat = [];
+      for (const g of groups) {
+        for (const b of g.bids || []) {
+          flat.push({
+            ...b,
+            lockedClose: g.lockedBtcPrice ?? null,
+            resultDeclared: !!g.resultDeclared,
+            niftyPriceAtBid: b.predictedBtc,
+            distanceToReference:
+              b.predictedBtc != null && g.lockedBtcPrice != null
+                ? Math.abs(Number(b.predictedBtc) - Number(g.lockedBtcPrice))
+                : null,
+          });
+        }
+      }
+      flat.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      setBidHistory(flat);
+    } catch (error) {
+      console.error('Error fetching BTC Jackpot history:', error);
+    }
+  }, [user?.token]);
+
+  useEffect(() => {
+    fetchTodayBid();
+    fetchLeaderboard();
+    fetchHistory();
+    fetchBank();
+    const interval = setInterval(fetchLeaderboard, 5000);
+    const bankInterval = setInterval(fetchBank, 15000);
+    return () => {
+      clearInterval(interval);
+      clearInterval(bankInterval);
+    };
+  }, [fetchTodayBid, fetchLeaderboard, fetchHistory, fetchBank]);
+
+  useEffect(() => {
+    if (spotPrefillDoneRef.current) return;
+    if (leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot))) {
+      setPredictedPriceInput(Number(leaderboardSpot).toFixed(2));
+      spotPrefillDoneRef.current = true;
+    }
+  }, [leaderboardSpot]);
+
+  useEffect(() => {
+    setPredictionDrafts((prev) => {
+      const pendingIds = new Set(
+        todayBids.filter((b) => b.status === 'pending' && b._id).map((b) => String(b._id))
+      );
+      const next = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (!pendingIds.has(k)) delete next[k];
+      }
+      for (const b of todayBids) {
+        if (b.status !== 'pending' || !b._id) continue;
+        const id = String(b._id);
+        if (next[id] !== undefined) continue;
+        if (b.predictedBtc != null && Number.isFinite(Number(b.predictedBtc))) {
+          next[id] = Number(b.predictedBtc).toFixed(2);
+        } else {
+          next[id] = '';
+        }
+      }
+      return next;
+    });
+  }, [todayBids]);
+
+  const handlePlaceBid = async () => {
+    const amt = oneTicketRs;
+    if (!Number.isFinite(amt) || amt <= 0) {
+      setMessage({ type: 'error', text: 'Invalid ticket price' });
+      return;
+    }
+    if (amt > balance) {
+      setMessage({ type: 'error', text: 'Insufficient balance' });
+      return;
+    }
+    if (!gameEnabled) {
+      setMessage({ type: 'error', text: 'Game is currently disabled' });
+      return;
+    }
+    const priceParse = parseBtcPredictedPriceClient(predictedPriceInput);
+    if (!priceParse.ok) {
+      setMessage({ type: 'error', text: priceParse.error });
+      return;
+    }
+
+    setPlacing(true);
+    setMessage(null);
+    try {
+      const { data } = await axios.post(
+        '/api/user/btc-jackpot/bid',
+        { predictedBtc: priceParse.value },
+        { headers: { Authorization: `Bearer ${user.token}` } }
+      );
+      const px = data?.bid?.predictedBtc;
+      const pxText =
+        px != null && Number.isFinite(Number(px))
+          ? ` at predicted BTC $${Number(px).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+          : '.';
+      setMessage({ type: 'success', text: `1 ticket placed${pxText}` });
+      if (typeof refreshBalance === 'function') refreshBalance();
+      fetchTodayBid();
+      fetchLeaderboard();
+      fetchBank();
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to place bid' });
+    } finally {
+      setPlacing(false);
+    }
+  };
+
+  const handleUpdatePredictionBid = async (bidId) => {
+    if (!bidId) return;
+    const id = String(bidId);
+    const priceParse = parseBtcPredictedPriceClient(predictionDrafts[id]);
+    if (!priceParse.ok) {
+      setMessage({ type: 'error', text: priceParse.error });
+      return;
+    }
+    setModifyingBidId(bidId);
+    setMessage(null);
+    try {
+      const { data } = await axios.put(
+        `/api/user/btc-jackpot/bid/${bidId}`,
+        { predictedBtc: priceParse.value },
+        { headers: { Authorization: `Bearer ${user.token}` } }
+      );
+      const px = data?.bid?.predictedBtc;
+      if (px != null && Number.isFinite(Number(px))) {
+        setPredictionDrafts((p) => ({ ...p, [id]: Number(px).toFixed(2) }));
+      }
+      const pxText =
+        px != null && Number.isFinite(Number(px))
+          ? ` Predicted BTC $${Number(px).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+          : '';
+      setMessage({ type: 'success', text: `Prediction saved.${pxText}` });
+      fetchTodayBid();
+      fetchLeaderboard();
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Could not update order' });
+    } finally {
+      setModifyingBidId(null);
+    }
+  };
+
+  return (
+    <div className="h-screen bg-dark-900 text-white flex flex-col overflow-hidden">
+      <div className={`bg-gradient-to-r ${game.color} h-1 flex-shrink-0`}></div>
+      <div className="bg-dark-800 border-b border-dark-600 flex-shrink-0">
+        <div className="px-4 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button onClick={onBack} className="p-2 hover:bg-dark-700 rounded-lg transition">
+                <ArrowLeft size={20} />
+              </button>
+              <div className="flex items-center gap-2">
+                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${game.color} flex items-center justify-center`}>
+                  <game.icon size={20} />
+                </div>
+                <div>
+                  <h1 className="font-bold">{game.name}</h1>
+                  <p className="text-xs text-gray-400">Top {topWinners} win prizes!</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {priceLocked && lockedPrice && (
+                <div className="bg-green-900/30 border border-green-500/30 rounded-lg px-3 py-1.5 text-right">
+                  <div className="text-[10px] text-green-400 flex items-center gap-1">
+                    <Lock size={9} /> Locked Price
+                  </div>
+                  <div className="font-bold text-green-400">${Number(lockedPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                </div>
+              )}
+              {myRank && (
+                <div className="bg-yellow-900/30 border border-yellow-500/30 rounded-lg px-3 py-1.5 text-right">
+                  <div className="text-[10px] text-yellow-400">Your Rank</div>
+                  <div className="font-bold text-yellow-400">#{myRank}</div>
+                </div>
+              )}
+              <div className="bg-dark-700 rounded-lg px-3 py-1.5 text-right">
+                <div className="text-[10px] text-gray-400">Balance</div>
+                <div className="font-bold text-purple-400">{balanceTokens} Tkt</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-3 py-2 flex-1 min-h-0 overflow-y-auto overscroll-y-contain lg:overflow-hidden touch-pan-y">
+        <div className="flex flex-col lg:flex-row gap-3 min-h-min lg:h-full lg:min-h-0">
+
+          {/* LEFT COLUMN */}
+          <div className="lg:w-[280px] flex-shrink-0 order-1 lg:order-1 overflow-y-auto space-y-3">
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
+              <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
+                <Award size={12} className="text-yellow-400" />
+                Prize Structure (full pool share)
+              </h3>
+              <p className="text-[9px] text-gray-500 mb-1.5">
+                Each rank wins the shown <span className="text-cyan-400/90">% of the Bank</span>. ₹ shown is a projection from the current pool.
+              </p>
+              <p className="text-[9px] text-amber-200/90 mb-1.5 leading-snug rounded-md bg-amber-950/25 border border-amber-700/30 px-2 py-1.5">
+                <span className="font-semibold text-amber-300">Ties (same distance to BTC close):</span> winning
+                amount is <span className="text-amber-200">pooled and split equally</span> among tied tickets.
+              </p>
+              <div className="space-y-1 text-xs max-h-[200px] overflow-y-auto">
+                {prizeStructureRows.map(({ rank, percent }) => (
+                  <div key={rank} className="flex justify-between py-1 border-b border-dark-600 gap-2">
+                    <span className="text-gray-400 shrink-0">#{rank}</span>
+                    <div className="text-right min-w-0">
+                      <span className="text-green-400 font-bold tabular-nums">{formatJackpotPoolPercent(percent)}</span>
+                      <span className="text-gray-500 text-[10px] ml-1">of pool</span>
+                      {totalPool > 0 && percent > 0 && (
+                        <div className="text-[10px] text-gray-500 tabular-nums">
+                          ≈ ₹{Math.round((totalPool * percent) / 100).toLocaleString('en-IN')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="space-y-1 text-xs mt-1">
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Top Winners</span>
+                  <span className="text-yellow-400 font-bold">{topWinners}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">1 Ticket</span>
+                  <span className="font-medium">₹{oneTicketRs}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-dark-600">
+                  <span className="text-gray-400">Result At</span>
+                  <span className="font-medium">{settings?.resultTime || '23:30'} IST</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-gray-400">BTC Price</span>
+                  {priceLocked && lockedPrice ? (
+                    <span className="text-green-400 font-bold flex items-center gap-1"><Lock size={10} /> ${Number(lockedPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                  ) : (
+                    <span className="text-yellow-400 text-[10px]">Not locked yet</span>
+                  )}
+                </div>
+              </div>
+              <p className="text-[10px] text-gray-500 mt-2 text-center">
+                Closing and top {topWinners} winners are decided at {settings?.resultTime || '23:30'} IST.
+              </p>
+            </div>
+
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-600">
+              <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5">
+                <Timer size={12} className="text-gray-400" />
+                Your History
+              </h3>
+              {bidHistory.length === 0 ? (
+                <p className="text-gray-500 text-[10px] text-center py-2">No bids yet</p>
+              ) : (
+                <div className="space-y-1 max-h-[160px] overflow-y-auto">
+                  {bidHistory.map((bid, idx) => {
+                    const btcAtBid = formatBtcBidPx(bid.predictedBtc);
+                    const dist =
+                      bid.distanceToReference != null && Number.isFinite(Number(bid.distanceToReference))
+                        ? Number(bid.distanceToReference).toFixed(2)
+                        : '—';
+                    return (
+                      <div key={bid._id || idx} className={`flex items-center justify-between p-2 rounded-lg text-xs ${
+                        bid.status === 'won' ? 'bg-green-900/20' :
+                        bid.status === 'lost' ? 'bg-red-900/20' :
+                        'bg-dark-700'
+                      }`}>
+                        <div>
+                          <div className="text-[10px] text-gray-500">{bid.betDate}</div>
+                          <div className="text-[10px] text-gray-500 mt-0.5">Predicted BTC</div>
+                          <div className="text-[12px] text-cyan-300 font-bold tabular-nums">
+                            {btcAtBid || (
+                              <span className="text-gray-500 font-medium text-[11px]">Not recorded</span>
+                            )}
+                          </div>
+                          {bid.rank != null && (
+                            <div className="text-[10px] text-gray-500 mt-1">Rank #{bid.rank}</div>
+                          )}
+                          <div className="text-[10px] text-gray-500 mt-0.5">Distance: <span className="text-cyan-400 font-medium">{dist}</span></div>
+                        </div>
+                        <div className="text-right">
+                          {bid.status === 'pending' && <span className="text-yellow-400 font-medium">Pending</span>}
+                          {bid.status === 'won' && <span className="text-green-400 font-bold">+{toTokens(bid.prize)} T</span>}
+                          {bid.status === 'lost' && <span className="text-red-400 font-bold">-{toTokens(bid.amount)} T</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <GamesWalletGameLedgerPanel
+              gameId={ledgerGameIdFromUi(game.id)}
+              userToken={user?.token}
+              tokenValue={oneTicketRs}
+              title="Order history — BTC Jackpot"
+              limit={500}
+              enableDateFilter
+              footerNote="Newest entries appear first. The Balance column is your games wallet after that line — read from the bottom upward to follow time order."
+            />
+          </div>
+
+          {/* CENTER COLUMN - BTC live price */}
+          <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
+            <GameLivePricePanel gameId="btcupdown" fullHeight />
+          </div>
+
+          {/* RIGHT COLUMN */}
+          <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <div className="overflow-y-auto flex-1 space-y-2">
+              <div className="bg-gradient-to-r from-purple-900/40 to-pink-900/40 border border-purple-500/30 rounded-xl p-3 text-center">
+                <div className="text-[10px] text-purple-300 font-medium mb-1 flex items-center justify-center gap-1">
+                  <Zap size={10} /> BANK
+                </div>
+                <div className="text-2xl font-bold text-purple-300 tabular-nums">
+                  ₹{Number(totalPool || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div className="text-[10px] text-gray-400 mt-1">
+                  {totalBids} bid{totalBids !== 1 ? 's' : ''} in the kitty
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-r from-cyan-900/40 to-blue-900/40 border border-cyan-500/30 rounded-xl p-3 text-center">
+                <div className="text-[10px] text-cyan-300 font-medium mb-1 flex items-center justify-center gap-1">
+                  <TrendingUp size={10} /> BTC SPOT
+                </div>
+                <div className="text-2xl font-bold text-cyan-300 tabular-nums">
+                  {(leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot)))
+                    ? `$${leaderboardSpot.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : 'Loading...'}
+                </div>
+                <div className="text-[10px] text-gray-400 mt-1">
+                  {priceLocked ? 'Locked result' : 'Live price'}
+                </div>
+              </div>
+
+              {showJackpotOffHoursTestHint && (
+                <div className="bg-emerald-900/20 border border-emerald-500/35 rounded-lg px-2.5 py-2 text-[10px] text-emerald-200/95 leading-snug">
+                  <span className="font-semibold text-emerald-300">Test mode</span>
+                  — bidding hours are not enforced on the API in local dev. Production uses{' '}
+                  {settings?.biddingStartTime || '00:00'}–{settings?.biddingEndTime || '23:29'} IST unless{' '}
+                  <span className="font-mono text-emerald-400/90">BTC_JACKPOT_ALLOW_TEST_BIDDING</span> is set on the server.
+                </div>
+              )}
+
+              <div className="bg-dark-800 rounded-xl p-3 border border-yellow-500/30">
+                <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5 text-yellow-400">
+                  <Crown size={14} />
+                  LIVE TOP 5
+                </h3>
+                <p className="text-[9px] text-gray-500 mb-2">
+                  Nearest to BTC spot first · tie → earlier time
+                  {leaderboardSpot != null && Number.isFinite(Number(leaderboardSpot)) ? (
+                    <span className="text-cyan-500/90">
+                      {' '}· spot ${Number(leaderboardSpot).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                    </span>
+                  ) : null}
+                </p>
+                <p className="text-[9px] text-gray-500 mb-2 leading-snug">
+                  Right column: <span className="text-gray-400">Stake</span> = ticket cost (usually 1 ticket).{' '}
+                  <span className="text-emerald-300/90">Est. gross</span> = that row&apos;s rank % × pool (same as settlement).
+                </p>
+                <p className="text-[9px] text-cyan-500/80 mb-2 leading-snug">
+                  Order updates with the chart LTP (nearest spot) — no refresh needed.
+                </p>
+                {leaderboard.slice(0, 5).length === 0 ? (
+                  <p className="text-gray-500 text-[10px] text-center py-3">No bids yet today</p>
+                ) : (
+                  <div className="space-y-1">
+                    {leaderboard.slice(0, 5).map((entry, idx) => {
+                      const isMe = !!entry.isOwnBid;
+                      const bidTime = entry.bidTime ? new Date(entry.bidTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--';
+                      const estGross = Number(entry.projectedPrize) || 0;
+                      return (
+                        <div
+                          key={String(entry.bidId ?? idx)}
+                          className={`flex items-center justify-between p-2 rounded-lg text-xs transition-all duration-300 ease-out ${
+                            isMe ? 'bg-yellow-900/30 border border-yellow-500/20' :
+                            idx < 3 ? 'bg-dark-700/80' : 'bg-dark-700/40'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                              idx === 0 ? 'bg-yellow-500 text-black' :
+                              idx === 1 ? 'bg-gray-300 text-black' :
+                              idx === 2 ? 'bg-orange-600 text-white' :
+                              'bg-dark-600 text-gray-400'
+                            }`}>
+                              {idx + 1}
+                            </div>
+                            <div>
+                              <div className={`font-medium ${isMe ? 'text-yellow-400' : 'text-white'}`}>
+                                {isMe ? 'You' : entry.name}
+                              </div>
+                              <div className="text-[10px] text-gray-500 flex items-center gap-1.5 flex-wrap">
+                                <span className="text-cyan-300 font-semibold tabular-nums">{btcAtBidDisplay(entry.niftyPriceAtBid)}</span>
+                                <span className="text-gray-600">|</span>
+                                <span className="text-cyan-400/90">{bidTime}</span>
+                              </div>
+                              <div className="text-[9px] text-gray-600 mt-0.5">Predicted BTC</div>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 pl-1">
+                            <div
+                              className="text-yellow-300 font-bold text-[11px] tabular-nums"
+                              title="Amount staked on this ticket (not the prize)"
+                            >
+                              ₹{Number(entry.amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-[9px] text-gray-500">Stake</div>
+                            {estGross > 0 && (
+                              <>
+                                <div className="text-emerald-300/95 font-bold text-[11px] tabular-nums mt-1">
+                                  ≈ ₹{estGross.toLocaleString('en-IN')}
+                                </div>
+                                <div className="text-[9px] text-emerald-500/80">Est. gross</div>
+                              </>
+                            )}
+                            {estGross === 0 && (
+                              <div className="text-[9px] text-gray-600 mt-1">Outside top {topWinners}</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {message && (
+                <div className={`p-2 rounded-lg text-xs font-medium ${message.type === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                  {message.text}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {ticketsToday > 0 && todayBid && (
+                  <div className="rounded-xl p-3 border border-yellow-500/30 bg-yellow-900/15 text-center text-xs">
+                    <div className="text-gray-400 mb-1">Your tickets today</div>
+                    <div className="text-lg font-bold text-yellow-400">{ticketsToday}</div>
+                    <div className="text-[10px] text-gray-500 mt-1">
+                      Staked ₹{Number(totalStakedToday || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      {myRank != null && (
+                        <span className="text-cyan-400/90"> · Best rank #{myRank}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {ticketsToday > 0 && todayBid && (
+                  <div className={`rounded-xl p-4 border ${
+                    todayBid.status === 'won' ? 'bg-green-900/20 border-green-500/30' :
+                    todayBid.status === 'lost' ? 'bg-red-900/20 border-red-500/30' :
+                    'bg-yellow-900/20 border-yellow-500/30'
+                  }`}>
+                    <div className="text-center">
+                      <div className="text-gray-400 text-xs mb-1">Latest entry</div>
+                      {formatBtcBidPx(todayBid.predictedBtc) && (
+                        <div className="text-cyan-400 text-sm font-semibold mb-1">
+                          Predicted {formatBtcBidPx(todayBid.predictedBtc)}
+                        </div>
+                      )}
+                      {myRank != null && (
+                        <div className={`text-sm font-bold ${myRank <= topWinners ? 'text-green-400' : 'text-red-400'}`}>
+                          Best rank #{myRank}{myRank <= topWinners ? ' 🏆' : ''}
+                        </div>
+                      )}
+                      {todayBid.status === 'pending' && (
+                        <div className="text-yellow-400 text-[10px] font-medium mt-2">Result at {settings?.resultTime || '23:30'} IST</div>
+                      )}
+                      {todayBid.status === 'pending' && todayBids.filter((b) => b.status === 'pending').length > 0 && (
+                        <div className="mt-3 space-y-2 text-left border-t border-yellow-500/20 pt-3">
+                          <div className="text-[10px] text-gray-500 text-center">Edit predicted BTC per ticket (no cancel)</div>
+                          {todayBids
+                            .filter((b) => b.status === 'pending')
+                            .map((b) => {
+                              const bidKey = String(b._id);
+                              return (
+                                <div key={b._id} className="space-y-1">
+                                  <div className="text-[9px] text-gray-500">
+                                    {b.placedAtIst ||
+                                      (b.createdAt
+                                        ? new Date(b.createdAt).toLocaleTimeString('en-IN', {
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            second: '2-digit',
+                                          })
+                                        : 'Ticket')}
+                                  </div>
+                                  <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    step="0.01"
+                                    min="1"
+                                    max="10000000"
+                                    placeholder="Predicted BTC (USD)"
+                                    value={predictionDrafts[bidKey] ?? ''}
+                                    onChange={(e) =>
+                                      setPredictionDrafts((p) => ({ ...p, [bidKey]: e.target.value }))
+                                    }
+                                    className="w-full px-2 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-cyan-200 text-xs tabular-nums placeholder:text-gray-600 focus:border-cyan-500/50 focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdatePredictionBid(b._id)}
+                                    disabled={modifyingBidId === b._id}
+                                    className="w-full py-1.5 px-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-cyan-500/30 text-[10px] text-cyan-300 font-medium disabled:opacity-50"
+                                  >
+                                    {modifyingBidId === b._id ? 'Saving…' : 'Save prediction'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      )}
+                      {todayBid.status === 'won' && todayBid.prize > 0 && (
+                        <div className="text-green-400 text-sm font-bold mt-1">Won {toTokens(todayBid.prize)} T</div>
+                      )}
+                      {todayBid.status === 'lost' && (
+                        <div className="text-red-400 text-xs mt-1">This entry did not place in the prize ranks.</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {priceLocked && lockedPrice && (
+                  <div className="bg-green-900/20 border border-green-500/30 rounded-xl p-3 text-center">
+                    <div className="text-[10px] text-green-400 flex items-center justify-center gap-1 mb-1">
+                      <Lock size={10} /> BTC Price Locked
+                    </div>
+                    <div className="text-xl font-bold text-green-400">${Number(lockedPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                    {lockedAt && (
+                      <div className="text-[10px] text-gray-500 mt-1">
+                        Locked at {new Date(lockedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} IST
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-2 space-y-2 flex-shrink-0">
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 text-center space-y-2">
+                <div className="text-[10px] text-gray-400 font-medium">Each purchase · 1 ticket · ₹{oneTicketRs.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+                <div className="text-left">
+                  <label htmlFor="btc-jackpot-predicted" className="block text-[10px] text-gray-500 mb-1 font-medium">
+                    Predicted BTC price (USD)
+                  </label>
+                  <input
+                    id="btc-jackpot-predicted"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="1"
+                    max="10000000"
+                    placeholder="e.g. 92850.50"
+                    value={predictedPriceInput}
+                    onChange={(e) => setPredictedPriceInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-dark-700 border border-dark-600 text-cyan-200 text-sm tabular-nums placeholder:text-gray-600 focus:border-yellow-500/40 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handlePlaceBid}
+                disabled={placing || oneTicketRs > balance || !gameEnabled}
+                className={`w-full py-3 rounded-xl font-bold text-sm transition-all ${
+                  !placing && oneTicketRs <= balance && gameEnabled
+                    ? 'bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-black'
+                    : 'bg-dark-700 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                {placing ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <RefreshCw size={16} className="animate-spin" /> Placing...
+                  </span>
+                ) : oneTicketRs > balance ? (
+                  'Insufficient balance'
+                ) : !gameEnabled ? (
+                  'Game disabled'
+                ) : (
+                  `Add 1 ticket (₹${oneTicketRs.toLocaleString('en-IN')})`
+                )}
+              </button>
+
+              <div className="bg-dark-800/50 rounded-lg p-2 text-[10px] text-gray-500 text-center">
+                <Zap size={10} className="inline mr-1 text-yellow-400" />
+                Ranking uses your predicted BTC level vs live spot (then vs locked close). Tap again for another ticket (up to daily limit).
               </div>
             </div>
           </div>

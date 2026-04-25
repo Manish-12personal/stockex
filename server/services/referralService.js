@@ -3,12 +3,17 @@ import Referral from '../models/Referral.js';
 import { atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 import GameSettings from '../models/GameSettings.js';
+import {
+  migrateLegacyFirstGameWin,
+  hasFirstWinInGame,
+  markFirstWinInGame,
+} from '../utils/referralFirstGameWin.js';
 
 /**
  * Credit referral reward for game win (based on game-specific percentage)
  * @param {string} referredUserId - The user who won
- * @param {number} winAmount - The winning amount
- * @param {string} gameType - Game type (e.g., 'niftyUpDown', 'btcUpDown', 'niftyNumber', 'niftyBracket', 'niftyJackpot')
+ * @param {number} winAmount - Base for % (e.g. prize, day bank) depending on game
+ * @param {string} gameType - GameSettings key (e.g. 'niftyUpDown', 'btcUpDown', 'niftyJackpot', 'btcJackpot')
  * @param {number} rank - User's rank in the game (for top ranks check in jackpot)
  */
 export async function creditReferralGameReward(referredUserId, winAmount, gameType, rank = null) {
@@ -18,34 +23,34 @@ export async function creditReferralGameReward(referredUserId, winAmount, gameTy
       return { credited: false, reason: 'No referrer' };
     }
 
-    // Exclude demo users from referral bonuses
     if (referredUser.isDemo) {
       return { credited: false, reason: 'Demo users do not generate referral bonuses' };
     }
 
-    // Check if this is the first game win
-    if (referredUser.referralStats?.firstGameWin) {
-      return { credited: false, reason: 'Already credited first game win' };
+    if (migrateLegacyFirstGameWin(referredUser)) {
+      await referredUser.save();
+    }
+    if (hasFirstWinInGame(referredUser, gameType)) {
+      return { credited: false, reason: 'Already had first win in this game' };
     }
 
-    // Fetch game settings to get referral distribution percentage
     const settings = await GameSettings.getSettings();
     const gameConfig = settings?.games?.[gameType];
+    if (!gameConfig) {
+      return { credited: false, reason: 'Unknown game in settings' };
+    }
     const referralConfig = gameConfig?.referralDistribution || {};
 
-    // Check if game has top ranks restriction (e.g., Nifty Jackpot)
     if (referralConfig.topRanksOnly && rank !== null) {
       if (rank > referralConfig.topRanksCount) {
         return { credited: false, reason: `Not in top ${referralConfig.topRanksCount}` };
       }
     }
 
-    // Check if user is in top 10 (if rank is provided and no topRanksOnly setting)
     if (rank !== null && !referralConfig.topRanksOnly && rank > 10) {
       return { credited: false, reason: 'Not in top 10' };
     }
 
-    // Check if user converted from demo to real - only count wins within 1 month of conversion
     if (referredUser.convertedToRealAt) {
       const oneMonthAfterConversion = new Date(referredUser.convertedToRealAt);
       oneMonthAfterConversion.setMonth(oneMonthAfterConversion.getMonth() + 1);
@@ -60,23 +65,25 @@ export async function creditReferralGameReward(referredUserId, winAmount, gameTy
       return { credited: false, reason: 'Referrer not found' };
     }
 
-    // Calculate reward amount using game-specific percentage (default to 5% if not set)
     const rewardPercent = referralConfig.winPercent || 5;
     const rewardAmount = winAmount * (rewardPercent / 100);
 
-    // Credit to referrer's games wallet
+    const isBtcJackpotKey = gameType === 'btcJackpot';
+    const referralDescription = isBtcJackpotKey
+      ? `Referral bonus: ${rewardPercent}% of BTC Jackpot day bank (₹${Number(winAmount).toFixed(2)}) — ${referredUser.username}'s first game win in BTC Jackpot`
+      : `Referral bonus: ${rewardPercent}% of ${referredUser.username}'s first win in ${gameType}`;
+
     const gw = await atomicGamesWalletUpdate(User, referrer._id, {
       balance: rewardAmount,
       realizedPnL: rewardAmount,
       todayRealizedPnL: rewardAmount,
     });
 
-    // Record ledger entry
     await recordGamesWalletLedger(referrer._id, {
       gameId: 'referral',
       entryType: 'credit',
       amount: rewardAmount,
-      description: `Referral bonus: ${rewardPercent}% of ${referredUser.username}'s first win in ${gameType}`,
+      description: referralDescription,
       meta: {
         referredUser: referredUserId,
         referredUsername: referredUser.username,
@@ -84,11 +91,11 @@ export async function creditReferralGameReward(referredUserId, winAmount, gameTy
         winAmount,
         rank,
         rewardPercent,
+        ...(isBtcJackpotKey && { referralBase: 'btc_jackpot_day_bank', dayBankINR: winAmount }),
       },
       balanceAfter: gw.balance,
     });
 
-    // Update referral record
     await Referral.findOneAndUpdate(
       { referredUser: referredUserId },
       {
@@ -96,18 +103,17 @@ export async function creditReferralGameReward(referredUserId, winAmount, gameTy
           'firstGameWin.credited': true,
           'firstGameWin.amount': winAmount,
           'firstGameWin.creditedAt': new Date(),
-          'firstGameWin.gameType': gameType,
-          earnings: (await Referral.findOne({ referredUser: referredUserId }))?.earnings + rewardAmount || rewardAmount,
+          'firstGameWin.gameName': String(gameType),
         },
+        $inc: { earnings: rewardAmount },
       }
     );
 
-    // Mark user's first game win as credited
+    markFirstWinInGame(referredUser, gameType);
     referredUser.referralStats.firstGameWin = true;
     referredUser.referralStats.totalReferralEarnings = (referredUser.referralStats.totalReferralEarnings || 0) + rewardAmount;
     await referredUser.save();
 
-    // Update referrer's total referral earnings
     referrer.referralStats.totalReferralEarnings = (referrer.referralStats.totalReferralEarnings || 0) + rewardAmount;
     await referrer.save();
 
@@ -131,17 +137,14 @@ export async function creditReferralTradingReward(referredUserId, brokerageAmoun
       return { credited: false, reason: 'No referrer' };
     }
 
-    // Exclude demo users from referral bonuses
     if (referredUser.isDemo) {
       return { credited: false, reason: 'Demo users do not generate referral bonuses' };
     }
 
-    // Check if this is the first trading win
     if (referredUser.referralStats?.firstTradingWin) {
       return { credited: false, reason: 'Already credited first trading win' };
     }
 
-    // Check if user converted from demo to real - only count wins within 1 month of conversion
     if (referredUser.convertedToRealAt) {
       const oneMonthAfterConversion = new Date(referredUser.convertedToRealAt);
       oneMonthAfterConversion.setMonth(oneMonthAfterConversion.getMonth() + 1);
@@ -156,7 +159,6 @@ export async function creditReferralTradingReward(referredUserId, brokerageAmoun
       return { credited: false, reason: 'Referrer not found' };
     }
 
-    // Credit brokerage amount to referrer's main wallet
     referrer.wallet.cashBalance += brokerageAmount;
     referrer.wallet.tradingBalance += brokerageAmount;
     referrer.wallet.realizedPnL += brokerageAmount;
@@ -170,7 +172,6 @@ export async function creditReferralTradingReward(referredUserId, brokerageAmoun
     referrer.referralStats.totalReferralEarnings = (referrer.referralStats.totalReferralEarnings || 0) + brokerageAmount;
     await referrer.save();
 
-    // Update referral record
     await Referral.findOneAndUpdate(
       { referredUser: referredUserId },
       {
@@ -178,12 +179,11 @@ export async function creditReferralTradingReward(referredUserId, brokerageAmoun
           'firstTradingWin.credited': true,
           'firstTradingWin.amount': brokerageAmount,
           'firstTradingWin.creditedAt': new Date(),
-          earnings: (await Referral.findOne({ referredUser: referredUserId }))?.earnings + brokerageAmount || brokerageAmount,
         },
+        $inc: { earnings: brokerageAmount },
       }
     );
 
-    // Mark user's first trading win as credited
     referredUser.referralStats.firstTradingWin = true;
     referredUser.referralStats.totalReferralEarnings = (referredUser.referralStats.totalReferralEarnings || 0) + brokerageAmount;
     await referredUser.save();

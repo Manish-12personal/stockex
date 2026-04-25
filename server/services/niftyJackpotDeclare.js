@@ -200,7 +200,7 @@ export async function declareNiftyJackpotResult(date) {
           const referralResult = await creditReferralGameReward(
             bid.user,
             prizeCredit,
-            'Nifty Jackpot',
+            'niftyJackpot',
             bid.rank
           );
           if (referralResult.credited) {

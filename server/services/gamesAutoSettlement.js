@@ -27,6 +27,7 @@ import { declareNiftyJackpotResult, NiftyJackpotDeclareError } from './niftyJack
 import { declareNiftyNumberResultForDate } from './niftyNumberDeclareService.js';
 
 import { settleUpDownUserWindowFromLedger } from './upDownSettlementService.js';
+import { creditReferralPerWinFromGameSettings } from './referralPerWin.js';
 
 import { getMarketData } from './zerodhaWebSocket.js';
 import { getCryptoPrice } from './binanceWebSocket.js';
@@ -1195,6 +1196,25 @@ export async function runGamesAutoSettlementTick() {
 
           );
 
+        }
+
+        if (out.ok && Number(out.totalWinningStakeForReferral) > 0) {
+          const gameType = r.gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
+          try {
+            const refOut = await creditReferralPerWinFromGameSettings(
+              uid,
+              out.totalWinningStakeForReferral,
+              gameType,
+              { windowNumber: wn, settlementDay, gameId: r.gameId }
+            );
+            if (refOut.credited) {
+              console.log(
+                `[gamesAutoSettlement] referral per-win user=${uid} game=${r.gameId} w=${wn} → referrer ₹${refOut.amount}`
+              );
+            }
+          } catch (refErr) {
+            console.warn('[gamesAutoSettlement] referral per-win failed:', refErr?.message || refErr);
+          }
         }
 
       }

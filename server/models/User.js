@@ -733,6 +733,11 @@ const userSchema = new mongoose.Schema({
   },
   // Track first-time wins for referral rewards
   referralStats: {
+    /** Per GameSettings key (e.g. btcUpDown); first successful win in that game triggers one referral. */
+    firstGameWinByGame: {
+      type: Object,
+      default: {},
+    },
     firstGameWin: {
       type: Boolean,
       default: false

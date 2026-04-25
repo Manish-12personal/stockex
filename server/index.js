@@ -27,11 +27,14 @@ import marketDataRoutes from './routes/marketDataRoutes.js';
 import adminTransactionSlipRoutes from './routes/adminTransactionSlipRoutes.js';
 import cryptoLeverageRoutes from './routes/cryptoLeverageRoutes.js';
 import referralRoutes from './routes/referralRoutes.js';
+import btcJackpotRoutes from './routes/btcJackpotRoutes.js';
+import adminBtcJackpotRoutes from './routes/adminBtcJackpotRoutes.js';
 import User from './models/User.js';
 import Trade from './models/Trade.js';
 import MarketState from './models/MarketState.js';
 import TradingService from './services/tradingService.js';
 import { runGamesAutoSettlementTick, autoSettleBtcUpDown } from './services/gamesAutoSettlement.js';
+import { btcJackpotAutoTick } from './jobs/btcJackpotScheduler.js';
 import GameSettings from './models/GameSettings.js';
 import { runInstrumentAvailabilityTicks } from './services/instrumentAvailabilityJobs.js';
 import { startInstrumentExpiryMonitoring } from './services/instrumentExpiryService.js';
@@ -125,6 +128,8 @@ app.use('/api/market', marketDataRoutes);
 app.use('/api/admin', adminTransactionSlipRoutes);
 app.use('/api/crypto-leverage', cryptoLeverageRoutes);
 app.use('/api/referral', referralRoutes);
+app.use('/api/user/btc-jackpot', btcJackpotRoutes);
+app.use('/api/admin/btc-jackpot', adminBtcJackpotRoutes);
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -205,6 +210,14 @@ const PORT = process.env.PORT || 5001;
     };
     fastBtcTick();
     setInterval(fastBtcTick, 5 * 1000);
+
+    // BTC Jackpot auto-tick: locks 23:30 BTC close and declares top-20 winners dynamically.
+    // The tick is a no-op until IST crosses the configured resultTime and there are pending bids.
+    // Single-flight guard lives inside btcJackpotAutoTick, so overlapping ticks deduplicate.
+    btcJackpotAutoTick().catch((e) => console.warn('[btcJackpot]', e?.message || e));
+    setInterval(() => {
+      btcJackpotAutoTick().catch((e) => console.warn('[btcJackpot]', e?.message || e));
+    }, 30 * 1000);
   });
 })().catch((err) => {
   console.error('Fatal startup error:', err);

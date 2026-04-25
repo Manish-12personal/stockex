@@ -22,7 +22,7 @@ import { currentTotalSecondsIST } from '../../lib/btcUpDownWindows.js';
  * Creates UpDownWindowSettlement row; credits games wallet for wins.
  *
  * @param {string} settlementDay YYYY-MM-DD (IST) — session day for this window (avoids repeating window # across days).
- * @returns {Promise<{ ok: true, settledCount: number, ledgerWins: number } | { ok: false, error: string }>}
+ * @returns {Promise<{ ok: true, settledCount: number, ledgerWins: number, totalWinningStakeForReferral: number } | { ok: false, error: string }>}
  */
 export async function settleUpDownUserWindowFromLedger(
   userId,
@@ -143,6 +143,8 @@ export async function settleUpDownUserWindowFromLedger(
   let totalLoss = 0;
   let totalBrokerage = 0;
   let settledCount = 0;
+  /** Sum of stake on winning legs — base for referrer % ("ticket price" total) in GameSettings. */
+  let totalWinningStakeForReferral = 0;
   const ledgerEntries = [];
   const hierarchyJobs = [];
 
@@ -166,6 +168,7 @@ export async function settleUpDownUserWindowFromLedger(
       grossWin = amount * winMult;
       creditTotal = parseFloat(Number(grossWin).toFixed(2));
       pnl = parseFloat((grossWin - amount).toFixed(2));
+      totalWinningStakeForReferral += amount;
       if (useGrossPrizeHierarchy && userDoc) {
         sumWinningGrossForHierarchy += grossWin;
       }
@@ -319,5 +322,10 @@ export async function settleUpDownUserWindowFromLedger(
     }
   }
 
-  return { ok: true, settledCount, ledgerWins: ledgerEntries.length };
+  return {
+    ok: true,
+    settledCount,
+    ledgerWins: ledgerEntries.length,
+    totalWinningStakeForReferral: parseFloat(Number(totalWinningStakeForReferral).toFixed(2)),
+  };
 }

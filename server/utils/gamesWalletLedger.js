@@ -14,6 +14,7 @@ export const GAMES_WALLET_GAME_LABELS = {
   niftyNumber: 'Nifty Number',
   niftyBracket: 'Nifty Bracket',
   niftyJackpot: 'Nifty Jackpot',
+  btcJackpot: 'BTC Jackpot',
   transfer_in: 'Main wallet → Games',
   transfer_out: 'Games → Main wallet',
 };

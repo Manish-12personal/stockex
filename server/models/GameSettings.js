@@ -259,6 +259,77 @@ const gameSettingsSchema = new mongoose.Schema({
       referralDistribution: {
         winPercent: { type: Number, default: 10 }
       }
+    },
+    btcJackpot: {
+      ...gameConfigSchema.obj,
+      name: { type: String, default: 'BTC Jackpot' },
+      description: {
+        type: String,
+        default:
+          'Predict BTC USD price, win from the Bank by ranking closest to the 23:30 IST close. Top 20 share prizes; ties split equally.',
+      },
+      enabled: { type: Boolean, default: true },
+
+      /** ₹ per ticket — fixed stake; user only chooses predicted BTC price */
+      ticketPrice: { type: Number, default: 500 },
+      minTickets: { type: Number, default: 1 },
+      /** 1 = one predicted-price ticket per request (scenario / UX default) */
+      maxTicketsPerRequest: { type: Number, default: 1 },
+      /** Max separate bids a user can place per IST day */
+      bidsPerDay: { type: Number, default: 200 },
+      /** Not used directly (prize from Bank share); kept for schema parity */
+      maxTickets: { type: Number, default: 5000 },
+      winMultiplier: { type: Number, default: 1 },
+      roundDuration: { type: Number, default: 86400 },
+
+      biddingStartTime: { type: String, default: '00:00' }, // HH:mm IST
+      biddingEndTime: { type: String, default: '23:29' },   // inclusive through :59
+      resultTime: { type: String, default: '23:30' },        // DYNAMIC — admin editable
+
+      topWinners: { type: Number, default: 20 },
+
+      /** Per-rank % of the Bank (point 8). Sum of defaults = 100%. Admin can edit. */
+      prizePercentages: {
+        type: mongoose.Schema.Types.Mixed,
+        default: () => [
+          { rank: 1,  percent: 45  },
+          { rank: 2,  percent: 10  },
+          { rank: 3,  percent: 5   },
+          { rank: 4,  percent: 2   },
+          { rank: 5,  percent: 1.5 },
+          { rank: 6,  percent: 1   },
+          { rank: 7,  percent: 1   },
+          { rank: 8,  percent: 0.75 },
+          { rank: 9,  percent: 0.75 },
+          { rank: 10, percent: 0.75 },
+          { rank: 11, percent: 0.5 },
+          { rank: 12, percent: 0.5 },
+          { rank: 13, percent: 0.5 },
+          { rank: 14, percent: 0.5 },
+          { rank: 15, percent: 0.5 },
+          { rank: 16, percent: 0.5 },
+          { rank: 17, percent: 0.5 },
+          { rank: 18, percent: 0.5 },
+          { rank: 19, percent: 0.5 },
+          { rank: 20, percent: 0.5 },
+        ],
+      },
+
+      /**
+       * Hierarchy brokerage (point 11) — % of each winner's grossPrize, funded from Super Admin.
+       * These are NOT deducted from the user (point 13). Winner always receives full grossPrize.
+       */
+      hierarchy: {
+        subBrokerPercent: { type: Number, default: 2 },
+        brokerPercent:    { type: Number, default: 1 },
+        adminPercent:     { type: Number, default: 0.5 },
+      },
+
+      referralDistribution: {
+        winPercent:    { type: Number, default: 5 },
+        topRanksOnly:  { type: Boolean, default: true },
+        topRanksCount: { type: Number, default: 3 },
+      },
     }
   },
   
@@ -319,6 +390,46 @@ gameSettingsSchema.statics.getSettings = async function() {
   if (!settings) {
     settings = await this.create({});
   }
+
+  // Auto-heal new game blocks added to the schema after the singleton was created.
+  // Mongoose only applies defaults on document creation, so existing documents don't
+  // automatically pick up freshly-added game subschemas. We materialise them on first read
+  // so admin toggle / settings screens never 404 with "Game not found".
+  const KNOWN_GAMES = [
+    'niftyUpDown',
+    'btcUpDown',
+    'niftyNumber',
+    'niftyBracket',
+    'niftyJackpot',
+    'btcJackpot',
+  ];
+
+  let mutated = false;
+  if (!settings.games || typeof settings.games !== 'object') {
+    settings.games = {};
+    mutated = true;
+  }
+
+  // Build a fresh instance once; its nested subschemas will have all per-field defaults
+  // materialised by Mongoose so we can copy whole blocks onto the singleton.
+  const freshDefaults = new this({}).toObject();
+
+  for (const key of KNOWN_GAMES) {
+    if (!settings.games[key]) {
+      const seed = freshDefaults?.games?.[key] || { enabled: true };
+      settings.games[key] = seed;
+      mutated = true;
+    }
+  }
+  if (mutated) {
+    settings.markModified('games');
+    try {
+      await settings.save();
+    } catch (e) {
+      console.warn('[GameSettings] auto-heal save failed:', e?.message || e);
+    }
+  }
+
   return settings;
 };
 

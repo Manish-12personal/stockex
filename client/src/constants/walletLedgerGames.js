@@ -8,4 +8,5 @@ export const WALLET_LEDGER_GAME_OPTIONS = [
   { key: 'niftyNumber', label: 'Nifty Number' },
   { key: 'niftyBracket', label: 'Nifty Bracket' },
   { key: 'niftyJackpot', label: 'Nifty Jackpot' },
+  { key: 'btcJackpot', label: 'BTC Jackpot' },
 ];
