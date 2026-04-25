@@ -52,6 +52,8 @@ import {
 
   btcResultRefSecForUiWindow,
 
+  currentTotalSecondsIST,
+
 } from '../../lib/btcUpDownWindows.js';
 
 import {
@@ -600,7 +602,9 @@ async function _autoSettleBtcUpDownInner(settings, nowMs) {
     }
 
     // Stuck LTP: 15m/1m/ref failed — use Binance WS if present, else public REST (server has no "browser" LTP; REST fixes empty WS).
-    let closeSource = 'ist_15m_1m';
+    // priceSource MUST be one of the GameResult schema enum values:
+    // ['live_websocket', 'binance', 'cache', 'kite', 'forced']; any other value silently fails the save.
+    let closeSource = 'binance';
     if (!w15?.close || !Number.isFinite(w15.close) || w15.close <= 0) {
       if (nowSec >= resultSec) {
         const ageAfterResult = nowSec - resultSec;
@@ -614,7 +618,7 @@ async function _autoSettleBtcUpDownInner(settings, nowMs) {
           }
           if (ext != null && Number.isFinite(ext) && ext > 0) {
             w15 = { ...(w15 || {}), close: ext, open: w15?.open };
-            closeSource = fromWs ? 'binance_ws' : 'binance_spot_rest';
+            closeSource = fromWs ? 'live_websocket' : 'binance';
             console.log(
               `[btcUpDown] close w=${rw} from ${fromWs ? 'WebSocket' : 'Binance REST spot'} (15m+1m failed) @${fmtT(
                 resultSec
