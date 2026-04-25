@@ -38,6 +38,7 @@ import {
   btcResultRefSecForUiWindow,
   btcOpenRefSecForUiWindow,
   getBtcUpDownWindowState,
+  getBtcMaxWindowForSession,
 } from '../../lib/btcUpDownWindows.js';
 import { fetchBtcFifteenMinuteIstWindowOhlc, fetchBtcUsdt1mCloseAtIstRef } from '../utils/binanceBtcKline.js';
 import { resolveBtcUpDownPriceAtIstRef } from '../utils/btcUpDownOpenPrice.js';
@@ -2040,6 +2041,27 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
       return res.status(400).json({ message: 'Invalid window number' });
     }
 
+    // BTC Up/Down rule (per game instructions): the official result is published 15 minutes AFTER
+    // the trading window ends. So a bet placed during window W (e.g. #38, 09:15–09:30) is decided
+    // by the GameResult row for window W+1 (published at 09:45 = close@09:45 vs close@09:30).
+    // We tag the bet's stored windowNumber with that "settlement window" so the existing auto-settle
+    // loop, manual-settle, and /game-bet/resolve match it naturally at the correct IST second.
+    // Nifty keeps the original placement window (its result flow already aligns with wnPlace).
+    const wnSettle = gameId === 'btcupdown' ? wnPlace + 1 : wnPlace;
+
+    // Guard: BTC's last betting window of the IST session has no +1 result window in the same day
+    // (e.g. endSec=24:00 → maxW=96; W=96 bets would need W=97 which never materialises). Reject to
+    // avoid stuck debits that can't auto-settle.
+    if (gameId === 'btcupdown') {
+      const maxW = getBtcMaxWindowForSession(gameConfig);
+      if (Number.isFinite(maxW) && maxW > 0 && wnSettle > maxW) {
+        return res.status(400).json({
+          message:
+            'BTC Up/Down: betting is closed for the final 15-minute slot of the IST session (no result window available to settle).',
+        });
+      }
+    }
+
     const capUp = Math.max(0, Number(gameConfig.maxTicketsUpPerWindow) || 0);
     const capDown = Math.max(0, Number(gameConfig.maxTicketsDownPerWindow) || 0);
     const sideCap = prediction === 'UP' ? capUp : capDown;
@@ -2047,7 +2069,7 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
       const usedSide = await sumUpDownSideTicketsInWindow(
         userId,
         gameId,
-        wnPlace,
+        wnSettle,
         prediction,
         settlementDayPlace
       );
@@ -2132,7 +2154,8 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
       description: `${gameId === 'btcupdown' ? 'BTC' : 'Nifty'} Up/Down — bet (${prediction})`,
       meta: {
         prediction,
-        windowNumber: wnPlace,
+        windowNumber: wnSettle,
+        placementWindowNumber: wnPlace,
         entryPrice,
         tickets: parseFloat((betAmount / tValue).toFixed(2)),
         tokenValue: tValue,
@@ -2152,7 +2175,8 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
       userCode,
       {
         prediction,
-        windowNumber: wnPlace,
+        windowNumber: wnSettle,
+        placementWindowNumber: wnPlace,
         entryPrice,
         tickets: parseFloat((betAmount / tValue).toFixed(2)),
         tokenValue: tValue,
@@ -2180,7 +2204,7 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
           amount: betAmount,
           balanceAfter: gwRef.balance,
           description: 'BTC Up/Down — bet reversed (house pool unavailable)',
-          meta: { prediction, windowNumber: wnPlace },
+          meta: { prediction, windowNumber: wnSettle, placementWindowNumber: wnPlace },
         });
         return res.status(503).json({
           message: 'House pool temporarily unavailable; your stake was refunded. Try again later.',
