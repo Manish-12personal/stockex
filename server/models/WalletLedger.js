@@ -49,7 +49,9 @@ const walletLedgerSchema = new mongoose.Schema({
       'MCX_TRANSFER',       // Transfer between main wallet and MCX wallet
       'INTERNAL_TRANSFER',  // Internal transfer between wallets
       'GAMES_TRANSFER',     // Transfer between main wallet and games wallet
-      'GAME_PROFIT'         // Game profit share distributed through hierarchy
+      'GAME_PROFIT',        // Game profit share distributed through hierarchy
+      'REFERRAL_COMMISSION', // Credit to referrer from Super Admin's share of referred user's profit distribution
+      'REFERRAL_COMMISSION_TRANSFER' // Debit from Super Admin pool for referral transfer out
     ],
     required: true
   },
@@ -102,6 +104,10 @@ const walletLedgerSchema = new mongoose.Schema({
     /** Super Admin pool debit tagging (games client feed / audit) */
     poolDebitKind: { type: String },
     relatedUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    /** REFERRAL_COMMISSION: wallet segment the referred user earned from (games/mcx/crypto/forex) */
+    segment: { type: String },
+    /** REFERRAL_COMMISSION_TRANSFER: client the Super Admin share is being routed to */
+    referralClientId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
 }, { timestamps: true });
 

@@ -50,6 +50,7 @@ import {
 import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate, atomicGamesWalletDebit } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger, GAMES_WALLET_GAME_LABELS } from '../utils/gamesWalletLedger.js';
 import GamesWalletLedger from '../models/GamesWalletLedger.js';
+import WalletLedger from '../models/WalletLedger.js';
 import { sendOTP, verifyOTP } from '../services/otpService.js';
 import WalletTransferService from '../services/walletTransferService.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
@@ -849,6 +850,160 @@ router.get('/games-wallet/ledger', protectUser, async (req, res) => {
 
     res.json(enrichedRows);
   } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Referral earnings feed for the user's Wallet page "Total Referral Amount" tab.
+// Aggregates credits from three disjoint sources into one descending-time list:
+//   1) GamesWalletLedger  gameId='referral' credits  — first-game-win referral bonuses (creditReferralGameReward).
+//   2) WalletLedger       reason='REFERRAL_COMMISSION' — per-segment profit distribution referral shares
+//                         (distributeGameProfit → Super Admin share forwarded to referral client; segment
+//                         meta is games/mcx/crypto/forex). Enum was expanded so these now actually persist.
+//   3) User.wallet.transactions[] — legacy embedded entries from creditReferralTradingReward (first
+//                         winning trade brokerage). Kept so existing credits before the ledger split remain visible.
+router.get('/referral-earnings', protectUser, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 1000);
+
+    const SEGMENT_LABELS = {
+      games: 'games',
+      crypto: 'crypto trading',
+      mcx: 'mcx trading',
+      forex: 'forex trading',
+      trading: 'trading',
+    };
+
+    const gameKeyLabel = (k) => {
+      if (!k) return null;
+      // GamesWalletLedger uses settings keys (btcUpDown, niftyJackpot, …); reuse the same display map
+      // but also accept the ledger-level gameId shorthands (updown, btcupdown, …) for robustness.
+      const direct = GAMES_WALLET_GAME_LABELS[k];
+      if (direct) return direct;
+      const normalized = String(k).toLowerCase();
+      const altMap = {
+        niftyupdown: 'Nifty Up/Down',
+        btcupdown: 'BTC Up/Down',
+        niftynumber: 'Nifty Number',
+        niftybracket: 'Nifty Bracket',
+        niftyjackpot: 'Nifty Jackpot',
+      };
+      return altMap[normalized] || k;
+    };
+
+    const parseReferredNameFromDescription = (desc) => {
+      const s = String(desc || '');
+      // Common patterns written by gameProfitDistribution / referralService:
+      //   "Referral commission from <name>'s loss pool (₹X)"
+      //   "Referral commission from <name>'s brokerage (₹X)"
+      //   "Referral bonus: 5% of <name>'s first win in niftyJackpot"
+      //   "Referral bonus: Brokerage from <name>'s first winning trade"
+      let m = /from\s+([^']+)'s\s+(loss pool|brokerage|first winning)/i.exec(s);
+      if (m) return m[1].trim();
+      m = /of\s+([^']+)'s\s+first\s+win/i.exec(s);
+      if (m) return m[1].trim();
+      return null;
+    };
+
+    const [gameRows, trailRows, userDoc] = await Promise.all([
+      GamesWalletLedger.find({
+        user: userId,
+        gameId: 'referral',
+        entryType: 'credit',
+      })
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .lean(),
+
+      WalletLedger.find({
+        ownerType: 'USER',
+        ownerId: userId,
+        type: 'CREDIT',
+        $or: [
+          { reason: 'REFERRAL_COMMISSION' },
+          { 'meta.profitKind': 'REFERRAL_COMMISSION' },
+        ],
+      })
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .lean(),
+
+      User.findById(userId)
+        .select('referralStats wallet.transactions')
+        .lean(),
+    ]);
+
+    const entries = [];
+
+    for (const r of gameRows) {
+      const gameKey = r.meta?.gameType || null;
+      entries.push({
+        source: 'games',
+        segment: 'games',
+        segmentLabel: SEGMENT_LABELS.games,
+        referredUsername:
+          r.meta?.referredUsername || parseReferredNameFromDescription(r.description) || null,
+        gameKey,
+        gameLabel: gameKeyLabel(gameKey),
+        amount: Number(r.amount) || 0,
+        description: r.description || '',
+        createdAt: r.createdAt,
+      });
+    }
+
+    for (const r of trailRows) {
+      const rawSegment = (r.meta?.segment || 'trading').toLowerCase();
+      const segment = ['games', 'mcx', 'crypto', 'forex'].includes(rawSegment) ? rawSegment : 'trading';
+      entries.push({
+        source: 'walletLedger',
+        segment,
+        segmentLabel: SEGMENT_LABELS[segment] || SEGMENT_LABELS.trading,
+        referredUsername: parseReferredNameFromDescription(r.description),
+        gameKey: r.meta?.gameKey || null,
+        gameLabel: segment === 'games' ? gameKeyLabel(r.meta?.gameKey) : null,
+        amount: Number(r.amount) || 0,
+        description: r.description || '',
+        createdAt: r.createdAt,
+      });
+    }
+
+    // Legacy path: creditReferralTradingReward pushes into referrer.wallet.transactions[] directly.
+    // Those rows have no segment metadata — infer "trading" and parse the name from the description.
+    const embedded = Array.isArray(userDoc?.wallet?.transactions) ? userDoc.wallet.transactions : [];
+    for (const t of embedded) {
+      if (t?.type !== 'credit') continue;
+      const desc = String(t.description || '');
+      if (!/referral\s+(bonus|commission)/i.test(desc)) continue;
+      entries.push({
+        source: 'embeddedWallet',
+        segment: 'trading',
+        segmentLabel: SEGMENT_LABELS.trading,
+        referredUsername: parseReferredNameFromDescription(desc),
+        gameKey: null,
+        gameLabel: null,
+        amount: Number(t.amount) || 0,
+        description: desc,
+        createdAt: t.createdAt || null,
+      });
+    }
+
+    entries.sort((a, b) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tb - ta;
+    });
+
+    const total = entries.reduce((s, e) => s + (Number.isFinite(e.amount) ? e.amount : 0), 0);
+
+    res.json({
+      total: parseFloat(total.toFixed(2)),
+      totalLifetime: Number(userDoc?.referralStats?.totalReferralEarnings) || parseFloat(total.toFixed(2)),
+      count: entries.length,
+      entries,
+    });
+  } catch (error) {
+    console.error('Referral earnings fetch error:', error);
     res.status(500).json({ message: error.message });
   }
 });

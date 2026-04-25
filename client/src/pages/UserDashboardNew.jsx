@@ -89,6 +89,7 @@ const UserWalletPage = () => {
   const [fundRequests, setFundRequests] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [adminInfo, setAdminInfo] = useState(null);
+  const [referralEarnings, setReferralEarnings] = useState({ total: 0, totalLifetime: 0, count: 0, entries: [] });
   const [loading, setLoading] = useState(true);
   const [showDepositModal, setShowDepositModal] = useState(false);
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
@@ -98,18 +99,20 @@ const UserWalletPage = () => {
     if (!user?.token) return;
     try {
       const headers = { Authorization: `Bearer ${user.token}` };
-      const [walletRes, txRes, requestsRes, bankRes, adminRes] = await Promise.all([
+      const [walletRes, txRes, requestsRes, bankRes, adminRes, refRes] = await Promise.all([
         axios.get('/api/user/wallet', { headers }),
         axios.get('/api/user/funds/ledger?limit=50', { headers }).catch(() => ({ data: [] })),
         axios.get('/api/user/funds/fund-requests', { headers }).catch(() => ({ data: [] })),
         axios.get('/api/user/funds/admin-bank-accounts', { headers }).catch(() => ({ data: [] })),
-        axios.get('/api/user/funds/my-admin', { headers }).catch(() => ({ data: null }))
+        axios.get('/api/user/funds/my-admin', { headers }).catch(() => ({ data: null })),
+        axios.get('/api/user/referral-earnings', { headers }).catch(() => ({ data: { total: 0, totalLifetime: 0, count: 0, entries: [] } }))
       ]);
       setWalletData(walletRes.data);
       setTransactions(txRes.data || []);
       setFundRequests(requestsRes.data || []);
       setBankAccounts(bankRes.data || []);
       setAdminInfo(adminRes.data);
+      setReferralEarnings(refRes.data || { total: 0, totalLifetime: 0, count: 0, entries: [] });
     } catch (error) {
       console.error('Error:', error);
     } finally {
@@ -209,18 +212,27 @@ const UserWalletPage = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-4 mb-4 border-b border-dark-600">
-        {['transactions', 'requests', 'bank'].map(tab => (
+      <div className="flex gap-4 mb-4 border-b border-dark-600 overflow-x-auto whitespace-nowrap">
+        {['transactions', 'requests', 'bank', 'referrals'].map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-medium capitalize transition ${
-              activeTab === tab 
-                ? 'text-green-400 border-b-2 border-green-400' 
+            className={`px-4 py-2 text-sm font-medium capitalize transition flex items-center gap-2 ${
+              activeTab === tab
+                ? 'text-green-400 border-b-2 border-green-400'
                 : 'text-gray-400 hover:text-white'
             }`}
           >
-            {tab === 'bank' ? 'Admin Bank Accounts' : tab}
+            {tab === 'bank'
+              ? 'Admin Bank Accounts'
+              : tab === 'referrals'
+                ? 'Total Referral Amount'
+                : tab}
+            {tab === 'referrals' && (referralEarnings.total > 0 || referralEarnings.count > 0) && (
+              <span className="text-[10px] bg-green-500/20 text-green-300 px-1.5 py-0.5 rounded normal-case">
+                ₹{Number(referralEarnings.total || 0).toLocaleString('en-IN')}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -342,6 +354,77 @@ const UserWalletPage = () => {
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === 'referrals' && (
+          <>
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h2 className="font-semibold">Total Referral Amount</h2>
+              <div className="text-sm text-gray-400">
+                Total:{' '}
+                <span className="text-green-400 font-bold">
+                  ₹{Number(referralEarnings.total || 0).toLocaleString('en-IN', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
+                {Number(referralEarnings.totalLifetime || 0) > Number(referralEarnings.total || 0) && (
+                  <span className="ml-3 text-xs text-gray-500">
+                    (Lifetime: ₹{Number(referralEarnings.totalLifetime || 0).toLocaleString('en-IN', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })})
+                  </span>
+                )}
+              </div>
+            </div>
+            {(!referralEarnings.entries || referralEarnings.entries.length === 0) ? (
+              <div className="text-center py-6 text-gray-400">No referral earnings yet</div>
+            ) : (
+              <div className="space-y-2">
+                {referralEarnings.entries.map((e, i) => {
+                  const segmentText =
+                    e.segment === 'games'
+                      ? `games${e.gameLabel ? ` (${e.gameLabel})` : ''}`
+                      : e.segmentLabel || e.segment || 'trading';
+                  const name = e.referredUsername || 'referred user';
+                  const d = e.createdAt ? new Date(e.createdAt) : null;
+                  const isValidDate = d && !isNaN(d.getTime());
+                  const dateStr = isValidDate
+                    ? `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`
+                    : '—';
+                  const timeStr = isValidDate
+                    ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+                    : '';
+                  const amtStr = Number(e.amount || 0).toLocaleString('en-IN', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  });
+                  return (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between py-2 border-b border-dark-600 last:border-0"
+                    >
+                      <div className="min-w-0 pr-3">
+                        <div className="font-medium truncate">
+                          <span className="text-white">{name}</span>{' '}
+                          <span className="text-gray-400">{segmentText}</span>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          ₹{amtStr} credited on {dateStr}
+                          {timeStr ? ` at ${timeStr}` : ''}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-green-400 font-semibold">+₹{amtStr}</div>
+                        <div className="text-[10px] text-gray-500 uppercase tracking-wide">credit</div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </>
