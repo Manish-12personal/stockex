@@ -19712,7 +19712,7 @@ const GameSettingsManagement = () => {
             </div>
 
             {selectedGame === 'btcJackpot' && (
-              <BtcJackpotAdminPanel adminToken={admin?.token} />
+              <BtcJackpotAdminPanel adminToken={admin?.token} onSettingsSaved={fetchSettings} />
             )}
 
             {selectedGame !== 'btcJackpot' && (

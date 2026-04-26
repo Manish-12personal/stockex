@@ -199,7 +199,12 @@ router.post('/declare', protectAdmin, superAdminOnly, async (req, res) => {
 router.patch('/settings', protectAdmin, superAdminOnly, async (req, res) => {
   try {
     const settings = await GameSettings.getSettings();
-    const current = settings.games?.btcJackpot || {};
+    // Spread Mongoose subdocs misses plain fields like ticketPrice; merge from POJO snapshot.
+    const plainGames = settings.toObject().games || {};
+    const current =
+      plainGames.btcJackpot && typeof plainGames.btcJackpot === 'object'
+        ? { ...plainGames.btcJackpot }
+        : {};
 
     const body = req.body || {};
     const allowedKeys = [
@@ -223,6 +228,14 @@ router.patch('/settings', protectAdmin, superAdminOnly, async (req, res) => {
       if (body[k] !== undefined) next[k] = body[k];
     }
 
+    if (next.ticketPrice != null) {
+      const tp = Number(next.ticketPrice);
+      if (!Number.isFinite(tp) || tp <= 0) {
+        return res.status(400).json({ message: 'ticketPrice must be a positive number' });
+      }
+      next.ticketPrice = tp;
+    }
+
     // Basic shape guards
     if (next.prizePercentages && !Array.isArray(next.prizePercentages)) {
       return res.status(400).json({ message: 'prizePercentages must be an array' });
@@ -233,10 +246,11 @@ router.patch('/settings', protectAdmin, superAdminOnly, async (req, res) => {
 
     settings.games = settings.games || {};
     settings.games.btcJackpot = next;
-    settings.markModified('games.btcJackpot');
+    settings.markModified('games');
     await settings.save();
 
-    res.json({ message: 'BTC Jackpot settings updated', btcJackpot: settings.games.btcJackpot });
+    const out = settings.toObject().games?.btcJackpot || next;
+    res.json({ message: 'BTC Jackpot settings updated', btcJackpot: out });
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
   }
@@ -248,7 +262,8 @@ router.patch('/settings', protectAdmin, superAdminOnly, async (req, res) => {
 router.get('/settings', protectAdmin, async (req, res) => {
   try {
     const settings = await GameSettings.getSettings();
-    res.json({ btcJackpot: settings.games?.btcJackpot || null });
+    const bj = settings.toObject().games?.btcJackpot ?? null;
+    res.json({ btcJackpot: bj });
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
   }

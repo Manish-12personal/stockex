@@ -39,7 +39,7 @@ function todayIST() {
   return `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}-${String(ist.getUTCDate()).padStart(2, '0')}`;
 }
 
-const BtcJackpotAdminPanel = ({ adminToken }) => {
+const BtcJackpotAdminPanel = ({ adminToken, onSettingsSaved }) => {
   const headers = useMemo(
     () => (adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
     [adminToken]
@@ -176,7 +176,10 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
         { headers }
       );
       setSuccess('Settings saved');
-      setSettings(data?.btcJackpot || settingsDraft);
+      const saved = data?.btcJackpot || null;
+      setSettings(saved);
+      setSettingsDraft(saved);
+      if (typeof onSettingsSaved === 'function') onSettingsSaved();
     } catch (e) {
       setError(e?.response?.data?.message || e.message || 'Save failed');
     } finally {
