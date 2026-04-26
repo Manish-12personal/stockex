@@ -1,6 +1,7 @@
 /**
  * Shared games referral: winPercent from GameSettings × total stake for the session (window / declare day / trade).
- * One credit per (referred user, gameKey, settlementDay, sessionScope) via WalletLedger idempotency.
+ * At most one games stake referral per referred user ever (first qualifying win in any game).
+ * Per-session idempotency: (referred user, gameKey, settlementDay, sessionScope).
  * Credits referrer main wallet + REFERRAL_COMMISSION ledger (same as Up/Down stake referrals).
  */
 import mongoose from 'mongoose';
@@ -21,6 +22,22 @@ const GAME_LABELS = {
 
 function labelFor(gameType) {
   return GAME_LABELS[gameType] || String(gameType);
+}
+
+/** meta.relatedUserId is sometimes stored as ObjectId, sometimes as string — match both. */
+function metaRelatedUserIdMatch(referredOid, referredUserIdRaw) {
+  const strings = new Set();
+  if (referredOid != null) strings.add(String(referredOid));
+  if (referredUserIdRaw != null) strings.add(String(referredUserIdRaw));
+  const $in = [];
+  for (const s of strings) {
+    if (mongoose.Types.ObjectId.isValid(s)) {
+      $in.push(new mongoose.Types.ObjectId(s));
+    }
+    $in.push(s);
+  }
+  if ($in.length === 0) return undefined;
+  return $in.length === 1 ? $in[0] : { $in };
 }
 
 /**
@@ -99,19 +116,23 @@ export async function creditReferralPercentOfTotalStake({
         ? new mongoose.Types.ObjectId(referredUserId)
         : referredUserId;
 
-    const firstWinOnlyGames = ['btcUpDown', 'niftyUpDown', 'btcNumber', 'btcJackpot'];
-    if (firstWinOnlyGames.includes(gameType)) {
-      const priorStakeReferral = await WalletLedger.findOne({
-        ownerType: 'USER',
-        reason: 'REFERRAL_COMMISSION',
-        type: 'CREDIT',
-        'meta.kind': 'game_stake_referral',
-        'meta.relatedUserId': referredOid,
-        'meta.gameKey': gameType,
-      }).lean();
-      if (priorStakeReferral) {
-        return { credited: false, reason: 'Stake referral already paid once for this referred user in this game' };
-      }
+    const relatedIdCond = metaRelatedUserIdMatch(referredOid, referredUserId);
+    if (relatedIdCond == null) {
+      return { credited: false, reason: 'Invalid referred user id' };
+    }
+
+    const priorGlobalGamesReferral = await WalletLedger.findOne({
+      ownerType: 'USER',
+      reason: 'REFERRAL_COMMISSION',
+      type: 'CREDIT',
+      'meta.kind': 'game_stake_referral',
+      'meta.relatedUserId': relatedIdCond,
+    }).lean();
+    if (priorGlobalGamesReferral) {
+      return {
+        credited: false,
+        reason: 'Games stake referral already paid for this referred user (first win in any game only)',
+      };
     }
 
     const existing = await WalletLedger.findOne({
@@ -119,7 +140,7 @@ export async function creditReferralPercentOfTotalStake({
       reason: 'REFERRAL_COMMISSION',
       type: 'CREDIT',
       'meta.kind': 'game_stake_referral',
-      'meta.relatedUserId': referredOid,
+      'meta.relatedUserId': relatedIdCond,
       'meta.gameKey': gameType,
       'meta.settlementDay': day,
       'meta.sessionScope': scope,
