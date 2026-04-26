@@ -58,7 +58,6 @@ import {
   Timer,
   Percent,
   AlertTriangle,
-  Gift,
   Zap,
   Coins,
   Lock,
@@ -19628,7 +19627,6 @@ const GameSettingsManagement = () => {
       <div className="flex gap-2 border-b border-dark-600 pb-2">
         {[
           { id: 'games', label: 'Individual Games', icon: Gamepad2 },
-          { id: 'bonuses', label: 'Bonuses & Rewards', icon: Gift },
           { id: 'risk', label: 'Risk Management', icon: Shield }
         ].map(tab => (
           <button
@@ -20783,163 +20781,6 @@ const GameSettingsManagement = () => {
               )}
             </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Bonuses Tab */}
-      {activeTab === 'bonuses' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Referral Bonus */}
-          <div className="bg-dark-800 rounded-lg p-6">
-            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-              <Users className="text-green-400" size={20} /> Referral Bonus
-            </h3>
-            <div className="space-y-4">
-              <label className="flex items-center justify-between p-3 bg-dark-700 rounded cursor-pointer">
-                <span>Enable Referral Bonus</span>
-                <input
-                  type="checkbox"
-                  checked={settings?.referralBonus?.enabled || false}
-                  onChange={e => updateNestedSetting('referralBonus', 'enabled', e.target.checked)}
-                  className="w-5 h-5"
-                />
-              </label>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Referrer Bonus (₹)</label>
-                  <input
-                    type="number"
-                    value={settings?.referralBonus?.referrerBonus || 100}
-                    onChange={e => updateNestedSetting('referralBonus', 'referrerBonus', parseFloat(e.target.value))}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">New User Bonus (₹)</label>
-                  <input
-                    type="number"
-                    value={settings?.referralBonus?.refereeBonus || 50}
-                    onChange={e => updateNestedSetting('referralBonus', 'refereeBonus', parseFloat(e.target.value))}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Min Deposit Required (₹)</label>
-                <input
-                  type="number"
-                  value={settings?.referralBonus?.minDepositRequired || 500}
-                  onChange={e => updateNestedSetting('referralBonus', 'minDepositRequired', parseFloat(e.target.value))}
-                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* First Deposit Bonus */}
-          <div className="bg-dark-800 rounded-lg p-6">
-            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-              <Gift className="text-purple-400" size={20} /> First Deposit Bonus
-            </h3>
-            <div className="space-y-4">
-              <label className="flex items-center justify-between p-3 bg-dark-700 rounded cursor-pointer">
-                <span>Enable First Deposit Bonus</span>
-                <input
-                  type="checkbox"
-                  checked={settings?.firstDepositBonus?.enabled || false}
-                  onChange={e => updateNestedSetting('firstDepositBonus', 'enabled', e.target.checked)}
-                  className="w-5 h-5"
-                />
-              </label>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Bonus Percent (%)</label>
-                  <input
-                    type="number"
-                    value={settings?.firstDepositBonus?.bonusPercent || 100}
-                    onChange={e => updateNestedSetting('firstDepositBonus', 'bonusPercent', parseFloat(e.target.value))}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-2">Max Bonus (₹)</label>
-                  <input
-                    type="number"
-                    value={settings?.firstDepositBonus?.maxBonus || 5000}
-                    onChange={e => updateNestedSetting('firstDepositBonus', 'maxBonus', parseFloat(e.target.value))}
-                    className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Wagering Requirement (x)</label>
-                <input
-                  type="number"
-                  value={settings?.firstDepositBonus?.wageringRequirement || 3}
-                  onChange={e => updateNestedSetting('firstDepositBonus', 'wageringRequirement', parseFloat(e.target.value))}
-                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                />
-                <p className="text-xs text-gray-500 mt-1">User must wager bonus amount this many times</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Loss Cashback */}
-          <div className="bg-dark-800 rounded-lg p-6 lg:col-span-2">
-            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-              <Zap className="text-yellow-400" size={20} /> Loss Cashback
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="flex items-center justify-between p-3 bg-dark-700 rounded cursor-pointer">
-                <span>Enable Loss Cashback</span>
-                <input
-                  type="checkbox"
-                  checked={settings?.lossCashback?.enabled || false}
-                  onChange={e => updateNestedSetting('lossCashback', 'enabled', e.target.checked)}
-                  className="w-5 h-5"
-                />
-              </label>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Cashback Period</label>
-                <select
-                  value={settings?.lossCashback?.period || 'weekly'}
-                  onChange={e => updateNestedSetting('lossCashback', 'period', e.target.value)}
-                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Cashback Percent (%)</label>
-                <input
-                  type="number"
-                  value={settings?.lossCashback?.cashbackPercent || 5}
-                  onChange={e => updateNestedSetting('lossCashback', 'cashbackPercent', parseFloat(e.target.value))}
-                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Min Loss to Qualify (₹)</label>
-                <input
-                  type="number"
-                  value={settings?.lossCashback?.minLoss || 1000}
-                  onChange={e => updateNestedSetting('lossCashback', 'minLoss', parseFloat(e.target.value))}
-                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Max Cashback (₹)</label>
-                <input
-                  type="number"
-                  value={settings?.lossCashback?.maxCashback || 10000}
-                  onChange={e => updateNestedSetting('lossCashback', 'maxCashback', parseFloat(e.target.value))}
-                  className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
-                />
-              </div>
-            </div>
           </div>
         </div>
       )}
