@@ -20864,26 +20864,39 @@ const GameSettingsManagement = () => {
 
 // Security Settings (Super Admin only)
 const SecuritySettings = () => {
-  const { admin } = useAuth();
+  const { admin, loading: authLoading } = useAuth();
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!admin?.token) {
+      setLoading(false);
+      setMessage({ type: 'error', text: 'Super Admin login required.' });
+      return;
+    }
     fetchSettings();
-  }, []);
+  }, [admin?.token, authLoading]);
 
   const fetchSettings = async () => {
+    if (!admin?.token) return;
     try {
       setLoading(true);
       const { data } = await axios.get('/api/admin/manage/game-settings', {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
       setSettings(data);
+      setMessage({ type: '', text: '' });
     } catch (error) {
       console.error('Error fetching settings:', error);
-      setMessage({ type: 'error', text: 'Failed to load settings' });
+      const detail =
+        error.response?.data?.message ||
+        (error.response?.status === 403 ? 'Super Admin access required' : null) ||
+        error.message ||
+        'Unknown error';
+      setMessage({ type: 'error', text: `Failed to load settings: ${detail}` });
     } finally {
       setLoading(false);
     }
@@ -20916,10 +20929,30 @@ const SecuritySettings = () => {
     }
   };
 
-  if (loading) {
+  if (loading || authLoading) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-gray-400">Loading security settings...</div>
+      </div>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <div className="p-6">
+        <h2 className="text-2xl font-bold mb-4">Security Settings</h2>
+        {message.text && (
+          <div className={`mb-4 px-4 py-3 rounded-lg ${message.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
+            {message.text}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => admin?.token && fetchSettings()}
+          className="px-4 py-2 bg-cyan-600 rounded-lg font-semibold"
+        >
+          Retry load
+        </button>
       </div>
     );
   }
@@ -20988,7 +21021,7 @@ const SecuritySettings = () => {
 
 // Referral Distribution Settings (Super Admin only)
 const ReferralDistributionSettings = () => {
-  const { admin } = useAuth();
+  const { admin, loading: authLoading } = useAuth();
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -21005,67 +21038,122 @@ const ReferralDistributionSettings = () => {
   ];
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!admin?.token) {
+      setLoading(false);
+      setMessage({ type: 'error', text: 'Super Admin login required to load referral settings.' });
+      return;
+    }
     fetchSettings();
-  }, []);
+  }, [admin?.token, authLoading]);
 
   const fetchSettings = async () => {
+    if (!admin?.token) return;
     try {
       setLoading(true);
       const { data } = await axios.get('/api/admin/manage/game-settings', {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
       setSettings(data);
+      setMessage({ type: '', text: '' });
     } catch (error) {
       console.error('Error fetching settings:', error);
-      setMessage({ type: 'error', text: 'Failed to load settings' });
+      const detail =
+        error.response?.data?.message ||
+        (error.response?.status === 403 ? 'Super Admin access required' : null) ||
+        error.message ||
+        'Unknown error';
+      setMessage({ type: 'error', text: `Failed to load settings: ${detail}` });
+      setSettings(null);
     } finally {
       setLoading(false);
     }
   };
 
   const updateGameReferralSetting = async (gameKey, field, value) => {
+    if (!settings || !admin?.token) return;
+    const nextReferral = {
+      ...settings.games?.[gameKey]?.referralDistribution,
+      [field]: value,
+    };
+    const updatedSettings = {
+      ...settings,
+      games: {
+        ...settings.games,
+        [gameKey]: {
+          ...settings.games?.[gameKey],
+          referralDistribution: nextReferral,
+        },
+      },
+    };
+    setSettings(updatedSettings);
     try {
-      const updatedSettings = {
-        ...settings,
-        games: {
-          ...settings.games,
-          [gameKey]: {
-            ...settings.games?.[gameKey],
-            referralDistribution: {
-              ...settings.games?.[gameKey]?.referralDistribution,
-              [field]: value
-            }
-          }
-        }
-      };
-      setSettings(updatedSettings);
+      setSaving(true);
+      await axios.put(
+        `/api/admin/manage/game-settings/game/${gameKey}`,
+        { referralDistribution: nextReferral },
+        { headers: { Authorization: `Bearer ${admin.token}` } }
+      );
+      setMessage({ type: 'success', text: 'Saved' });
+      setTimeout(() => setMessage({ type: '', text: '' }), 2500);
     } catch (error) {
-      console.error('Error updating local state:', error);
+      console.error('Error saving referral setting:', error);
+      const detail = error.response?.data?.message || error.message || 'Save failed';
+      setMessage({ type: 'error', text: detail });
+      fetchSettings();
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleSave = async () => {
+    if (!settings || !admin?.token) return;
     try {
       setSaving(true);
       await axios.put('/api/admin/manage/game-settings', settings, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
 
-      setMessage({ type: 'success', text: 'Settings saved successfully' });
+      setMessage({ type: 'success', text: 'All game settings saved successfully' });
       setTimeout(() => setMessage({ type: '', text: '' }), 3000);
     } catch (error) {
       console.error('Error saving settings:', error);
-      setMessage({ type: 'error', text: 'Failed to save settings' });
+      const detail = error.response?.data?.message || error.message || 'Failed to save settings';
+      setMessage({ type: 'error', text: detail });
       fetchSettings(); // Revert on error
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
+  if (loading || authLoading) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-gray-400">Loading referral distribution settings...</div>
+      </div>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <div className="p-6">
+        <h2 className="text-2xl font-bold mb-4">Referral Amount Distribution System</h2>
+        {message.text && (
+          <div
+            className={`mb-4 px-4 py-3 rounded-lg ${
+              message.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+            }`}
+          >
+            {message.text}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => admin?.token && fetchSettings()}
+          className="px-4 py-2 bg-purple-600 rounded-lg font-semibold"
+        >
+          Retry load
+        </button>
       </div>
     );
   }
@@ -21077,7 +21165,9 @@ const ReferralDistributionSettings = () => {
           <h2 className="text-2xl font-bold flex items-center gap-3">
             <Share2 className="text-purple-400" size={28} /> Referral Amount Distribution System
           </h2>
-          <p className="text-gray-400 mt-1">Configure referral reward percentages for each game</p>
+          <p className="text-gray-400 mt-1">
+            Configure referral reward percentages for each game. Changes apply when you edit a field (saved per game).
+          </p>
         </div>
         <div className="flex items-center gap-4">
           {message.text && (
@@ -21129,7 +21219,10 @@ const ReferralDistributionSettings = () => {
                   max="100"
                   step="0.1"
                   value={settings?.games?.[game.key]?.referralDistribution?.winPercent ?? 5}
-                  onChange={e => updateGameReferralSetting(game.key, 'winPercent', parseFloat(e.target.value))}
+                  onChange={e => {
+                    const v = parseFloat(e.target.value);
+                    updateGameReferralSetting(game.key, 'winPercent', Number.isFinite(v) ? v : 0);
+                  }}
                   disabled={saving}
                   className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                 />
@@ -21168,7 +21261,10 @@ const ReferralDistributionSettings = () => {
                       max="20"
                       step="1"
                       value={settings?.games?.[game.key]?.referralDistribution?.topRanksCount ?? 3}
-                      onChange={e => updateGameReferralSetting(game.key, 'topRanksCount', parseInt(e.target.value))}
+                      onChange={e => {
+                        const v = parseInt(e.target.value, 10);
+                        updateGameReferralSetting(game.key, 'topRanksCount', Number.isFinite(v) ? v : 1);
+                      }}
                       disabled={saving}
                       className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
                     />

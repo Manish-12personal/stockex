@@ -6085,11 +6085,30 @@ router.get('/patti-sharing/broker/:brokerId/clients', protectAdmin, superAdminOn
 
 // ==================== GAME SETTINGS ROUTES ====================
 
+/** Deep-merge referralDistribution so partial saves never wipe topRanksOnly / topRanksCount. */
+function mergeGameConfigForAdmin(prev, patch) {
+  if (!patch || typeof patch !== 'object') {
+    return prev && typeof prev === 'object' ? { ...prev } : {};
+  }
+  const base = prev && typeof prev === 'object' ? { ...prev } : {};
+  const out = { ...base, ...patch };
+  const patchRef = patch.referralDistribution;
+  if (patchRef != null && typeof patchRef === 'object') {
+    const prevRef = base.referralDistribution;
+    out.referralDistribution = {
+      ...(prevRef && typeof prevRef === 'object' ? { ...prevRef } : {}),
+      ...patchRef,
+    };
+  }
+  return out;
+}
+
 // Get game settings
 router.get('/game-settings', protectAdmin, superAdminOnly, async (req, res) => {
   try {
     const settings = await GameSettings.getSettings();
-    res.json(settings);
+    const plain = typeof settings.toObject === 'function' ? settings.toObject() : settings;
+    res.json(plain);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -6118,7 +6137,7 @@ router.put('/game-settings', protectAdmin, superAdminOnly, async (req, res) => {
         const nextGames = { ...currentGames };
         for (const [gameId, gameData] of Object.entries(gamesPayload)) {
           if (nextGames[gameId] && gameData && typeof gameData === 'object') {
-            const merged = { ...nextGames[gameId], ...gameData };
+            let merged = mergeGameConfigForAdmin(nextGames[gameId], gameData);
             if (gameId === 'niftyUpDown' && merged.roundDuration != null) {
               const rd = Math.floor(Number(merged.roundDuration));
               if (!Number.isFinite(rd) || rd < 900) merged.roundDuration = 900;
@@ -6132,7 +6151,7 @@ router.put('/game-settings', protectAdmin, superAdminOnly, async (req, res) => {
       Object.assign(settings, body);
     }
     await settings.save();
-    res.json(settings);
+    res.json(typeof settings.toObject === 'function' ? settings.toObject() : settings);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -6153,14 +6172,15 @@ router.put('/game-settings/game/:gameId', protectAdmin, superAdminOnly, async (r
         const rd = Math.floor(Number(patch.roundDuration));
         if (!Number.isFinite(rd) || rd < 900) patch.roundDuration = 900;
       }
+      const mergedGame = mergeGameConfigForAdmin(currentGames[gameId] || {}, patch);
       const merged = {
         ...currentGames,
-        [gameId]: { ...(currentGames[gameId] || {}), ...patch }
+        [gameId]: mergedGame,
       };
       settings.games = merged;
       settings.markModified('games');
       await settings.save();
-      res.json(settings);
+      res.json(typeof settings.toObject === 'function' ? settings.toObject() : settings);
     } else {
       res.status(404).json({ message: 'Game not found' });
     }
