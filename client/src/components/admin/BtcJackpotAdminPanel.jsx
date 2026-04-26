@@ -201,6 +201,10 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
     return arr.reduce((s, r) => s + (Number(r.percent) || 0), 0);
   }, [settingsDraft]);
 
+  /** Superadmin list: only the prize-relevant head of the leaderboard (same as configured top winners). */
+  const bidListCap = Math.max(1, Math.min(100, Number(settings?.topWinners ?? settingsDraft?.topWinners) || 20));
+  const bidsDisplayed = useMemo(() => bids.slice(0, bidListCap), [bids, bidListCap]);
+
   if (!adminToken) {
     return (
       <div className="p-6 text-gray-400 flex items-center gap-2">
@@ -333,7 +337,11 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
 
       {/* Bids table */}
       <div className="bg-dark-800 border border-dark-600 rounded p-4 overflow-x-auto">
-        <div className="font-semibold mb-2">Bids for {date}</div>
+        <div className="font-semibold mb-1">Bids for {date}</div>
+        <div className="text-[11px] text-gray-500 mb-2">
+          Showing top {bidListCap} by rank / distance
+          {bids.length > bidListCap ? ` (${bids.length} total bids — list trimmed for display)` : ''}.
+        </div>
         {(locked?.lockedBtcPrice != null && Number.isFinite(Number(locked.lockedBtcPrice))) ||
         bidsReferenceBtc != null ? (
           <div className="text-[11px] text-gray-500 mb-2">
@@ -364,7 +372,7 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
               </tr>
             </thead>
             <tbody>
-              {bids.map((b) => (
+              {bidsDisplayed.map((b) => (
                 <tr key={b._id} className="border-b border-dark-700/60">
                   <td className="py-1 pr-2">
                     <div className="font-medium">{b.user?.username || '—'}</div>
