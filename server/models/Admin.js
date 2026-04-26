@@ -590,6 +590,8 @@ const adminSchema = new mongoose.Schema({
       exposureCarryForward: { type: Number, default: 1 },
       // Crypto (USD spot): total client bid–ask width in ₹ per coin (half applied to bid, half to ask vs exchange mid)
       cryptoSpreadInr: { type: Number, default: 0 },
+      /** IST (HH:mm or HH:mm:ss) — earliest time this segment allows trading */
+      cryptoStartTime: { type: String, default: '' },
       cryptoClosingTime: { type: String, default: '' },
       cryptoReferenceSymbol: { type: String, default: '' },
       /** @deprecated UI removed; kept for legacy DB docs. */

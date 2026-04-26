@@ -170,7 +170,7 @@ async function creditHierarchyMember(adminMember, amount, gameLabel, winnerUserI
  *  1. Load GameSettings, BtcJackpotResult, and all pending bids for the day.
  *  2. Rank by |predictedBtc - lockedBtcPrice| ASC; tie groups share combined %.
  *  3. For each winner: credit full grossPrize from SA pool to games wallet; credit hierarchy
- *     from SA pool; fire first-game-win referral (winPercent × day total bank) for top N ranks.
+ *     from SA pool; referral winPercent × that user's total stake for the day (once per user per declare).
  *  4. Losers remain 'lost' (stake already went to Bank at bid time — no further movement).
  *  5. Update BtcJackpotResult + BtcJackpotBank.
  */
@@ -199,6 +199,11 @@ export async function declareBtcJackpotForDate(date) {
   }
 
   const totalPool = pendingRaw.reduce((s, b) => s + (Number(b.amount) || 0), 0);
+  const stakeByUser = new Map();
+  for (const b of pendingRaw) {
+    const uid = b.user.toString();
+    stakeByUser.set(uid, (stakeByUser.get(uid) || 0) + (Number(b.amount) || 0));
+  }
   const sorted = rankBtcJackpotBids(pendingRaw, lockedPrice);
   const groups = buildTieGroupedRanks(sorted, lockedPrice, (r) =>
     percentOfRankFromConfig(r, gc.prizePercentages)
@@ -308,14 +313,12 @@ export async function declareBtcJackpotForDate(date) {
           predictedBtc: bid.predictedBtc,
         });
 
-        // 3. Referral first-game-win reward: winPercent is % of the day’s total bank (pool), not stake
+        // 3. Referral: winPercent × this user's total BTC Jackpot stake for the declare day (once per user per day)
         try {
-          await creditReferralGameReward(
-            bid.user,
-            Math.max(0, totalPool),
-            'btcJackpot',
-            rankDisplay
-          );
+          const userTotalStake = stakeByUser.get(bid.user.toString()) || 0;
+          await creditReferralGameReward(bid.user, userTotalStake, 'btcJackpot', rankDisplay, {
+            settlementDay: date,
+          });
         } catch (e) {
           console.warn('[BTC Jackpot] referral credit error:', e?.message || e);
         }

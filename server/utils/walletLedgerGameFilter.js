@@ -10,6 +10,7 @@ export const WALLET_LEDGER_GAME_OPTIONS = [
   { key: 'niftyBracket', label: 'Nifty Bracket' },
   { key: 'niftyJackpot', label: 'Nifty Jackpot' },
   { key: 'btcJackpot', label: 'BTC Jackpot' },
+  { key: 'btcNumber', label: 'BTC Number' },
 ];
 
 const LEGACY_GAME_PROFIT_PREFIXES = {
@@ -19,6 +20,7 @@ const LEGACY_GAME_PROFIT_PREFIXES = {
   niftyBracket: ['NiftyBracket', 'Nifty Bracket'],
   niftyJackpot: ['Nifty Jackpot'],
   btcJackpot: ['BTC Jackpot'],
+  btcNumber: ['BtcNumber', 'BTC Number'],
 };
 
 function escapeRegex(s) {

@@ -99,6 +99,14 @@ const isNseCashMarketOpen = () => {
   return currentTime >= marketOpen && currentTime <= marketClose;
 };
 
+/** `type="time"` value: pad HH:mm → HH:mm:00 for step=1 (seconds) inputs. */
+function cryptoTimeInputValue(raw) {
+  const t = (raw != null && raw !== '') ? String(raw).trim() : '';
+  if (!t) return '';
+  if (/^\d{1,2}:\d{2}$/.test(t)) return `${t}:00`;
+  return t;
+}
+
 /** Manual crypto segment fields (CRYPTOFUT / CRYPTOOPT): lot size rule + optional session close time. */
 function CryptoSegmentAdminExtras({ slice, onFieldChange }) {
   return (
@@ -135,15 +143,31 @@ function CryptoSegmentAdminExtras({ slice, onFieldChange }) {
         Defines how much base quantity equals your reference lots (e.g. lots 1 and quantity 0.001 → 1 lot = 0.001
         units). Leave quantity 0 to use the contract&apos;s default lot size from instruments.
       </p>
-      <div className="max-w-xs">
-        <label className="block text-xs text-gray-400 mb-1">Crypto session close (IST)</label>
-        <input
-          type="time"
-          value={slice?.cryptoClosingTime || ''}
-          onChange={(e) => onFieldChange('cryptoClosingTime', e.target.value)}
-          className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-        />
-        <p className="text-[10px] text-gray-600 mt-1">Optional daily square-off hint time (stored per segment).</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg">
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Crypto start time (IST, HH:mm:ss)</label>
+          <input
+            type="time"
+            step={1}
+            value={cryptoTimeInputValue(slice?.cryptoStartTime)}
+            onChange={(e) => onFieldChange('cryptoStartTime', e.target.value)}
+            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+          />
+          <p className="text-[10px] text-gray-600 mt-1">
+            Earliest time users may trade this segment (server-enforced). Leave empty for no start restriction.
+          </p>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Crypto session close (IST, HH:mm:ss)</label>
+          <input
+            type="time"
+            step={1}
+            value={cryptoTimeInputValue(slice?.cryptoClosingTime)}
+            onChange={(e) => onFieldChange('cryptoClosingTime', e.target.value)}
+            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+          />
+          <p className="text-[10px] text-gray-600 mt-1">Optional daily square-off hint time (stored per segment).</p>
+        </div>
       </div>
     </div>
   );
@@ -14377,6 +14401,7 @@ const ALL_TX_GAMES_WALLET_OPTIONS = [
   { id: 'niftyBracket', label: 'Nifty Bracket' },
   { id: 'niftyJackpot', label: 'Nifty Jackpot' },
   { id: 'btcJackpot', label: 'BTC Jackpot' },
+  { id: 'btcNumber', label: 'BTC Number' },
 ];
 
 // Control Hierarchy Wallet - SuperAdmin controls releasing temporary wallet funds
@@ -19317,7 +19342,8 @@ const GameSettingsManagement = () => {
     { id: 'niftyNumber', name: 'Nifty Number', icon: Hash, color: 'text-purple-400', needsZerodha: true },
     { id: 'niftyBracket', name: 'Nifty Bracket', icon: Target, color: 'text-cyan-400', needsZerodha: true },
     { id: 'niftyJackpot', name: 'Nifty Jackpot', icon: Trophy, color: 'text-yellow-400', needsZerodha: true },
-    { id: 'btcJackpot', name: 'BTC Jackpot', icon: Bitcoin, color: 'text-yellow-400', needsZerodha: false }
+    { id: 'btcJackpot', name: 'BTC Jackpot', icon: Bitcoin, color: 'text-yellow-400', needsZerodha: false },
+    { id: 'btcNumber', name: 'BTC Number', icon: Hash, color: 'text-amber-400', needsZerodha: false }
   ];
 
   useEffect(() => {
@@ -19804,7 +19830,7 @@ const GameSettingsManagement = () => {
                     </div>
                   </div>
                 )}
-                {(selectedGame === 'niftyNumber' || selectedGame === 'niftyJackpot') && (
+                {(selectedGame === 'niftyNumber' || selectedGame === 'niftyJackpot' || selectedGame === 'btcNumber') && (
                   <p className="text-xs text-gray-600 pt-2 border-t border-dark-600">
                     Side caps (UP/DOWN or BUY/SELL) apply to Nifty Up/Down, BTC Up/Down, and Nifty Bracket. This game uses its own daily / per-request limits above.
                   </p>
@@ -20667,6 +20693,94 @@ const GameSettingsManagement = () => {
                   </div>
                 </>
               )}
+
+              {selectedGame === 'btcNumber' && (
+                <>
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-amber-400">BTC Number Settings</h4>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Fixed gross prize per winning ticket (₹)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.fixedProfit ?? 4000}
+                        onChange={e => updateGameSetting(selectedGame, 'fixedProfit', parseFloat(e.target.value) || 0)}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                        step="1"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Gross slice G before hierarchy fees (× row quantity on declare)</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Legacy win brokerage (% of G)</label>
+                      <input
+                        type="number"
+                        value={currentGame?.brokeragePercent ?? 0}
+                        onChange={e => updateGameSetting(selectedGame, 'brokeragePercent', parseFloat(e.target.value) || 0)}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Used only when Sub-broker + Broker + Admin gross % below are all 0</p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">Gross % Sub-broker</label>
+                        <input
+                          type="number"
+                          value={currentGame?.grossPrizeSubBrokerPercent ?? 2}
+                          onChange={e => updateGameSetting(selectedGame, 'grossPrizeSubBrokerPercent', parseFloat(e.target.value) || 0)}
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                          min="0"
+                          step="0.1"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">Gross % Broker</label>
+                        <input
+                          type="number"
+                          value={currentGame?.grossPrizeBrokerPercent ?? 1}
+                          onChange={e => updateGameSetting(selectedGame, 'grossPrizeBrokerPercent', parseFloat(e.target.value) || 0)}
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                          min="0"
+                          step="0.1"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">Gross % Admin</label>
+                        <input
+                          type="number"
+                          value={currentGame?.grossPrizeAdminPercent ?? 0.5}
+                          onChange={e => updateGameSetting(selectedGame, 'grossPrizeAdminPercent', parseFloat(e.target.value) || 0)}
+                          className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                          min="0"
+                          step="0.1"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Bets Per Day</label>
+                      <input
+                        type="number"
+                        value={currentGame?.betsPerDay || 10}
+                        onChange={e => updateGameSetting(selectedGame, 'betsPerDay', parseInt(e.target.value, 10))}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                        min="1"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Result Time (IST)</label>
+                      <input
+                        type="time"
+                        value={currentGame?.resultTime || '23:30'}
+                        onChange={e => updateGameSetting(selectedGame, 'resultTime', e.target.value)}
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-4 py-2"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Winning decimal from BTC/USDT spot; auto-settlement uses the same lock as BTC Jackpot</p>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
             )}
           </div>
@@ -21046,6 +21160,7 @@ const ReferralDistributionSettings = () => {
     { key: 'niftyNumber', name: 'Nifty Number', icon: '🔢' },
     { key: 'niftyJackpot', name: 'Nifty Jackpot', icon: '🎰' },
     { key: 'btcJackpot', name: 'BTC Jackpot', icon: '₿' },
+    { key: 'btcNumber', name: 'BTC Number', icon: '🔢' },
   ];
 
   useEffect(() => {
@@ -21954,7 +22069,7 @@ const MySegmentSettings = () => {
   const defaultSegmentSettings = {
     enabled: false, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0,
     maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, cryptoSpreadInr: 0,
-    cryptoClosingTime: '', cryptoReferenceSymbol: '', cryptoPricePerLotInr: 0,
+    cryptoStartTime: '', cryptoClosingTime: '', cryptoReferenceSymbol: '', cryptoPricePerLotInr: 0,
     cryptoLotSizeLots: 1,
     cryptoLotSizeQuantity: 0,
     optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 },
@@ -23330,6 +23445,7 @@ const AllUsersManagement = () => {
     exposureIntraday: 1,
     exposureCarryForward: 1,
     cryptoSpreadInr: 0,
+    cryptoStartTime: '',
     cryptoClosingTime: '',
     cryptoReferenceSymbol: '',
     cryptoPricePerLotInr: 0,
@@ -26033,6 +26149,7 @@ const UserManagement = () => {
     exposureIntraday: 1,
     exposureCarryForward: 1,
     cryptoSpreadInr: 0,
+    cryptoStartTime: '',
     cryptoClosingTime: '',
     cryptoReferenceSymbol: '',
     cryptoPricePerLotInr: 0,
@@ -28602,6 +28719,7 @@ const TransactionSlipsManagement = () => {
             <option value="niftyBracket">Nifty Bracket</option>
             <option value="niftyJackpot">Nifty Jackpot</option>
             <option value="btcJackpot">BTC Jackpot</option>
+            <option value="btcNumber">BTC Number</option>
           </select>
           <input
             type="date"

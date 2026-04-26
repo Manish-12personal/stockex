@@ -8,6 +8,8 @@ import {
   computeNiftyJackpotGrossHierarchyBreakdown,
   creditNiftyJackpotGrossHierarchyFromPool,
 } from './gameProfitDistribution.js';
+import { creditReferralPercentOfTotalStake } from './referralGameStakeCredit.js';
+import { getTodayISTString } from '../utils/istDate.js';
 
 /**
  * Resolve one active Nifty Bracket trade.
@@ -283,6 +285,20 @@ export async function resolveNiftyBracketTrade(trade, currentPrice, options = {}
           skipUserRebate: true,
         }
       );
+    }
+
+    try {
+      const istDay = getTodayISTString(now);
+      await creditReferralPercentOfTotalStake({
+        referredUserId: userIdForTrade,
+        gameType: 'niftyBracket',
+        totalStake: stakeSafe,
+        settlementDay: istDay,
+        sessionScope: String(trade._id),
+        rank: null,
+      });
+    } catch (refErr) {
+      console.warn('[Nifty Bracket] referral:', refErr?.message || refErr);
     }
   }
 

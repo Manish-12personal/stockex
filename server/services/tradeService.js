@@ -22,6 +22,66 @@ class TradeService {
     }
     return true;
   }
+
+  static _segmentMapPlain(segmentMap) {
+    if (!segmentMap) return {};
+    if (segmentMap instanceof Map) return Object.fromEntries(segmentMap);
+    return typeof segmentMap === 'object' ? segmentMap : {};
+  }
+
+  /** Compare current Asia/Kolkata clock to HH:mm or HH:mm:ss (24h). Invalid / empty pattern → treat as allowed. */
+  static _isNowAtOrAfterIstClock(hms) {
+    const s = String(hms || '').trim();
+    const m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) return true;
+    const H = parseInt(m[1], 10);
+    const Mi = parseInt(m[2], 10);
+    const Sec = m[3] != null && m[3] !== '' ? parseInt(m[3], 10) : 0;
+    if (
+      !Number.isFinite(H) ||
+      !Number.isFinite(Mi) ||
+      !Number.isFinite(Sec) ||
+      H > 23 ||
+      Mi > 59 ||
+      Sec > 59
+    ) {
+      return true;
+    }
+    const targetSecOfDay = H * 3600 + Mi * 60 + Sec;
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date());
+    const nh = parseInt(parts.find((p) => p.type === 'hour')?.value || '0', 10);
+    const nm = parseInt(parts.find((p) => p.type === 'minute')?.value || '0', 10);
+    const ns = parseInt(parts.find((p) => p.type === 'second')?.value || '0', 10);
+    const nowSecOfDay = nh * 3600 + nm * 60 + ns;
+    return nowSecOfDay >= targetSecOfDay;
+  }
+
+  /**
+   * CRYPTOFUT / CRYPTOOPT: optional earliest IST start from segment permissions or system admin defaults
+   * (for users created under Super Admin full-access slice).
+   */
+  static async assertCryptoSegmentTradingWindowOpen(user, segmentSettings, segmentRaw) {
+    const segU = String(segmentRaw || '').toUpperCase();
+    if (segU !== 'CRYPTOFUT' && segU !== 'CRYPTOOPT') return;
+
+    let start = (segmentSettings?.cryptoStartTime || '').toString().trim();
+    if (!start && user?.creatorRole === 'SUPER_ADMIN') {
+      const sys = await SystemSettings.getSettings();
+      const m = this._segmentMapPlain(sys.adminSegmentDefaults);
+      const def = m[segU];
+      if (def) start = (def.cryptoStartTime || '').toString().trim();
+    }
+    if (!start) return;
+    if (!this._isNowAtOrAfterIstClock(start)) {
+      throw new Error(`${segU} trading opens at ${start} IST (crypto start time).`);
+    }
+  }
   
   // Calculate required margin for a trade
   // NOTE: quantity here is the RAW quantity (e.g. number of shares/units, NOT multiplied by lotSize)
@@ -92,6 +152,7 @@ class TradeService {
       exposureIntraday: 10,
       exposureCarryForward: 5,
       cryptoSpreadInr: 0,
+      cryptoStartTime: '',
       cryptoClosingTime: '',
       cryptoReferenceSymbol: '',
       cryptoPricePerLotInr: 0,
@@ -566,6 +627,8 @@ class TradeService {
     if (!segmentSettings.enabled) {
       throw new Error(`Trading in ${tradeData.segment} segment is not enabled for your account`);
     }
+
+    await this.assertCryptoSegmentTradingWindowOpen(user, segmentSettings, tradeData.segment);
     
     // 5. Check if script is blocked
     if (scriptSettings?.blocked) {

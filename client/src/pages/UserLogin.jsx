@@ -312,7 +312,9 @@ const UserLogin = () => {
         email: formData.email,
         password: formData.password,
         fullName: formData.fullName,
-        phone: formData.phone
+        phone: formData.phone,
+        // Same ref as full registration — server sets referredBy on demo user (carries to real after convert)
+        referralCode: (formData.referralCode || refCode || '').trim() || undefined
       });
       
       // Navigate to dashboard

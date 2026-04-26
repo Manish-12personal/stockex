@@ -583,6 +583,8 @@ class TradingService {
     if (!segmentSettings.enabled) {
       throw new Error(`Trading in ${orderData.segment} segment is not enabled for your account`);
     }
+
+    await TradeService.assertCryptoSegmentTradingWindowOpen(user, segmentSettings, orderData.segment);
     
     // Check if script is blocked
     if (scriptSettings?.blocked) {

@@ -457,6 +457,9 @@ const systemSettingsSchema = new mongoose.Schema({
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
       cryptoSpreadInr: { type: Number, default: 0 },
+      /** IST (HH:mm or HH:mm:ss) — earliest time users may trade CRYPTOFUT/CRYPTOOPT; empty = no start gate */
+      cryptoStartTime: { type: String, default: '' },
+      /** IST session close hint (HH:mm or HH:mm:ss) */
       cryptoClosingTime: { type: String, default: '' },
       cryptoReferenceSymbol: { type: String, default: '' },
       /** @deprecated */

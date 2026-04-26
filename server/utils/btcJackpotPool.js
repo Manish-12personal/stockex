@@ -11,7 +11,8 @@ import WalletLedger from '../models/WalletLedger.js';
  * A single active SUPER_ADMIN is the counter-party; a negative wallet balance only
  * means the house needs a top-up (users must still be credited). This mirrors the
  * existing BTC Up/Down pool pattern so the game behaves identically at the money-flow
- * level, but all ledger rows are tagged with meta.gameKey='btcJackpot' for filtering.
+ * level, but all ledger rows are tagged with meta.gameKey (default 'btcJackpot') for filtering.
+ * Pass meta.gameKey e.g. 'btcNumber' and poolDebitKind to tag other games using the same pool.
  */
 
 async function findActiveSuperAdmin() {
@@ -24,7 +25,7 @@ async function findActiveSuperAdmin() {
  * Credit Super Admin ₹amount when a user places a ticket.
  * @param {number} amount
  * @param {string} description
- * @param {object} [meta]
+ * @param {object} [meta] — e.g. `{ gameKey: 'btcNumber', poolDebitKind: 'BTC_NUMBER_STAKE', relatedUserId }` overrides defaults
  */
 export async function creditSuperAdminForBtcJackpotStake(amount, description, meta = {}) {
   const amt = Number(amount);
@@ -83,8 +84,9 @@ export async function debitSuperAdminForBtcJackpotPayout(amount, description, me
 
   const bal = updated.wallet?.balance ?? 0;
   if (bal < 0) {
+    const gk = meta?.gameKey || 'btcJackpot';
     console.warn(
-      `[BTC Jackpot pool] Super Admin balance went negative after debit ₹${amt.toFixed(2)}: ₹${bal.toFixed(
+      `[${gk} pool] Super Admin balance went negative after debit ₹${amt.toFixed(2)}: ₹${bal.toFixed(
         2
       )} — top up SA wallet`
     );

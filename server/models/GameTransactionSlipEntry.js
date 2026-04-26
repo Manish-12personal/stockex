@@ -20,7 +20,7 @@ const gameTransactionSlipEntrySchema = new mongoose.Schema({
   },
   gameId: {
     type: String,
-    enum: ['updown', 'btcupdown', 'niftyNumber', 'niftyBracket', 'niftyJackpot'],
+    enum: ['updown', 'btcupdown', 'niftyNumber', 'niftyBracket', 'niftyJackpot', 'btcNumber', 'btcJackpot'],
     required: true
   },
   amount: {

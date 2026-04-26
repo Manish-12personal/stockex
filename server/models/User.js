@@ -627,7 +627,9 @@ const userSchema = new mongoose.Schema({
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
       cryptoSpreadInr: { type: Number, default: 0 },
-      /** IST wall-clock session end for crypto (HH:mm). Empty = unset (no server enforcement yet). */
+      /** IST earliest trading start (HH:mm or HH:mm:ss). Empty = no gate. */
+      cryptoStartTime: { type: String, default: '' },
+      /** IST session end hint (HH:mm or HH:mm:ss). */
       cryptoClosingTime: { type: String, default: '' },
       /** Base symbol (legacy; optional). */
       cryptoReferenceSymbol: { type: String, default: '' },

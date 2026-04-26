@@ -2,9 +2,11 @@ import GameSettings from '../models/GameSettings.js';
 import BtcJackpotBid from '../models/BtcJackpotBid.js';
 import BtcJackpotResult from '../models/BtcJackpotResult.js';
 import BtcJackpotBank from '../models/BtcJackpotBank.js';
+import BtcNumberBet from '../models/BtcNumberBet.js';
 import { btcJackpotDayFilter } from '../utils/btcJackpotDay.js';
 import { getLiveBtcSpotForJackpot } from '../utils/btcJackpotSpot.js';
 import { declareBtcJackpotForDate } from '../services/btcJackpotDeclareService.js';
+import { declareBtcNumberResultForDate } from '../services/btcNumberDeclareService.js';
 import { getTodayISTString } from '../utils/istDate.js';
 
 function istSecondsNow() {
@@ -21,13 +23,8 @@ function parseTimeToSecIST(str) {
 let running = false;
 
 /**
- * BTC Jackpot dynamic result tick. Runs every N seconds from server/index.js.
- * Steps:
- *   1. Skip if disabled, or current IST < configured resultTime.
- *   2. If no locked BTC price row for today, fetch Binance spot and upsert one.
- *   3. If locked row exists and not yet declared, invoke the declare service.
- *
- * Uses a local single-flight guard (`running`) so overlapping ticks no-op.
+ * 23:30 IST tick: lock BTC spot when BTC Jackpot and/or BTC Number have pending play,
+ * then declare BTC Number (independent of jackpot's resultDeclared), then BTC Jackpot.
  */
 export async function btcJackpotAutoTick() {
   if (running) return;
@@ -36,24 +33,39 @@ export async function btcJackpotAutoTick() {
     if (String(process.env.BTC_JACKPOT_AUTO_SETTLEMENT || 'true').toLowerCase() === 'false') return;
 
     const settings = await GameSettings.getSettings().catch(() => null);
-    const gc = settings?.games?.btcJackpot;
-    if (!gc || gc.enabled === false) return;
+    const gcJ = settings?.games?.btcJackpot;
+    const gcN = settings?.games?.btcNumber;
+    const jackpotOn = gcJ && gcJ.enabled !== false;
+    const numberOn = gcN && gcN.enabled !== false;
+    if (!jackpotOn && !numberOn) return;
 
-    const resultSec = parseTimeToSecIST(gc.resultTime || '23:30');
+    const resultTimeCombined =
+      numberOn && jackpotOn
+        ? (gcN.resultTime || gcJ?.resultTime || '23:30')
+        : numberOn && !jackpotOn
+          ? (gcN.resultTime || '23:30')
+          : (gcJ?.resultTime || '23:30');
+    const resultSec = parseTimeToSecIST(resultTimeCombined);
     if (istSecondsNow() < resultSec) return;
 
     const today = getTodayISTString();
+    const pendingJ = jackpotOn
+      ? await BtcJackpotBid.countDocuments({
+          $and: [{ status: 'pending' }, btcJackpotDayFilter(today)],
+        })
+      : 0;
+    const pendingN = numberOn
+      ? await BtcNumberBet.countDocuments({ betDate: today, status: 'pending' })
+      : 0;
+
     let row = await BtcJackpotResult.findOne({ resultDate: today });
 
     if (!row || row.lockedBtcPrice == null || !Number.isFinite(Number(row.lockedBtcPrice)) || Number(row.lockedBtcPrice) <= 0) {
-      const pending = await BtcJackpotBid.countDocuments({
-        $and: [{ status: 'pending' }, btcJackpotDayFilter(today)],
-      });
-      if (pending === 0) return;
+      if (pendingJ === 0 && pendingN === 0) return;
 
       const spot = await getLiveBtcSpotForJackpot();
       if (spot.price == null || !Number.isFinite(spot.price) || spot.price <= 0) {
-        console.warn('[btcJackpot] auto-lock: no BTC price available — retrying next tick');
+        console.warn('[btc22h] auto-lock: no BTC price available — retrying next tick');
         return;
       }
 
@@ -81,25 +93,47 @@ export async function btcJackpotAutoTick() {
         );
 
         console.log(
-          `[btcJackpot] auto-locked @ $${Number(spot.price).toFixed(2)} for ${today} (IST ≥ ${gc.resultTime || '23:30'}, source=${spot.source})`
+          `[btc22h] auto-locked @ $${Number(spot.price).toFixed(2)} for ${today} (IST ≥ ${resultTimeCombined}, source=${spot.source})`
         );
       } catch (e) {
-        if (e?.code !== 11000) console.warn('[btcJackpot] auto-lock:', e?.message || e);
+        if (e?.code !== 11000) console.warn('[btc22h] auto-lock:', e?.message || e);
       }
     }
 
     const fresh = await BtcJackpotResult.findOne({ resultDate: today }).lean();
-    if (!fresh || fresh.resultDeclared) return;
-    if (!Number.isFinite(Number(fresh.lockedBtcPrice)) || Number(fresh.lockedBtcPrice) <= 0) return;
+    if (!fresh || !Number.isFinite(Number(fresh.lockedBtcPrice)) || Number(fresh.lockedBtcPrice) <= 0) {
+      return;
+    }
 
-    try {
-      const out = await declareBtcJackpotForDate(today);
-      console.log(
-        `[btcJackpot] declared ${today}: ${out.summary.winnersCount}W / ${out.summary.losersCount}L, paid ₹${out.summary.totalPaidOut.toFixed(2)}`
-      );
-    } catch (e) {
-      if (!String(e?.message || '').includes('No pending') && !String(e?.message || '').includes('already declared')) {
-        console.warn('[btcJackpot] declare:', e?.message || e);
+    const pendingN2 = numberOn
+      ? await BtcNumberBet.countDocuments({ betDate: today, status: 'pending' })
+      : 0;
+    if (numberOn && pendingN2 > 0) {
+      try {
+        const out = await declareBtcNumberResultForDate({
+          date: today,
+          closingPrice: fresh.lockedBtcPrice,
+        });
+        console.log(
+          `[btcNumber] auto-declared ${today} @ $${Number(fresh.lockedBtcPrice).toFixed(2)}: ${out.summary?.winners ?? 0}W / ${out.summary?.losers ?? 0}L`
+        );
+      } catch (e) {
+        if (!String(e?.message || '').includes('No pending')) {
+          console.warn('[btcNumber] declare:', e?.message || e);
+        }
+      }
+    }
+
+    if (jackpotOn && !fresh.resultDeclared) {
+      try {
+        const out = await declareBtcJackpotForDate(today);
+        console.log(
+          `[btcJackpot] declared ${today}: ${out.summary.winnersCount}W / ${out.summary.losersCount}L, paid ₹${out.summary.totalPaidOut.toFixed(2)}`
+        );
+      } catch (e) {
+        if (!String(e?.message || '').includes('No pending') && !String(e?.message || '').includes('already declared')) {
+          console.warn('[btcJackpot] declare:', e?.message || e);
+        }
       }
     }
   } catch (e) {

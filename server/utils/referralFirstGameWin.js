@@ -10,6 +10,7 @@ export const REFERRAL_FIRST_WIN_GAME_KEYS = [
   'niftyBracket',
   'niftyJackpot',
   'btcJackpot',
+  'btcNumber',
 ];
 
 /**

@@ -1205,7 +1205,12 @@ export async function runGamesAutoSettlementTick() {
               uid,
               out.totalWinningStakeForReferral,
               gameType,
-              { windowNumber: wn, settlementDay, gameId: r.gameId }
+              {
+                windowNumber: wn,
+                settlementDay,
+                gameId: r.gameId,
+                totalStakeInWindow: out.totalWindowStakeForReferral,
+              }
             );
             if (refOut.credited) {
               console.log(

@@ -3,12 +3,14 @@
  * Reusable on API save paths and in brokerage math.
  */
 
-export const COMMISSION_TYPES = ['PER_LOT', 'PER_TRADE', 'PER_CRORE'];
+export const COMMISSION_TYPES = ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'];
 
-/** @param {'PER_LOT'|'PER_TRADE'|'PER_CRORE'} commissionType */
+/** @param {'PER_LOT'|'PER_QUANTITY'|'PER_TRADE'|'PER_CRORE'} commissionType */
 export function requiredUnitForCommissionType(commissionType) {
   if (commissionType === 'PER_CRORE') return 'PERCENT';
-  if (commissionType === 'PER_LOT' || commissionType === 'PER_TRADE') return 'INR';
+  if (commissionType === 'PER_LOT' || commissionType === 'PER_TRADE' || commissionType === 'PER_QUANTITY') {
+    return 'INR';
+  }
   return null;
 }
 
@@ -67,7 +69,27 @@ export function alignSegmentDefaultsMap(segmentDefaults) {
   const out = { ...segmentDefaults };
   for (const k of Object.keys(out)) {
     if (out[k] && typeof out[k] === 'object') {
-      out[k] = withAlignedSegmentCommissionUnit(out[k]);
+      out[k] = withAlignedSegmentCommissionUnit(normalizeLegacySystemSegmentDefaultsSlice(k, out[k]));
+    }
+  }
+  return out;
+}
+
+/**
+ * SystemSettings.segmentDefaults.MCX uses PER_QUANTITY, not PER_LOT. Older DB / clients may send PER_LOT.
+ * @param {string} segmentKey - e.g. EQUITY, FNO, MCX
+ * @param {Record<string, unknown>} seg
+ */
+export function normalizeLegacySystemSegmentDefaultsSlice(segmentKey, seg) {
+  if (!seg || typeof seg !== 'object') return seg;
+  const key = String(segmentKey || '').toUpperCase();
+  if (key !== 'MCX') return seg;
+  const out = { ...seg };
+  const coerce = (ct) => (ct === 'PER_LOT' ? 'PER_QUANTITY' : ct);
+  if (out.commissionType) out.commissionType = coerce(out.commissionType);
+  for (const opt of ['optionBuy', 'optionSell']) {
+    if (out[opt] && typeof out[opt] === 'object' && out[opt].commissionType != null) {
+      out[opt] = { ...out[opt], commissionType: coerce(out[opt].commissionType) };
     }
   }
   return out;

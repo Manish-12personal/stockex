@@ -9,6 +9,7 @@ import BrokerChangeRequest from '../models/BrokerChangeRequest.js';
 import GameSettings from '../models/GameSettings.js';
 import GameResult from '../models/GameResult.js';
 import NiftyNumberBet from '../models/NiftyNumberBet.js';
+import BtcNumberBet from '../models/BtcNumberBet.js';
 import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
 import { getDummyNiftyWhenMarketClosedForTesting } from '../utils/dummyNiftyLtp.js';
 import {
@@ -33,6 +34,11 @@ import {
   creditBtcUpDownSuperAdminPool,
   debitBtcUpDownSuperAdminPool,
 } from '../utils/btcUpDownSuperAdminPool.js';
+import {
+  creditSuperAdminForBtcJackpotStake,
+  debitSuperAdminForBtcJackpotPayout,
+  rollbackBtcJackpotStakeCredit,
+} from '../utils/btcJackpotPool.js';
 import {
   validateBtcUpDownBetPlacement,
   currentTotalSecondsIST,
@@ -283,9 +289,32 @@ router.post('/register', async (req, res) => {
 });
 
 // Create Demo Account - No admin required, 7-day trial with 100,000 demo balance
+// Optional referralCode: same as /register — if it matches a User, referredBy is set (persists through convert-to-real) so referral rewards work after real play.
 router.post('/demo-register', async (req, res) => {
   try {
-    const { username, email, password, fullName, phone } = req.body;
+    const { username, email, password, fullName, phone, referralCode: referralCodeRaw } = req.body;
+    const referralCode = typeof referralCodeRaw === 'string' && referralCodeRaw.trim()
+      ? referralCodeRaw.trim().toUpperCase()
+      : '';
+
+    let referrerUser = null;
+    if (referralCode) {
+      referrerUser = await User.findOne({ referralCode });
+      if (referrerUser) {
+        const refAdmin = await Admin.findById(referrerUser.admin);
+        if (!refAdmin || refAdmin.status !== 'ACTIVE') {
+          return res.status(400).json({ message: 'Referrer admin is not active. Contact support.' });
+        }
+      } else {
+        const adminByRef = await Admin.findOne({ referralCode });
+        if (!adminByRef) {
+          return res.status(400).json({ message: 'Invalid referral code' });
+        }
+        if (adminByRef.status !== 'ACTIVE') {
+          return res.status(400).json({ message: 'Admin is not active. Contact support.' });
+        }
+      }
+    }
     
     // Check if user already exists
     const userExists = await User.findOne({ $or: [{ email }, { username }] });
@@ -293,11 +322,24 @@ router.post('/demo-register', async (req, res) => {
       return res.status(400).json({ message: 'User with this email or username already exists' });
     }
     
+    // Unique referral code for the new user (same pattern as /register)
+    const generateUserReferralCode = () => {
+      const ts = Date.now().toString(36).toUpperCase();
+      const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+      return `REF${ts}${random}`;
+    };
+    let newUserReferralCode = generateUserReferralCode();
+    let codeTaken = await User.findOne({ referralCode: newUserReferralCode });
+    while (codeTaken) {
+      newUserReferralCode = generateUserReferralCode();
+      codeTaken = await User.findOne({ referralCode: newUserReferralCode });
+    }
+    
     // Calculate expiry date (7 days from now)
     const demoExpiresAt = new Date();
     demoExpiresAt.setDate(demoExpiresAt.getDate() + 7);
     
-    // Create demo user without admin
+    // Create demo user without admin (admin chosen at convert-to-real)
     const user = await User.create({
       username,
       email,
@@ -310,6 +352,8 @@ router.post('/demo-register', async (req, res) => {
       adminCode: null,
       admin: null,
       hierarchyPath: [],
+      referralCode: newUserReferralCode,
+      referredBy: referrerUser?._id || null,
       wallet: {
         balance: 1000000,
         cashBalance: 1000000,
@@ -335,6 +379,17 @@ router.post('/demo-register', async (req, res) => {
         isActivated: true
       }
     });
+
+    if (referrerUser) {
+      const Referral = (await import('../models/Referral.js')).default;
+      await Referral.create({
+        referrer: referrerUser._id,
+        referredUser: user._id,
+        referralCode,
+        status: 'ACTIVE',
+        activatedAt: new Date()
+      });
+    }
 
     res.status(201).json({
       _id: user._id,
@@ -857,8 +912,8 @@ router.get('/games-wallet/ledger', protectUser, async (req, res) => {
 
 // Referral earnings feed for the user's Wallet page "Total Referral Amount" tab.
 // Aggregates credits from three disjoint sources into one descending-time list:
-//   1) GamesWalletLedger  gameId='referral' credits  — per-game first-win (creditReferralGameReward) and
-//      Up/Down first win one-ticket (creditReferralPerWinFromGameSettings).
+//   1) GamesWalletLedger  gameId='referral' — legacy; new referrals use main WalletLedger REFERRAL_COMMISSION
+//      (creditReferralPercentOfTotalStake / jackpot & number declare / bracket resolve / Up-Down settle).
 //   2) WalletLedger       reason='REFERRAL_COMMISSION' — per-segment profit distribution referral shares
 //                         (distributeGameProfit → Super Admin share forwarded to referral client; segment
 //                         meta is games/mcx/crypto/forex). Enum was expanded so these now actually persist.
@@ -1010,7 +1065,7 @@ router.get('/referral-earnings', protectUser, async (req, res) => {
   }
 });
 
-const GAMES_LEDGER_GAME_IDS = ['updown', 'btcupdown', 'niftyNumber', 'niftyBracket', 'niftyJackpot'];
+const GAMES_LEDGER_GAME_IDS = ['updown', 'btcupdown', 'niftyNumber', 'niftyBracket', 'niftyJackpot', 'btcNumber', 'btcJackpot'];
 
 /** Net games-wallet change per game for current IST calendar day (credits − debits), keyed by ledger gameId */
 router.get('/games-wallet/today-net', protectUser, async (req, res) => {
@@ -1289,6 +1344,19 @@ router.get('/games/live-activity', protectUser, async (req, res) => {
       games.niftyNumber = { enabled: true, status: 'open', istDate: dayKey, ...pool };
     }
 
+    const bnCfg = settings?.games?.btcNumber || {};
+    if (bnCfg.enabled === false) {
+      games.btcNumber = { enabled: false, status: 'off', istDate: dayKey, totalTickets: 0, players: 0 };
+    } else {
+      const pool = await aggregateDayStakeDebits(
+        'btcNumber',
+        dayStart,
+        dayEnd,
+        'BTC Number.*\\bbet\\b'
+      );
+      games.btcNumber = { enabled: true, status: 'open', istDate: dayKey, ...pool };
+    }
+
     const nbCfg = settings?.games?.niftyBracket || {};
     if (nbCfg.enabled === false) {
       games.niftyBracket = { enabled: false, status: 'off', istDate: dayKey, totalTickets: 0, players: 0 };
@@ -1321,7 +1389,7 @@ router.get('/games/live-activity', protectUser, async (req, res) => {
   }
 });
 
-const GAMES_RECENT_WINNER_IDS = ['updown', 'btcupdown', 'niftyNumber', 'niftyBracket', 'niftyJackpot'];
+const GAMES_RECENT_WINNER_IDS = ['updown', 'btcupdown', 'niftyNumber', 'niftyBracket', 'niftyJackpot', 'btcNumber', 'btcJackpot'];
 
 // Live feed of real win credits (current user only) for the Fantasy Games hub
 router.get('/games/recent-winners', protectUser, async (req, res) => {
@@ -1396,6 +1464,7 @@ router.get('/settings', protectUser, async (req, res) => {
       exposureIntraday: 1, 
       exposureCarryForward: 1,
       cryptoSpreadInr: 0,
+      cryptoStartTime: '',
       cryptoClosingTime: '',
       cryptoReferenceSymbol: '',
       cryptoPricePerLotInr: 0,
@@ -2945,6 +3014,8 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
     let totalLoss = 0;
     let totalBrokerage = 0;
     let settledCount = 0;
+    /** Sum of stake on winning legs — same as auto/manual settle; drives referral per-win */
+    let totalWinningStakeForReferral = 0;
     const ledgerEntries = [];
     const hierarchyJobsResolve = [];
 
@@ -3027,6 +3098,7 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
 
       if (won) {
         totalBalanceInc += creditTotal;
+        totalWinningStakeForReferral += amount;
         console.log(`[RESOLVE] WIN: Gross credit ₹${creditTotal} (hierarchy/brokerage ₹${brokerage} from pool)`);
         const placedAt = takePlacedAtForStake(trade);
         ledgerEntries.push({
@@ -3269,6 +3341,29 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
             console.warn('[RESOLVE] Brokerage distribution slip entries failed:', brokerageSlipError);
           }
         }
+      }
+    }
+
+    const refStake = parseFloat(Number(totalWinningStakeForReferral).toFixed(2));
+    const totalStakeInWindow = parseFloat(Number(totalMarginDec).toFixed(2));
+    if (refStake > 0 && totalStakeInWindow > 0) {
+      const gt = gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
+      try {
+        const refOut = await creditReferralPerWinFromGameSettings(
+          req.user._id,
+          refStake,
+          gt,
+          { windowNumber, settlementDay, gameId, totalStakeInWindow }
+        );
+        if (refOut.credited) {
+          console.log(
+            `[RESOLVE] referral per-win user=${req.user._id} game=${gameId} w=${windowNumber} → referrer ₹${refOut.amount}`
+          );
+        } else if (refOut.reason) {
+          console.log(`[RESOLVE] referral per-win skipped: ${refOut.reason}`);
+        }
+      } catch (refErr) {
+        console.warn('[RESOLVE] referral per-win failed:', refErr?.message || refErr);
       }
     }
 
@@ -3646,6 +3741,340 @@ router.get('/nifty-number/daily-result', protectUser, async (req, res) => {
   try {
     const date = typeof req.query.date === 'string' && req.query.date.trim() ? req.query.date.trim() : getTodayIST();
     const row = await NiftyNumberBet.findOne({
+      betDate: date,
+      resultNumber: { $ne: null },
+    })
+      .sort({ resultDeclaredAt: -1, updatedAt: -1 })
+      .select('resultNumber closingPrice resultDeclaredAt betDate')
+      .lean();
+
+    if (!row || row.resultNumber == null) {
+      return res.json({ declared: false, betDate: date });
+    }
+
+    res.json({
+      declared: true,
+      betDate: date,
+      resultNumber: row.resultNumber,
+      closingPrice: row.closingPrice ?? null,
+      resultDeclaredAt: row.resultDeclaredAt ?? null,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== BTC NUMBER GAME (stake via BTC Jackpot Bank ledger tags) ====================
+
+const BTC_NUM_POOL = { gameKey: 'btcNumber', poolDebitKind: 'BTC_NUMBER_STAKE' };
+const BTC_NUM_POOL_RB = { gameKey: 'btcNumber', poolDebitKind: 'BTC_NUMBER_STAKE_ROLLBACK' };
+
+router.delete('/btc-number/bet/:id', protectUser, async (req, res) => {
+  return res.status(400).json({
+    message: 'BTC Number bets cannot be deleted once placed. You can edit a pending bet if allowed.',
+  });
+});
+
+router.post('/btc-number/bet', protectUser, async (req, res) => {
+  try {
+    const { selectedNumbers, amount } = req.body;
+    const userId = req.user._id;
+    const today = getTodayIST();
+
+    const numbers = Array.isArray(selectedNumbers)
+      ? selectedNumbers.map((n) => parseInt(n, 10))
+      : [parseInt(selectedNumbers ?? req.body.selectedNumber, 10)];
+
+    if (numbers.length === 0) {
+      return res.status(400).json({ message: 'Please select at least one number' });
+    }
+    for (const num of numbers) {
+      if (isNaN(num) || num < 0 || num > 99) {
+        return res.status(400).json({ message: 'All numbers must be between .00 and .99' });
+      }
+    }
+    if (new Set(numbers).size !== numbers.length) {
+      return res.status(400).json({ message: 'Duplicate numbers are not allowed' });
+    }
+
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.btcNumber;
+    if (!gameConfig?.enabled) {
+      return res.status(400).json({ message: 'BTC Number game is currently disabled' });
+    }
+
+    const betAmount = parseFloat(amount);
+    if (isNaN(betAmount) || betAmount <= 0) {
+      return res.status(400).json({ message: 'Invalid bet amount' });
+    }
+    const tValue = gameConfig.ticketPrice || settings.tokenValue || 300;
+    const minAmt = (gameConfig.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig.maxTickets || 100) * tValue;
+    if (betAmount < minAmt) {
+      return res.status(400).json({ message: `Minimum bet is ${gameConfig.minTickets || 1} ticket(s) (₹${minAmt}) per number` });
+    }
+    if (betAmount > maxAmt) {
+      return res.status(400).json({ message: `Maximum bet is ${gameConfig.maxTickets || 100} ticket(s) (₹${maxAmt}) per number` });
+    }
+
+    const qty = parseInt(req.body.quantity, 10) || 1;
+    if (qty < 1) return res.status(400).json({ message: 'Invalid quantity' });
+
+    const perNumberTotal = betAmount * qty;
+    const totalCost = perNumberTotal * numbers.length;
+
+    const todayBets = await BtcNumberBet.find({ user: userId, betDate: today });
+    const todayBetsCount = todayBets.reduce((sum, b) => sum + (b.quantity || 1), 0);
+    const maxBetsPerDay = gameConfig.betsPerDay || 1;
+    const newBetsCount = qty * numbers.length;
+    if (todayBetsCount + newBetsCount > maxBetsPerDay) {
+      const remaining = Math.max(0, maxBetsPerDay - todayBetsCount);
+      return res.status(400).json({ message: `You can only place ${maxBetsPerDay} bets per day. You have ${remaining} remaining.` });
+    }
+
+    const existingBets = await BtcNumberBet.find({ user: userId, betDate: today, selectedNumber: { $in: numbers } });
+    if (existingBets.length > 0) {
+      const dupes = existingBets.map((b) => `.${b.selectedNumber.toString().padStart(2, '0')}`).join(', ');
+      return res.status(400).json({ message: `You already bet on ${dupes} today` });
+    }
+
+    const gw = await atomicGamesWalletDebit(User, userId, totalCost, { usedMargin: totalCost });
+    if (!gw) {
+      return res.status(400).json({ message: `Insufficient balance. Need ₹${totalCost.toLocaleString()} for ${numbers.length} number(s)` });
+    }
+
+    let saCredited = false;
+    try {
+      await creditSuperAdminForBtcJackpotStake(
+        totalCost,
+        'BTC Number — stake to Bank (Super Admin)',
+        { ...BTC_NUM_POOL, relatedUserId: userId, betDate: today }
+      );
+      saCredited = true;
+    } catch (poolErr) {
+      console.error('BTC Number: Super Admin pool credit failed:', poolErr);
+      await atomicGamesWalletUpdate(User, userId, { balance: totalCost, usedMargin: -totalCost });
+      return res.status(503).json({
+        message: 'Could not route stake to house pool. Your games wallet was not charged.',
+      });
+    }
+
+    const user = await User.findById(userId).select('admin');
+    const betDocs = numbers.map((num) => ({
+      user: userId,
+      selectedNumber: num,
+      amount: perNumberTotal,
+      quantity: qty,
+      betDate: today,
+      admin: user?.admin || null,
+      status: 'pending',
+    }));
+    let bets;
+    try {
+      bets = await BtcNumberBet.insertMany(betDocs);
+    } catch (innerErr) {
+      if (saCredited) {
+        await rollbackBtcJackpotStakeCredit(
+          totalCost,
+          'BTC Number — rollback Bank (bet persist failed)',
+          BTC_NUM_POOL_RB
+        );
+      }
+      await atomicGamesWalletUpdate(User, userId, { balance: totalCost, usedMargin: -totalCost });
+      console.error('BTC Number insertMany error:', innerErr);
+      throw innerErr;
+    }
+
+    const placedAt = bets[0]?.createdAt || new Date();
+    await recordGamesWalletLedger(userId, {
+      gameId: 'btcNumber',
+      entryType: 'debit',
+      amount: totalCost,
+      balanceAfter: gw.balance,
+      description: `BTC Number — bet (${numbers.length} number${numbers.length > 1 ? 's' : ''})`,
+      orderPlacedAt: placedAt,
+      meta: {
+        numbers,
+        perNumberAmount: betAmount,
+        tickets: parseFloat((totalCost / tValue).toFixed(2)),
+        tokenValue: tValue,
+      },
+    });
+
+    res.json({
+      message: `${numbers.length} bet(s) placed successfully!`,
+      bets: bets.map((b) => ({
+        _id: b._id,
+        selectedNumber: b.selectedNumber,
+        amount: b.amount,
+        betDate: b.betDate,
+        status: b.status,
+      })),
+      newBalance: gw.balance,
+    });
+  } catch (error) {
+    console.error('BTC Number bet error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.put('/btc-number/bet/:id', protectUser, async (req, res) => {
+  try {
+    const { newAmount } = req.body;
+    const betId = req.params.id;
+    const userId = req.user._id;
+
+    const bet = await BtcNumberBet.findOne({ _id: betId, user: userId });
+    if (!bet) return res.status(404).json({ message: 'Bet not found' });
+    if (bet.status !== 'pending') return res.status(400).json({ message: 'Can only modify pending bets' });
+
+    const settings = await GameSettings.getSettings();
+    const gameConfig = settings.games?.btcNumber;
+
+    const amount = parseFloat(newAmount);
+    if (isNaN(amount) || amount <= 0) return res.status(400).json({ message: 'Invalid amount' });
+    const tValue = gameConfig?.ticketPrice || settings.tokenValue || 300;
+    const minAmt = (gameConfig?.minTickets || 1) * tValue;
+    const maxAmt = (gameConfig?.maxTickets || 100) * tValue;
+    if (amount < minAmt) return res.status(400).json({ message: `Minimum bet is ${gameConfig?.minTickets || 1} ticket(s) (₹${minAmt})` });
+    if (amount > maxAmt) return res.status(400).json({ message: `Maximum bet is ${gameConfig?.maxTickets || 100} ticket(s) (₹${maxAmt})` });
+
+    const oldAmount = bet.amount;
+    const diff = amount - oldAmount;
+
+    let gw;
+    if (diff > 0) {
+      gw = await atomicGamesWalletUpdate(User, userId, { balance: -diff, usedMargin: diff });
+      if (!gw) {
+        return res.status(400).json({ message: `Insufficient balance. Need ₹${diff} more` });
+      }
+      try {
+        await creditSuperAdminForBtcJackpotStake(
+          diff,
+          'BTC Number — additional stake to Bank (bet modified)',
+          { ...BTC_NUM_POOL, relatedUserId: userId, betId }
+        );
+      } catch (poolErr) {
+        await atomicGamesWalletUpdate(User, userId, { balance: diff, usedMargin: -diff });
+        console.error('BTC Number modify: SA credit failed:', poolErr);
+        return res.status(503).json({ message: 'Could not route additional stake to house pool.' });
+      }
+    } else if (diff < 0) {
+      const refund = -diff;
+      const poolOut = await debitSuperAdminForBtcJackpotPayout(
+        refund,
+        'BTC Number — reduce stake from Bank (bet modified)',
+        { gameKey: 'btcNumber', poolDebitKind: 'BTC_NUMBER_PAYOUT', relatedUserId: userId, betId }
+      );
+      if (!poolOut.ok) {
+        return res.status(503).json({ message: 'Could not adjust house pool for reduced stake.' });
+      }
+      gw = await atomicGamesWalletUpdate(User, userId, { balance: refund, usedMargin: -refund });
+      if (!gw) {
+        await creditSuperAdminForBtcJackpotStake(
+          refund,
+          'BTC Number — rollback Bank (wallet credit failed after modify)',
+          { ...BTC_NUM_POOL, relatedUserId: userId, betId }
+        );
+        return res.status(500).json({ message: 'Could not credit games wallet' });
+      }
+    } else {
+      const u = await User.findById(userId).select('gamesWallet.balance').lean();
+      gw = { balance: u?.gamesWallet?.balance ?? 0 };
+    }
+
+    if (diff !== 0) {
+      await recordGamesWalletLedger(userId, {
+        gameId: 'btcNumber',
+        entryType: diff > 0 ? 'debit' : 'credit',
+        amount: Math.abs(diff),
+        balanceAfter: gw.balance,
+        description: `BTC Number — bet size ${diff > 0 ? 'increased' : 'reduced'}`,
+        orderPlacedAt: bet.createdAt,
+        meta: {
+          betId: bet._id,
+          oldAmount,
+          newAmount: amount,
+          tickets: parseFloat((Math.abs(diff) / tValue).toFixed(2)),
+          tokenValue: tValue,
+        },
+      });
+    }
+
+    bet.amount = amount;
+    await bet.save();
+
+    res.json({
+      message: `Bet updated to ₹${amount}`,
+      bet: { _id: bet._id, selectedNumber: bet.selectedNumber, amount: bet.amount, status: bet.status },
+      newBalance: gw.balance,
+    });
+  } catch (error) {
+    console.error('BTC Number modify bet error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/btc-number/today', protectUser, async (req, res) => {
+  try {
+    const today = getTodayIST();
+    const bets = await BtcNumberBet.find({ user: req.user._id, betDate: today }).sort({ createdAt: -1 });
+    const settings = await GameSettings.getSettings();
+    const maxBetsPerDay = settings.games?.btcNumber?.betsPerDay || 1;
+    const totalBetsCount = bets.reduce((sum, b) => sum + (b.quantity || 1), 0);
+    res.json({
+      hasBet: bets.length > 0,
+      betsCount: totalBetsCount,
+      maxBetsPerDay,
+      remaining: Math.max(0, maxBetsPerDay - totalBetsCount),
+      bets: bets.map((b) => ({
+        _id: b._id,
+        selectedNumber: b.selectedNumber,
+        amount: b.amount,
+        quantity: b.quantity || 1,
+        betDate: b.betDate,
+        createdAt: b.createdAt,
+        status: b.status,
+        resultNumber: b.resultNumber,
+        closingPrice: b.closingPrice,
+        profit: b.profit,
+        resultDeclaredAt: b.resultDeclaredAt,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/btc-number/history', protectUser, async (req, res) => {
+  try {
+    const bets = await BtcNumberBet.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(30);
+    res.json(
+      bets.map((b) => ({
+        _id: b._id,
+        selectedNumber: b.selectedNumber,
+        amount: b.amount,
+        quantity: b.quantity || 1,
+        betDate: b.betDate,
+        createdAt: b.createdAt,
+        status: b.status,
+        resultNumber: b.resultNumber,
+        closingPrice: b.closingPrice,
+        profit: b.profit,
+        resultDeclaredAt: b.resultDeclaredAt,
+      }))
+    );
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/btc-number/daily-result', protectUser, async (req, res) => {
+  try {
+    const date = typeof req.query.date === 'string' && req.query.date.trim() ? req.query.date.trim() : getTodayIST();
+    const row = await BtcNumberBet.findOne({
       betDate: date,
       resultNumber: { $ne: null },
     })
@@ -4280,15 +4709,19 @@ router.post('/updown/manual-settle', protectUser, async (req, res) => {
     }
 
     if (Number(totalWinningStakeForReferral) > 0) {
+      const totalStakeInWindow = parseFloat(Number(totalMarginDec).toFixed(2));
       const gt = gameId === 'btcupdown' ? 'btcUpDown' : 'niftyUpDown';
-      try {
-        await creditReferralPerWinFromGameSettings(req.user._id, totalWinningStakeForReferral, gt, {
-          windowNumber: wn,
-          settlementDay,
-          gameId,
-        });
-      } catch (refErr) {
-        console.warn('[updown/manual-settle] referral per-win failed:', refErr?.message || refErr);
+      if (totalStakeInWindow > 0) {
+        try {
+          await creditReferralPerWinFromGameSettings(req.user._id, totalWinningStakeForReferral, gt, {
+            windowNumber: wn,
+            settlementDay,
+            gameId,
+            totalStakeInWindow,
+          });
+        } catch (refErr) {
+          console.warn('[updown/manual-settle] referral per-win failed:', refErr?.message || refErr);
+        }
       }
     }
 

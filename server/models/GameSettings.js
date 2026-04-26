@@ -82,6 +82,7 @@ const gameSettingsSchema = new mongoose.Schema({
       profitAdminPercent: { type: Number, default: 30 },
       startTime: { type: String, default: '09:15:00' },
       endTime: { type: String, default: '15:45:00' },
+      /** % of total stake (all UP+DOWN legs) in a settled window; one referrer credit per window when there is a win */
       referralDistribution: {
         winPercent: { type: Number, default: 10 }
       }
@@ -116,6 +117,7 @@ const gameSettingsSchema = new mongoose.Schema({
       biddingEndTime: { type: String, default: '15:24' },
       startTime: { type: String, default: '09:15:15' },
       endTime: { type: String, default: '15:45:00' },
+      /** % of user's total Nifty Number stake for the declare day when they have a win; one referrer credit per user per day */
       referralDistribution: {
         winPercent: { type: Number, default: 10 }
       }
@@ -172,6 +174,7 @@ const gameSettingsSchema = new mongoose.Schema({
       brokerageDistribution: { type: mongoose.Schema.Types.Mixed },
       startTime: { type: String, default: '09:15:15' },
       endTime: { type: String, default: '15:45:00' },
+      /** % of user's total jackpot stake for the declare day (when they win a prize); one credit per user per day; optional top-rank gate */
       referralDistribution: {
         winPercent: { type: Number, default: 5 },
         topRanksOnly: { type: Boolean, default: true },
@@ -225,6 +228,7 @@ const gameSettingsSchema = new mongoose.Schema({
       biddingEndTime: { type: String, default: '15:29' },
       startTime: { type: String, default: '09:15:15' },
       endTime: { type: String, default: '15:45:00' },
+      /** % of trade stake on a winning bracket resolve; one referrer credit per resolved trade */
       referralDistribution: {
         winPercent: { type: Number, default: 2 }
       }
@@ -256,6 +260,7 @@ const gameSettingsSchema = new mongoose.Schema({
       endTime: { type: String, default: '23:45:00' },
       allowedExpiryTimes: { type: [Number], default: [60, 120, 300, 600, 900] }, // 1m, 2m, 5m, 10m, 15m in seconds
       defaultExpiryTime: { type: Number, default: 60 }, // Default 1 minute
+      /** % of total stake (all UP+DOWN legs) in a settled window; one referrer credit per window when there is a win */
       referralDistribution: {
         winPercent: { type: Number, default: 10 }
       }
@@ -325,12 +330,43 @@ const gameSettingsSchema = new mongoose.Schema({
         adminPercent:     { type: Number, default: 0.5 },
       },
 
+      /** % of user's total BTC Jackpot stake for the declare day when they win a prize; one credit per user per day */
       referralDistribution: {
         winPercent:    { type: Number, default: 5 },
         topRanksOnly:  { type: Boolean, default: true },
         topRanksCount: { type: Number, default: 3 },
       },
-    }
+    },
+    btcNumber: {
+      ...gameConfigSchema.obj,
+      name: { type: String, default: 'BTC Number' },
+      description: { type: String, default: 'Pick a decimal (.00-.99) of BTC USDT spot at 23:30 IST' },
+      winMultiplier: { type: Number, default: 9 },
+      roundDuration: { type: Number, default: 86400 },
+      enabled: { type: Boolean, default: true },
+      minTickets: { type: Number, default: 1 },
+      maxTickets: { type: Number, default: 100 },
+      brokeragePercent: { type: Number, default: 0 },
+      buySellRatioBrokerage: { type: Number, default: 16.67 },
+      fixedProfit: { type: Number, default: 4000 },
+      grossPrizeSubBrokerPercent: { type: Number, default: 2 },
+      grossPrizeBrokerPercent: { type: Number, default: 1 },
+      grossPrizeAdminPercent: { type: Number, default: 0.5 },
+      profitSubBrokerPercent: { type: Number, default: 10 },
+      profitBrokerPercent: { type: Number, default: 20 },
+      profitAdminPercent: { type: Number, default: 30 },
+      resultTime: { type: String, default: '23:30' },
+      maxBidTime: { type: String, default: '23:25' },
+      betsPerDay: { type: Number, default: 10 },
+      biddingStartTime: { type: String, default: '00:00' },
+      biddingEndTime: { type: String, default: '23:24' },
+      startTime: { type: String, default: '00:00:01' },
+      endTime: { type: String, default: '23:30:00' },
+      /** % of user's total BTC Number stake for the declare day when they have a win; one referrer credit per user per day */
+      referralDistribution: {
+        winPercent: { type: Number, default: 10 },
+      },
+    },
   },
   
   // Referral & Bonus Settings
@@ -402,6 +438,7 @@ gameSettingsSchema.statics.getSettings = async function() {
     'niftyBracket',
     'niftyJackpot',
     'btcJackpot',
+    'btcNumber',
   ];
 
   let mutated = false;

@@ -245,7 +245,9 @@ function getGameLabel(gameId) {
     'btcupdown': 'BTC Up/Down',
     'niftyNumber': 'Nifty Number',
     'niftyBracket': 'Nifty Bracket',
-    'niftyJackpot': 'Nifty Jackpot'
+    'niftyJackpot': 'Nifty Jackpot',
+    'btcNumber': 'BTC Number',
+    'btcJackpot': 'BTC Jackpot',
   };
   return labels[gameId] || gameId;
 }

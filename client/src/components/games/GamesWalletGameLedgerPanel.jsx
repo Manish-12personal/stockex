@@ -337,6 +337,7 @@ export const GAMES_LEDGER_FILTER_OPTIONS = [
   { value: 'niftyNumber', label: 'Nifty Number' },
   { value: 'niftyBracket', label: 'Nifty Bracket' },
   { value: 'niftyJackpot', label: 'Nifty Jackpot' },
+  { value: 'btcNumber', label: 'BTC Number' },
   { value: 'transfer_in', label: 'Main → Games (deposit)' },
   { value: 'transfer_out', label: 'Games → Main (withdraw)' },
 ];

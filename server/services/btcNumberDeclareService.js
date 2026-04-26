@@ -1,6 +1,6 @@
 import User from '../models/User.js';
 import GameSettings from '../models/GameSettings.js';
-import NiftyNumberBet from '../models/NiftyNumberBet.js';
+import BtcNumberBet from '../models/BtcNumberBet.js';
 import { closingPriceToDecimalPart } from '../utils/niftyNumberResult.js';
 import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.js';
 import { atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
@@ -14,10 +14,10 @@ import {
 import { creditReferralPercentOfTotalStake } from './referralGameStakeCredit.js';
 
 /**
- * Declare Nifty Number for a bet date (YYYY-MM-DD). Credits games wallet for winners.
+ * Declare BTC Number for a bet date (YYYY-MM-DD). Same settlement rules as Nifty Number.
  * @param {{ date: string, resultNumber?: number, closingPrice?: number|string|null }} params
  */
-export async function declareNiftyNumberResultForDate({ date, resultNumber, closingPrice }) {
+export async function declareBtcNumberResultForDate({ date, resultNumber, closingPrice }) {
   if (!date) {
     throw new Error('Date is required');
   }
@@ -36,13 +36,13 @@ export async function declareNiftyNumberResultForDate({ date, resultNumber, clos
     }
     num = parsed;
   } else {
-    throw new Error('Send closingPrice (NIFTY LTP) or resultNumber 0–99');
+    throw new Error('Send closingPrice (BTC spot) or resultNumber 0–99');
   }
 
   const settings = await GameSettings.getSettings();
-  const gameConfig = settings.games?.niftyNumber;
+  const gameConfig = settings.games?.btcNumber;
   if (!gameConfig?.enabled) {
-    throw new Error('Nifty Number game is disabled');
+    throw new Error('BTC Number game is disabled');
   }
 
   const fixedProfit = gameConfig?.fixedProfit || 4000;
@@ -56,7 +56,7 @@ export async function declareNiftyNumberResultForDate({ date, resultNumber, clos
     (Number(gameConfig?.grossPrizeAdminPercent) || 0);
   const useGrossPrizeHierarchy = grossHierarchyPctSum > 0;
 
-  const pendingBets = await NiftyNumberBet.find({ betDate: date, status: 'pending' });
+  const pendingBets = await BtcNumberBet.find({ betDate: date, status: 'pending' });
   if (pendingBets.length === 0) {
     throw new Error('No pending bets found for this date');
   }
@@ -107,10 +107,10 @@ export async function declareNiftyNumberResultForDate({ date, resultNumber, clos
       if (user) {
         const poolPay = await debitBtcUpDownSuperAdminPool(
           userCredit,
-          `Nifty Number — pay winner gross prize (bet ${bet._id})`
+          `BTC Number — pay winner gross prize (bet ${bet._id})`
         );
         if (!poolPay.ok) {
-          console.error(`[Nifty Number] SA pool debit failed for user ${bet.user} gross ₹${userCredit}`);
+          console.error(`[BTC Number] SA pool debit failed for user ${bet.user} gross ₹${userCredit}`);
         }
 
         const roundPnL = parseFloat((grossPrize - bet.amount).toFixed(2));
@@ -121,11 +121,11 @@ export async function declareNiftyNumberResultForDate({ date, resultNumber, clos
           todayRealizedPnL: roundPnL,
         });
         await recordGamesWalletLedger(bet.user, {
-          gameId: 'niftyNumber',
+          gameId: 'btcNumber',
           entryType: 'credit',
           amount: userCredit,
           balanceAfter: gw.balance,
-          description: 'Nifty Number — result: win (gross prize, stake not re-credited; hierarchy from pool)',
+          description: 'BTC Number — result: win (gross prize, stake not re-credited; hierarchy from pool)',
           orderPlacedAt: bet.createdAt,
           meta: {
             betId: bet._id,
@@ -139,20 +139,20 @@ export async function declareNiftyNumberResultForDate({ date, resultNumber, clos
 
         if (useGrossPrizeHierarchy && totalWinnerBrokerage > 0 && grossBreakdown) {
           await creditNiftyJackpotGrossHierarchyFromPool(bet.user, user, grossBreakdown, {
-            gameLabel: 'Nifty Number',
-            gameKey: 'niftyNumber',
-            logTag: 'NiftyNumberGrossHierarchy',
+            gameLabel: 'BTC Number',
+            gameKey: 'btcNumber',
+            logTag: 'BtcNumberGrossHierarchy',
           });
         } else if (totalWinnerBrokerage > 0) {
           await distributeWinBrokerage(
             bet.user,
             user,
             totalWinnerBrokerage,
-            'Nifty Number',
-            'niftyNumber',
+            'BTC Number',
+            'btcNumber',
             {
               fundFromBtcPool: true,
-              ledgerGameId: 'niftyNumber',
+              ledgerGameId: 'btcNumber',
               skipUserRebate: true,
             }
           );
@@ -162,14 +162,14 @@ export async function declareNiftyNumberResultForDate({ date, resultNumber, clos
           const userTotalStake = stakeByUser.get(bet.user.toString()) || 0;
           await creditReferralPercentOfTotalStake({
             referredUserId: bet.user,
-            gameType: 'niftyNumber',
+            gameType: 'btcNumber',
             totalStake: userTotalStake,
             settlementDay: date,
             sessionScope: 'declare',
             rank: null,
           });
         } catch (refErr) {
-          console.warn('[Nifty Number] referral:', refErr?.message || refErr);
+          console.warn('[BTC Number] referral:', refErr?.message || refErr);
         }
       }
       totalPaidOut += userCredit;
@@ -188,19 +188,19 @@ export async function declareNiftyNumberResultForDate({ date, resultNumber, clos
         const distResult = await distributeGameProfit(
           user,
           bet.amount,
-          'NiftyNumber',
+          'BtcNumber',
           bet._id?.toString(),
-          'niftyNumber'
+          'btcNumber'
         );
         bet.distribution = distResult.distributions;
         if (distResult.totalDistributed > 0) {
           const poolFund = await debitBtcUpDownSuperAdminPool(
             distResult.totalDistributed,
-            `Nifty Number — fund hierarchy from loser stake (bet ${bet._id})`
+            `BTC Number — fund hierarchy from loser stake (bet ${bet._id})`
           );
           if (!poolFund.ok) {
             console.error(
-              `[Nifty Number] SA pool debit failed funding loser hierarchy ₹${distResult.totalDistributed}`
+              `[BTC Number] SA pool debit failed funding loser hierarchy ₹${distResult.totalDistributed}`
             );
           }
         }

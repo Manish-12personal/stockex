@@ -29,6 +29,7 @@ const GAME_SETTINGS_KEY = {
   'niftybracket': 'niftyBracket',
   'niftyjackpot': 'niftyJackpot',
   'btcjackpot': 'btcJackpot',
+  'btcnumber': 'btcNumber',
 };
 
 /** False when global games off, maintenance, or this game is disabled in GameSettings */
@@ -52,6 +53,7 @@ function ledgerGameIdFromUi(uiId) {
     niftybracket: 'niftyBracket',
     niftyjackpot: 'niftyJackpot',
     btcjackpot: 'btcJackpot',
+    btcnumber: 'btcNumber',
   };
   return m[uiId] || uiId;
 }
@@ -429,6 +431,18 @@ const UserGames = () => {
       prize: 'Top 20 Prizes',
       players: '—',
       timeframe: '1 Day'
+    },
+    {
+      id: 'btcnumber',
+      name: 'BTC Number',
+      description: 'Pick the decimal (.00–.99) of BTC spot at 23:30 IST & win tickets',
+      icon: Hash,
+      color: 'from-amber-600 to-orange-600',
+      bgColor: 'bg-amber-900/20',
+      borderColor: 'border-amber-500/30',
+      prize: 'Ticket Profit',
+      players: '—',
+      timeframe: '1 Day'
     }
   ];
 
@@ -452,6 +466,24 @@ const UserGames = () => {
           refreshBalance={fetchGamesBalance}
           settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
           tokenValue={resolveGameTicketPrice(gameSettings, GAME_SETTINGS_KEY[activeGame])}
+        />
+      );
+    }
+    if (activeGame === 'btcnumber') {
+      return (
+        <NiftyNumberScreen
+          game={games.find((g) => g.id === activeGame)}
+          balance={gamesBalance}
+          onBack={() => setActiveGame(null)}
+          user={user}
+          refreshBalance={fetchGamesBalance}
+          settings={gameSettings?.games?.[GAME_SETTINGS_KEY[activeGame]] || null}
+          tokenValue={resolveGameTicketPrice(gameSettings, GAME_SETTINGS_KEY[activeGame])}
+          apiBase="/api/user/btc-number"
+          livePriceGameId="btcupdown"
+          resultTimeFallback="23:30"
+          clearingLabel="BTC / USDT — reference spot (15m, IST)"
+          allDecimals
         />
       );
     }
@@ -918,6 +950,7 @@ const UserGames = () => {
         {howToPlayGame && (() => {
           const tv = gameSettings?.tokenValue || 300;
           const gs = gameSettings?.games?.[GAME_SETTINGS_KEY[howToPlayGame]] || {};
+          const tkt = Number(gs.ticketPrice) > 0 ? Number(gs.ticketPrice) : tv;
           const selectedGame = games.find(g => g.id === howToPlayGame);
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => setHowToPlayGame(null)}>
@@ -1093,6 +1126,42 @@ const UserGames = () => {
                     </div>
                   </>)}
 
+                  {howToPlayGame === 'btcnumber' && (<>
+                    <div>
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Star size={12} /> Game Overview</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Pick the <span className="text-amber-400 font-bold">last 2 decimal digits</span> (.00 to .99) of the <span className="text-amber-400 font-bold">BTC / USDT</span> spot at result time (IST).</li>
+                        <li>2. If BTC is <span className="text-yellow-400 font-bold">76,123.65</span>, the winning number is <span className="text-yellow-400 font-bold">65</span> (.65).</li>
+                        <li>3. Correct guess wins a <span className="text-green-400 font-bold">fixed profit of ₹{gs.fixedProfit || 4000}</span> (gross, before hierarchy; same rules as Nifty Number).</li>
+                        <li>4. You can place up to <span className="text-cyan-400 font-bold">{gs.betsPerDay || 10} bets per day</span> on different numbers.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Timer size={12} /> Timing</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Result declared at: <span className="text-green-400 font-bold">{gs.resultTime || '23:30'} IST</span> (from BTC spot locked at that time, same lock as BTC Jackpot when enabled).</li>
+                        <li>2. Bidding window follows game settings (start / end / max bid time).</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-purple-400 mb-1.5 flex items-center gap-1.5"><Coins size={12} /> Bet Limits</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Min per bet: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span></li>
+                        <li>2. Max per bet: <span className="text-purple-400 font-bold">{gs.maxTickets || 100} Tickets</span></li>
+                        <li>3. Max bets per day: <span className="text-purple-400 font-bold">{gs.betsPerDay || 10}</span></li>
+                        <li>4. 1 Ticket = ₹{tv}</li>
+                      </ul>
+                    </div>
+                    <div className="bg-amber-900/20 border border-amber-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-amber-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> How You Win</h3>
+                      <ul className="text-gray-300 space-y-1.5 pl-1">
+                        <li>1. Pick a number from the grid; stake routes to the house pool; wins credit your games wallet.</li>
+                        <li>2. The winning decimal is taken from the official BTC spot at result time.</li>
+                        <li>3. If your number matches → you win the fixed gross prize for that row (see admin settings for hierarchy on G).</li>
+                      </ul>
+                    </div>
+                  </>)}
+
                   {/* ===== NIFTY BRACKET ===== */}
                   {howToPlayGame === 'niftybracket' && (<>
                     <div>
@@ -1211,6 +1280,77 @@ const UserGames = () => {
                         <li>2. <span className="font-bold">Earlier time breaks ties</span> when distance to spot is equal.</li>
                         <li>3. Use <span className="text-purple-400 font-bold">Update NIFTY</span> during the window if you want to refresh your level (stake unchanged).</li>
                         <li>4. Watch <span className="text-purple-400 font-bold">Live Top 5</span> — final prizes use the locked close, not the live board.</li>
+                      </ul>
+                    </div>
+                  </>)}
+
+                  {/* ===== BTC JACKPOT ===== */}
+                  {howToPlayGame === 'btcjackpot' && (<>
+                    <div>
+                      <h3 className="font-bold text-yellow-400 mb-1.5 flex items-center gap-1.5"><Star size={12} /> Game Overview</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. When you play <span className="text-amber-400 font-bold">BTC Jackpot</span>, you can buy any number of tickets, <span className="text-yellow-400 font-bold">one at a time</span>. Enter your <span className="text-yellow-400 font-bold">predicted BTC (USD) price</span> — your bid is placed at that price.</li>
+                        <li>2. Add <span className="text-purple-400 font-bold">1 ticket</span> per tap (repeat for more). All stakes go into the <span className="text-purple-400 font-bold">Bank / prize pool</span>.</li>
+                        <li>3. Top <span className="text-yellow-400 font-bold">{gs.topWinners || 20}</span> ranked tickets win prizes from the pool.</li>
+                        <li>4. Daily ticket cap is set by admin (e.g. {gs.bidsPerDay || 200}). You can change the predicted price on pending tickets during the bidding window (no cancel).</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Timer size={12} /> Bidding Window</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Bidding opens at <span className="text-cyan-400 font-bold">{gs.biddingStartTime || '00:00'} IST</span>.</li>
+                        <li>2. Bidding closes at <span className="text-cyan-400 font-bold">{gs.biddingEndTime || '23:29'} IST</span>.</li>
+                        <li>3. Results declared at <span className="text-green-400 font-bold">{gs.resultTime || '23:30'} IST</span> (top {gs.topWinners || 20} winners by rank).</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-purple-400 mb-1.5 flex items-center gap-1.5"><Coins size={12} /> Bid Limits</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Minimum: <span className="text-purple-400 font-bold">{gs.minTickets || 1} Ticket(s)</span> (₹{((gs.minTickets || 1) * tkt).toLocaleString('en-IN')})</li>
+                        <li>2. Maximum: <span className="text-purple-400 font-bold">{gs.maxTickets != null && gs.maxTickets > 0 ? gs.maxTickets : 5000} Tickets</span> (₹{((gs.maxTickets != null && gs.maxTickets > 0 ? gs.maxTickets : 5000) * tkt).toLocaleString('en-IN')})</li>
+                        <li>3. 1 Ticket = ₹{tkt.toLocaleString('en-IN')}</li>
+                      </ul>
+                    </div>
+                    <div className="bg-amber-900/20 border border-amber-500/25 rounded-xl p-3">
+                      <h3 className="font-bold text-amber-400 mb-1.5 flex items-center gap-1.5"><Crown size={12} /> Ranking</h3>
+                      <ul className="text-gray-300 space-y-1.5 pl-1">
+                        <li>1. Live board: each ticket ranks by <span className="text-amber-300 font-bold">nearest to live BTC / USDT spot</span>; tie → earlier ticket.</li>
+                        <li>2. After close: the <span className="text-amber-300 font-bold">official price is locked</span> for the day; winners rank by nearest to that close. Equal distance shares merged rank prizes.</li>
+                      </ul>
+                      <div className="mt-3 space-y-2">
+                        <div className="bg-dark-700/60 rounded-lg p-2">
+                          <div className="text-[10px] text-amber-400 font-bold mb-1">Example: Nearest to spot</div>
+                          <div className="text-gray-400 space-y-0.5">
+                            <div>Spot <span className="text-amber-300 font-bold">$77,584</span></div>
+                            <div>Ticket A: BTC <span className="text-amber-300 font-bold">$77,580</span> at 10:20</div>
+                            <div>Ticket B: BTC <span className="text-amber-300 font-bold">$77,600</span> at 10:19</div>
+                          </div>
+                          <div className="mt-1 text-green-400 font-bold">Result: Ticket A is higher rank (smaller distance to spot)</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-green-400 mb-1.5 flex items-center gap-1.5"><Zap size={12} /> Bank & prize pool</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Every bid is added to the <span className="text-amber-300 font-bold">day&apos;s bank</span> (pool grows in real time).</li>
+                        <li>2. Prizes are paid from the bank by rank; configuration is set by admin (per-rank % of the pool).</li>
+                        <li>3. Top {gs.topWinners || 20} ranks share the distributed prizes (ties split as per game rules).</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-green-400 mb-1.5 flex items-center gap-1.5"><Award size={12} /> After result</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. <span className="text-green-400 font-bold">Winners (Top {gs.topWinners || 20}):</span> games wallet is credited the rank prize; hierarchy is settled per admin settings.</li>
+                        <li>2. <span className="text-red-400 font-bold">Losers:</span> stake was pooled at bid time and does not return.</li>
+                      </ul>
+                    </div>
+                    <div className="bg-cyan-900/20 border border-cyan-500/20 rounded-xl p-3">
+                      <h3 className="font-bold text-cyan-400 mb-1.5 flex items-center gap-1.5"><Info size={12} /> Pro Tips</h3>
+                      <ul className="text-gray-300 space-y-1 pl-1">
+                        <li>1. Aim for tickets <span className="font-bold">closest to the live BTC spot</span> for a better live rank.</li>
+                        <li>2. <span className="font-bold">Earlier time breaks ties</span> when distance to spot is equal.</li>
+                        <li>3. Use <span className="text-amber-400 font-bold">update</span> on a pending ticket during the window if you want to change your predicted price (stake unchanged).</li>
+                        <li>4. Watch the <span className="text-amber-400 font-bold">live leaderboard</span> — <span className="font-bold">final prizes</span> use the <span className="font-bold">locked close at result time</span>, not the live board.</li>
                       </ul>
                     </div>
                   </>)}
@@ -4673,7 +4813,21 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 };
 
 // ==================== NIFTY NUMBER SCREEN ====================
-const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue }) => {
+const NiftyNumberScreen = ({
+  game,
+  balance,
+  onBack,
+  user,
+  refreshBalance,
+  settings,
+  tokenValue,
+  apiBase = '/api/user/nifty-number',
+  livePriceGameId = 'updown',
+  resultTimeFallback = '15:45',
+  clearingLabel = 'Clearing (last 15m bar close, IST)',
+  /** true = full .00–.99 grid (e.g. BTC Number); false = .00–.95 in steps of 5 (Nifty Number) */
+  allDecimals = false,
+}) => {
   // Use the actual tokenValue from settings, fallback to global tokenValue
   const actualTokenValue = tokenValue || settings?.tokenValue || 300;
   const [selectedNumbers, setSelectedNumbers] = useState([]);
@@ -4692,6 +4846,8 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedNumber, setSelectedNumber] = useState(null);
   const [numberOfBets, setNumberOfBets] = useState(1);
+  /** BTC Number (.00–.99): digits typed after the fixed "." */
+  const [centInput, setCentInput] = useState('');
 
   // Admin-configured settings with fallbacks
   const fixedProfit = settings?.fixedProfit || 4000;
@@ -4700,7 +4856,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
   const minBet = minTickets * actualTokenValue;
   const maxBet = maxTickets * actualTokenValue;
   const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
-  const resultTimeDisplay = settings?.resultTime || '15:45';
+  const resultTimeDisplay = settings?.resultTime || resultTimeFallback;
 
   const [dailyResult, setDailyResult] = useState(null);
   const [sessionClearing, setSessionClearing] = useState(null);
@@ -4736,20 +4892,20 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
     fetchHistory();
     (async () => {
       try {
-        const { data } = await axios.get('/api/user/nifty-number/daily-result', {
+        const { data } = await axios.get(`${apiBase}/daily-result`, {
           headers: { Authorization: `Bearer ${user.token}` },
         });
         setDailyResult(data);
       } catch (e) {
-        console.error('Error fetching Nifty Number daily result:', e);
+        console.error('Error fetching daily result:', e);
       }
     })();
-  }, []);
+  }, [user.token, apiBase]);
 
   useEffect(() => {
     const tick = async () => {
       try {
-        const { data: dr } = await axios.get('/api/user/nifty-number/daily-result', {
+        const { data: dr } = await axios.get(`${apiBase}/daily-result`, {
           headers: { Authorization: `Bearer ${user.token}` },
         });
         setDailyResult(dr);
@@ -4757,7 +4913,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
         /* ignore */
       }
       try {
-        const { data } = await axios.get('/api/user/nifty-number/today', {
+        const { data } = await axios.get(`${apiBase}/today`, {
           headers: { Authorization: `Bearer ${user.token}` },
         });
         setTodayBets(data.bets || []);
@@ -4769,18 +4925,18 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
     };
     const id = setInterval(tick, 45000);
     return () => clearInterval(id);
-  }, [user.token]);
+  }, [user.token, apiBase]);
 
   const fetchTodayBets = async () => {
     try {
-      const { data } = await axios.get('/api/user/nifty-number/today', {
+      const { data } = await axios.get(`${apiBase}/today`, {
         headers: { Authorization: `Bearer ${user.token}` }
       });
       setTodayBets(data.bets || []);
       setRemaining(data.remaining ?? 0);
       setMaxBetsPerDay(data.maxBetsPerDay ?? 10);
       try {
-        const { data: dr } = await axios.get('/api/user/nifty-number/daily-result', {
+        const { data: dr } = await axios.get(`${apiBase}/daily-result`, {
           headers: { Authorization: `Bearer ${user.token}` },
         });
         setDailyResult(dr);
@@ -4796,7 +4952,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
 
   const fetchHistory = async () => {
     try {
-      const { data } = await axios.get('/api/user/nifty-number/history', {
+      const { data } = await axios.get(`${apiBase}/history`, {
         headers: { Authorization: `Bearer ${user.token}` }
       });
       setBetHistory(data);
@@ -4830,7 +4986,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
     setMessage(null);
     try {
       // Place single bet record with quantity
-      await axios.post('/api/user/nifty-number/bet', {
+      await axios.post(`${apiBase}/bet`, {
         selectedNumbers: [selectedNumber],
         amount: amt,
         quantity: count
@@ -4859,7 +5015,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
     setModifying(true);
     setMessage(null);
     try {
-      await axios.put(`/api/user/nifty-number/bet/${betId}`, {
+      await axios.put(`${apiBase}/bet/${betId}`, {
         newAmount: newAmt
       }, {
         headers: { Authorization: `Bearer ${user.token}` }
@@ -4884,6 +5040,29 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
     setCurrentStep(2);
   };
 
+  const applyDecimalPick = () => {
+    if (!allDecimals) return;
+    if (centInput.length < 1) {
+      setMessage({ type: 'error', text: 'Dot ke baad 00 se 99 tak type karein' });
+      return;
+    }
+    const n =
+      centInput.length === 1
+        ? parseInt(centInput.padStart(2, '0'), 10)
+        : parseInt(centInput, 10);
+    if (!Number.isFinite(n) || n < 0 || n > 99) {
+      setMessage({ type: 'error', text: '00 se 99 ke beech number daalen' });
+      return;
+    }
+    if (todayNumbers.includes(n)) {
+      setMessage({ type: 'error', text: 'Aaj is value par pehle se bet hai' });
+      return;
+    }
+    setMessage(null);
+    setCentInput('');
+    handleNumberSelect(n);
+  };
+
   const handleBetCountSelect = async (count) => {
     console.log('Bet count selected:', count, 'remaining:', remaining, 'placing:', placing);
     if (count > remaining || placing) return;
@@ -4894,6 +5073,11 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
   };
 
   const handleBackToStep1 = () => {
+    if (allDecimals && selectedNumber != null) {
+      setCentInput(String(selectedNumber).padStart(2, '0'));
+    } else {
+      setCentInput('');
+    }
     setCurrentStep(1);
     setSelectedNumber(null);
     setNumberOfBets(1);
@@ -4903,6 +5087,7 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
     setCurrentStep(1);
     setSelectedNumber(null);
     setNumberOfBets(1);
+    setCentInput('');
   };
 
   return (
@@ -5051,7 +5236,9 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                 </div>
                 <div>
                   <h3 className="font-bold">{game.name}</h3>
-                  <p className="text-xs text-gray-400">Pick .00 to .95 (multiples of 5)</p>
+                  <p className="text-xs text-gray-400">
+                    {allDecimals ? 'Type .00 to .99 (2 digits after the dot)' : 'Pick .00 to .95 (multiples of 5)'}
+                  </p>
                 </div>
               </div>
               <div className="space-y-1 text-sm">
@@ -5077,7 +5264,9 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-gray-400">Betting</span>
-                  <span className="text-cyan-400 font-medium">{settings?.biddingStartTime || '09:15'} - {settings?.biddingEndTime || '15:24'}</span>
+                  <span className="text-cyan-400 font-medium">
+                    {settings?.biddingStartTime || (allDecimals ? '00:00' : '09:15')} - {settings?.biddingEndTime || (allDecimals ? '23:24' : '15:24')}
+                  </span>
                 </div>
               </div>
               <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
@@ -5138,16 +5327,16 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
               gameId={ledgerGameIdFromUi(game.id)}
               userToken={user?.token}
               tokenValue={actualTokenValue}
-              title="Order history — Nifty Number"
+              title={`Order history — ${game.name}`}
               limit={500}
               enableDateFilter
             />
           </div>
 
-          {/* CENTER COLUMN - Nifty live price */}
+          {/* CENTER COLUMN - live price (Nifty or BTC) */}
           <div className="flex-1 min-w-0 order-2 max-lg:order-3 flex flex-col min-h-0 max-lg:flex-none max-lg:max-h-[min(42vh,400px)] lg:flex-1">
             <GameLivePricePanel
-              gameId="updown"
+              gameId={livePriceGameId}
               fullHeight
               onSessionClearingUpdate={setSessionClearing}
               onPriceDataUpdate={({ displayPrice, priceChange }) => {
@@ -5158,7 +5347,9 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
           </div>
 
           {/* RIGHT COLUMN - Number Picker + Bet Controls */}
-          <div className="w-full max-w-full lg:w-[300px] flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div
+            className={`w-full max-w-full flex-shrink-0 order-3 max-lg:order-2 flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden max-lg:overflow-visible pb-[max(0.75rem,env(safe-area-inset-bottom))] ${allDecimals ? 'lg:w-[min(100%,24rem)]' : 'lg:w-[300px]'}`}
+          >
             {/* Message */}
             {message && (
               <div className={`p-2 rounded-lg text-xs font-medium mb-2 ${message.type === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
@@ -5220,34 +5411,79 @@ const NiftyNumberScreen = ({ game, balance, onBack, user, refreshBalance, settin
                   {/* Step 1: Select Number */}
                   {currentStep === 1 && (
                     <div>
-                      <div className="text-sm font-medium text-purple-400 mb-2">Step 1: Select a Number</div>
-                      <div className="grid grid-cols-5 gap-1.5">
-                        {Array.from({ length: 20 }, (_, idx) => {
-                          const i = idx * 5;
-                          const isAlreadyBet = todayNumbers.includes(i);
-                          return (
-                            <button
-                              key={i}
-                              onClick={() => handleNumberSelect(i)}
-                              disabled={isAlreadyBet}
-                              className={`py-2 rounded text-xs font-bold transition-all ${
-                                isAlreadyBet
-                                  ? 'bg-yellow-900/30 text-yellow-600 cursor-not-allowed ring-1 ring-yellow-500/30'
-                                  : 'bg-dark-700 hover:bg-purple-600 hover:text-white text-gray-300'
-                              }`}
+                      {allDecimals ? (
+                        <div>
+                          <div className="text-sm font-medium text-purple-400 mb-1">Step 1: Price ka decimal (00–99)</div>
+                          <p className="text-[11px] text-gray-500 mb-3 leading-snug">
+                            Neeche <span className="text-gray-300">.</span> ke baad 2 digit type karein — jaise 45 = <span className="text-purple-300">.45</span> (last 2 digits of price).
+                          </p>
+                          <div className="flex items-center justify-center gap-1 flex-wrap">
+                            <span
+                              className="text-3xl sm:text-4xl font-bold text-white select-none leading-none"
+                              aria-hidden
                             >
-                              .{i.toString().padStart(2, '0')}
-                            </button>
-                          );
-                        })}
-                      </div>
+                              .
+                            </span>
+                            <input
+                              type="text"
+                              name="btc-cent"
+                              inputMode="numeric"
+                              autoComplete="off"
+                              maxLength={2}
+                              value={centInput}
+                              onChange={(e) => {
+                                setCentInput(e.target.value.replace(/\D/g, '').slice(0, 2));
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') applyDecimalPick();
+                              }}
+                              placeholder="00"
+                              className="w-[4.5rem] sm:w-[5.5rem] text-center text-2xl sm:text-3xl font-bold font-mono tabular-nums bg-dark-700 border-2 border-purple-500/40 rounded-xl py-2.5 text-white placeholder:text-gray-600 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/30"
+                            />
+                          </div>
+                          <p className="text-[10px] text-center text-gray-500 mt-2">
+                            1 digit bhi chalega (5 → .05)
+                          </p>
+                          <button
+                            type="button"
+                            onClick={applyDecimalPick}
+                            className="w-full mt-3 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-sm font-bold transition"
+                          >
+                            Next — tickets
+                          </button>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="text-sm font-medium text-purple-400 mb-2">Step 1: Select a Number</div>
+                          <div className="grid gap-1 grid-cols-5">
+                            {Array.from({ length: 20 }, (_, idx) => {
+                              const i = idx * 5;
+                              const isAlreadyBet = todayNumbers.includes(i);
+                              return (
+                                <button
+                                  key={i}
+                                  onClick={() => handleNumberSelect(i)}
+                                  disabled={isAlreadyBet}
+                                  className={`rounded font-bold transition-all py-2 text-xs ${
+                                    isAlreadyBet
+                                      ? 'bg-yellow-900/30 text-yellow-600 cursor-not-allowed ring-1 ring-yellow-500/30'
+                                      : 'bg-dark-700 hover:bg-purple-600 hover:text-white text-gray-300'
+                                  }`}
+                                >
+                                  .{i.toString().padStart(2, '0')}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
                   {/* Clearing and LTP Display */}
                   <div className="mt-3 space-y-2">
                     <div className="text-[10px] text-gray-500 uppercase tracking-wide">
-                      Clearing (last 15m bar close, IST)
+                      {clearingLabel}
                     </div>
                     <div className="text-2xl sm:text-3xl text-center">
                       {displayPrice != null ? (

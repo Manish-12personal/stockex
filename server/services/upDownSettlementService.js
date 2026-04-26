@@ -22,7 +22,7 @@ import { currentTotalSecondsIST } from '../../lib/btcUpDownWindows.js';
  * Creates UpDownWindowSettlement row; credits games wallet for wins.
  *
  * @param {string} settlementDay YYYY-MM-DD (IST) — session day for this window (avoids repeating window # across days).
- * @returns {Promise<{ ok: true, settledCount: number, ledgerWins: number, totalWinningStakeForReferral: number } | { ok: false, error: string }>}
+ * @returns {Promise<{ ok: true, settledCount: number, ledgerWins: number, totalWinningStakeForReferral: number, totalWindowStakeForReferral: number } | { ok: false, error: string }>}
  */
 export async function settleUpDownUserWindowFromLedger(
   userId,
@@ -143,7 +143,7 @@ export async function settleUpDownUserWindowFromLedger(
   let totalLoss = 0;
   let totalBrokerage = 0;
   let settledCount = 0;
-  /** Sum of stake on winning legs — base for referrer % ("ticket price" total) in GameSettings. */
+  /** Sum of stake on winning legs — gate for referral (must have a win). */
   let totalWinningStakeForReferral = 0;
   const ledgerEntries = [];
   const hierarchyJobs = [];
@@ -258,6 +258,8 @@ export async function settleUpDownUserWindowFromLedger(
     return { ok: false, error: 'no_valid_trades' };
   }
 
+  const totalWindowStakeForReferral = settledRows.reduce((s, row) => s + row.amount, 0);
+
   const isBtcManual = gameId === 'btcupdown';
   // BTC: SA pool pays gross wins first, then distributeWinBrokerage debits T again for hierarchy (see plan).
   if (isBtcManual && totalBalanceInc > 0) {
@@ -327,5 +329,6 @@ export async function settleUpDownUserWindowFromLedger(
     settledCount,
     ledgerWins: ledgerEntries.length,
     totalWinningStakeForReferral: parseFloat(Number(totalWinningStakeForReferral).toFixed(2)),
+    totalWindowStakeForReferral: parseFloat(Number(totalWindowStakeForReferral).toFixed(2)),
   };
 }
