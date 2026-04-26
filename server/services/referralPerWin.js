@@ -1,6 +1,7 @@
 ﻿/**
  * BTC / Nifty Up-Down: referral when the referred user has a winning leg in a settled window.
- * Delegates to creditReferralPercentOfTotalStake (total window stake × winPercent, once per window).
+ * Delegates to creditReferralPercentOfTotalStake (winPercent × one ticket price; first win in that game only).
+ * totalStakeInWindow is required for validation and ledger meta, not for the reward amount.
  */
 import { creditReferralPercentOfTotalStake } from './referralGameStakeCredit.js';
 

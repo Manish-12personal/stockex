@@ -1,8 +1,8 @@
 /**
- * Shared games referral: winPercent from GameSettings × total stake for the session (window / declare day / trade).
- * At most one games stake referral per referred user ever (first qualifying win in any game).
- * Per-session idempotency: (referred user, gameKey, settlementDay, sessionScope).
- * Credits referrer main wallet + REFERRAL_COMMISSION ledger (same as Up/Down stake referrals).
+ * Shared games referral: winPercent from GameSettings.
+ * - BTC/Nifty Up/Down: % × one ticket price (game ticketPrice or global tokenValue).
+ * - Other games: % × total stake for the session (declare / bracket / jackpot day).
+ * First win only per (referred user, gameKey). Session idempotency: (referred user, gameKey, day, sessionScope).
  */
 import mongoose from 'mongoose';
 import User from '../models/User.js';
@@ -44,7 +44,7 @@ function metaRelatedUserIdMatch(referredOid, referredUserIdRaw) {
  * @param {object} params
  * @param {import('mongoose').Types.ObjectId|string} params.referredUserId
  * @param {string} params.gameType - GameSettings games.* key
- * @param {number} params.totalStake - Sum of stakes for this session (e.g. all legs or all user bids that day)
+ * @param {number} params.totalStake - Session total stake (Up/Down: full window stake for validation/meta; reward uses one ticket)
  * @param {string} params.settlementDay - YYYY-MM-DD (IST calendar anchor)
  * @param {string} params.sessionScope - Unique within day+game: e.g. `w42`, `declare`, or trade id
  * @param {number|null} [params.rank] - Optional rank for jackpot top-N settings
@@ -121,17 +121,18 @@ export async function creditReferralPercentOfTotalStake({
       return { credited: false, reason: 'Invalid referred user id' };
     }
 
-    const priorGlobalGamesReferral = await WalletLedger.findOne({
+    const priorStakeReferralThisGame = await WalletLedger.findOne({
       ownerType: 'USER',
       reason: 'REFERRAL_COMMISSION',
       type: 'CREDIT',
       'meta.kind': 'game_stake_referral',
       'meta.relatedUserId': relatedIdCond,
+      'meta.gameKey': gameType,
     }).lean();
-    if (priorGlobalGamesReferral) {
+    if (priorStakeReferralThisGame) {
       return {
         credited: false,
-        reason: 'Games stake referral already paid for this referred user (first win in any game only)',
+        reason: 'Stake referral already paid once for this referred user in this game (first win only)',
       };
     }
 
@@ -154,14 +155,34 @@ export async function creditReferralPercentOfTotalStake({
       return { credited: false, reason: 'Referrer not found' };
     }
 
-    const rewardAmount = parseFloat(((stake * rewardPercent) / 100).toFixed(2));
+    const isUpDown = gameType === 'btcUpDown' || gameType === 'niftyUpDown';
+    let referralBaseAmount;
+    let referralBaseKind;
+    if (isUpDown) {
+      const ticket =
+        gameConfig?.ticketPrice != null && Number.isFinite(Number(gameConfig.ticketPrice))
+          ? Number(gameConfig.ticketPrice)
+          : Number(settings?.tokenValue) > 0
+            ? Number(settings.tokenValue)
+            : 300;
+      referralBaseAmount = ticket;
+      referralBaseKind = 'single_ticket';
+    } else {
+      referralBaseAmount = stake;
+      referralBaseKind = 'total_session_stake';
+    }
+
+    const rewardAmount = parseFloat(((referralBaseAmount * rewardPercent) / 100).toFixed(2));
     if (rewardAmount <= 0) {
       return { credited: false, reason: 'Zero reward' };
     }
 
     const gl = labelFor(gameType);
     const rankBit = rank != null ? ` (rank ${rank})` : '';
-    const description = `Referral bonus: ${rewardPercent}% of total stake (₹${stake.toFixed(2)}) — ${referredUser.username} in ${gl}${rankBit} · ${day} · ${scope}`;
+    const baseDesc = isUpDown
+      ? `${rewardPercent}% of one ticket (₹${referralBaseAmount.toFixed(2)})`
+      : `${rewardPercent}% of total stake (₹${stake.toFixed(2)})`;
+    const description = `Referral bonus: ${baseDesc} — ${referredUser.username} in ${gl}${rankBit} · ${day} · ${scope}`;
 
     referrer.wallet = referrer.wallet || {};
     referrer.wallet.cashBalance = (referrer.wallet.cashBalance || 0) + rewardAmount;
@@ -193,8 +214,9 @@ export async function creditReferralPercentOfTotalStake({
         kind: 'game_stake_referral',
         settlementDay: day,
         sessionScope: scope,
-        referralBase: 'total_session_stake',
+        referralBase: referralBaseKind,
         totalStakeInSession: stake,
+        ...(isUpDown ? { ticketPrice: referralBaseAmount } : {}),
         referredUsername: referredUser.username,
         ...(rank != null ? { rank } : {}),
       },
