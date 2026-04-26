@@ -108,6 +108,16 @@ const walletLedgerSchema = new mongoose.Schema({
     segment: { type: String },
     /** REFERRAL_COMMISSION_TRANSFER: client the Super Admin share is being routed to */
     referralClientId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    /** Per-game stake/ticket referral (creditReferralPercentOfTotalStake); required for first-win-only queries */
+    kind: { type: String },
+    settlementDay: { type: String },
+    sessionScope: { type: String },
+    rewardPercent: { type: Number },
+    referralBase: { type: String },
+    totalStakeInSession: { type: Number },
+    ticketPrice: { type: Number },
+    referredUsername: { type: String },
+    rank: { type: Number },
   },
 }, { timestamps: true });
 

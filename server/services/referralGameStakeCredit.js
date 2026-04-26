@@ -121,13 +121,15 @@ export async function creditReferralPercentOfTotalStake({
       return { credited: false, reason: 'Invalid referred user id' };
     }
 
+    // First win per (referred user, gameKey). `meta.kind` was omitted from WalletLedger schema until fix,
+    // so also match legacy rows by description (stake/ticket referrals only use "Referral bonus:" here).
     const priorStakeReferralThisGame = await WalletLedger.findOne({
       ownerType: 'USER',
       reason: 'REFERRAL_COMMISSION',
       type: 'CREDIT',
-      'meta.kind': 'game_stake_referral',
       'meta.relatedUserId': relatedIdCond,
       'meta.gameKey': gameType,
+      $or: [{ 'meta.kind': 'game_stake_referral' }, { description: { $regex: /^Referral bonus:/i } }],
     }).lean();
     if (priorStakeReferralThisGame) {
       return {
