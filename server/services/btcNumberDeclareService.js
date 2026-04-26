@@ -6,7 +6,6 @@ import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.j
 import { atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 import {
-  distributeGameProfit,
   distributeWinBrokerage,
   computeNiftyJackpotGrossHierarchyBreakdown,
   creditNiftyJackpotGrossHierarchyFromPool,
@@ -184,26 +183,7 @@ export async function declareBtcNumberResultForDate({ date, resultNumber, closin
           realizedPnL: -bet.amount,
           todayRealizedPnL: -bet.amount,
         });
-
-        const distResult = await distributeGameProfit(
-          user,
-          bet.amount,
-          'BtcNumber',
-          bet._id?.toString(),
-          'btcNumber'
-        );
-        bet.distribution = distResult.distributions;
-        if (distResult.totalDistributed > 0) {
-          const poolFund = await debitBtcUpDownSuperAdminPool(
-            distResult.totalDistributed,
-            `BTC Number — fund hierarchy from loser stake (bet ${bet._id})`
-          );
-          if (!poolFund.ok) {
-            console.error(
-              `[BTC Number] SA pool debit failed funding loser hierarchy ₹${distResult.totalDistributed}`
-            );
-          }
-        }
+        bet.distribution = { adminShare: 0, superAdminShare: 0, platformShare: 0 };
       }
 
       totalCollected += bet.amount;

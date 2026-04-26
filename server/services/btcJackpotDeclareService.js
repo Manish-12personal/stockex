@@ -43,14 +43,17 @@ async function resolveHierarchyForUser(userDoc, grossPrize, gc) {
   const brPct = Number(gc?.hierarchy?.brokerPercent) || 0;
   const adPct = Number(gc?.hierarchy?.adminPercent) || 0;
 
+  const emptyMember = () => ({ id: null, name: null, amount: 0 });
   const plan = {
-    subBroker: { id: null, name: null, amount: 0 },
-    broker:    { id: null, name: null, amount: 0 },
-    admin:     { id: null, name: null, amount: 0 },
+    subBroker: emptyMember(),
+    broker: emptyMember(),
+    admin: emptyMember(),
+    superAdmin: emptyMember(),
     total: 0,
   };
 
   if (!userDoc || !Number.isFinite(grossPrize) || grossPrize <= 0) return plan;
+  if (sbPct + brPct + adPct <= 0) return plan;
 
   // user.admin is usually the immediate managing admin — could be a sub-broker, broker, or admin tier.
   const immediate = userDoc.admin;
@@ -82,39 +85,82 @@ async function resolveHierarchyForUser(userDoc, grossPrize, gc) {
   const sb = byRole('SUB_BROKER');
   const br = byRole('BROKER');
   const ad = byRole('ADMIN');
+  const saInChain = byRole('SUPER_ADMIN');
 
-  if (sb && sbPct > 0) {
+  const hasSubBroker = !!sb;
+  const hasBroker = !!br;
+  const hasAdmin = !!ad;
+
+  const subBrokerShareToBroker = gc?.subBrokerShareToBroker ?? true;
+
+  let sbAmt = round2((grossPrize * sbPct) / 100);
+  let brAmt = round2((grossPrize * brPct) / 100);
+  let adAmt = round2((grossPrize * adPct) / 100);
+  let saAmt = 0;
+
+  if (!hasSubBroker) {
+    if (subBrokerShareToBroker && hasBroker) brAmt = round2(brAmt + sbAmt);
+    else if (hasAdmin) adAmt = round2(adAmt + sbAmt);
+    else saAmt = round2(saAmt + sbAmt);
+    sbAmt = 0;
+  }
+  if (!hasBroker) {
+    if (hasAdmin) adAmt = round2(adAmt + brAmt);
+    else saAmt = round2(saAmt + brAmt);
+    brAmt = 0;
+  }
+  if (!hasAdmin) {
+    saAmt = round2(saAmt + adAmt);
+    adAmt = 0;
+  }
+
+  let totalHierarchy = round2(sbAmt + brAmt + adAmt + saAmt);
+  if (totalHierarchy > grossPrize) {
+    const scale = grossPrize / totalHierarchy;
+    sbAmt = round2(sbAmt * scale);
+    brAmt = round2(brAmt * scale);
+    adAmt = round2(adAmt * scale);
+    saAmt = round2(saAmt * scale);
+    totalHierarchy = round2(sbAmt + brAmt + adAmt + saAmt);
+  }
+
+  if (hasSubBroker && sbAmt > 0) {
     plan.subBroker = {
       id: sb._id,
       name: sb.username || sb.name || null,
-      amount: round2((grossPrize * sbPct) / 100),
+      amount: sbAmt,
     };
   }
-  if (br && brPct > 0) {
+  if (hasBroker && brAmt > 0) {
     plan.broker = {
       id: br._id,
       name: br.username || br.name || null,
-      amount: round2((grossPrize * brPct) / 100),
+      amount: brAmt,
     };
   }
-  if (ad && adPct > 0) {
+  if (hasAdmin && adAmt > 0) {
     plan.admin = {
       id: ad._id,
       name: ad.username || ad.name || null,
-      amount: round2((grossPrize * adPct) / 100),
+      amount: adAmt,
     };
   }
-
-  let total = plan.subBroker.amount + plan.broker.amount + plan.admin.amount;
-  if (total > grossPrize) {
-    // Scale proportionally so hierarchy never exceeds grossPrize
-    const scale = grossPrize / total;
-    plan.subBroker.amount = round2(plan.subBroker.amount * scale);
-    plan.broker.amount = round2(plan.broker.amount * scale);
-    plan.admin.amount = round2(plan.admin.amount * scale);
-    total = plan.subBroker.amount + plan.broker.amount + plan.admin.amount;
+  if (saAmt > 0) {
+    const saDoc =
+      saInChain ||
+      (await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' }).select(selectFields).lean());
+    if (saDoc) {
+      plan.superAdmin = {
+        id: saDoc._id,
+        name: saDoc.username || saDoc.name || null,
+        amount: saAmt,
+      };
+    }
   }
-  plan.total = total;
+
+  plan.total = round2(
+    plan.subBroker.amount + plan.broker.amount + plan.admin.amount + plan.superAdmin.amount
+  );
   return plan;
 }
 
@@ -280,6 +326,15 @@ export async function declareBtcJackpotForDate(date) {
         }
         if (plan.admin.amount > 0) {
           const r = await creditHierarchyMember(plan.admin, plan.admin.amount, 'BTC Jackpot', bid.user);
+          hierarchyPaidForBid += r.credited || 0;
+        }
+        if (plan.superAdmin.amount > 0) {
+          const r = await creditHierarchyMember(
+            plan.superAdmin,
+            plan.superAdmin.amount,
+            'BTC Jackpot',
+            bid.user
+          );
           hierarchyPaidForBid += r.credited || 0;
         }
 
