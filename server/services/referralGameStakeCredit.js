@@ -99,6 +99,20 @@ export async function creditReferralPercentOfTotalStake({
         ? new mongoose.Types.ObjectId(referredUserId)
         : referredUserId;
 
+    if (gameType === 'btcUpDown' || gameType === 'niftyUpDown') {
+      const priorUpDown = await WalletLedger.findOne({
+        ownerType: 'USER',
+        reason: 'REFERRAL_COMMISSION',
+        type: 'CREDIT',
+        'meta.kind': 'game_stake_referral',
+        'meta.relatedUserId': referredOid,
+        'meta.gameKey': gameType,
+      }).lean();
+      if (priorUpDown) {
+        return { credited: false, reason: 'Up/Down stake referral already paid once for this referred user' };
+      }
+    }
+
     const existing = await WalletLedger.findOne({
       ownerType: 'USER',
       reason: 'REFERRAL_COMMISSION',
