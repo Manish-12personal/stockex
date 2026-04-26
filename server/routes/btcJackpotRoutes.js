@@ -20,6 +20,10 @@ import {
   absDist,
 } from '../utils/btcJackpotRanking.js';
 import {
+  evaluateBtcJackpotBiddingWindow,
+  btcJackpotBiddingWindowUserMessage,
+} from '../utils/btcJackpotBiddingWindow.js';
+import {
   creditSuperAdminForBtcJackpotStake,
   rollbackBtcJackpotStakeCredit,
 } from '../utils/btcJackpotPool.js';
@@ -28,35 +32,16 @@ const router = express.Router();
 
 /* ----------------------------- helpers ----------------------------- */
 
-function istNow() {
-  const d = new Date();
-  const offset = 5.5 * 60 * 60 * 1000;
-  const ist = new Date(d.getTime() + offset);
-  return {
-    h: ist.getUTCHours(),
-    m: ist.getUTCMinutes(),
-    s: ist.getUTCSeconds(),
-    hhmmss: `${String(ist.getUTCHours()).padStart(2, '0')}:${String(ist.getUTCMinutes()).padStart(2, '0')}:${String(ist.getUTCSeconds()).padStart(2, '0')}`,
-  };
-}
-
-function parseHHmm(str) {
-  const [h, m] = String(str || '').split(':').map((x) => parseInt(x, 10));
-  return { h: h || 0, m: Number.isFinite(m) ? m : 0 };
-}
-
-function withinBiddingWindow(gc) {
-  if (process.env.BTC_JACKPOT_ALLOW_TEST_BIDDING === 'true' || process.env.BTC_JACKPOT_ALLOW_TEST_BIDDING === '1') {
-    return true;
-  }
-  if (process.env.NODE_ENV !== 'production') return true;
-  const { h, m } = istNow();
-  const nowMin = h * 60 + m;
-  const start = parseHHmm(gc?.biddingStartTime || '00:00');
-  const end = parseHHmm(gc?.biddingEndTime || '23:29');
-  const startMin = start.h * 60 + start.m;
-  const endMin = end.h * 60 + end.m + 1; // inclusive through :59 of end minute
-  return nowMin >= startMin && nowMin <= endMin;
+function istNowHhmmss() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const pick = (t) => parts.find((p) => p.type === t)?.value || '00';
+  return `${pick('hour')}:${pick('minute')}:${pick('second')}`;
 }
 
 function parsePredictedBtc(raw) {
@@ -97,7 +82,6 @@ router.get('/config', protectUser, async (req, res) => {
       topWinners: Number(gc.topWinners) || 20,
       biddingStartTime: gc.biddingStartTime || '00:00',
       biddingEndTime: gc.biddingEndTime || '23:29',
-      resultTime: gc.resultTime || '23:30',
       prizePercentages: Array.isArray(gc.prizePercentages) ? gc.prizePercentages : [],
       hierarchy: gc.hierarchy || null,
       referralDistribution: gc.referralDistribution || null,
@@ -169,9 +153,10 @@ router.post('/bid', protectUser, async (req, res) => {
       return res.status(400).json({ message: 'Games are currently unavailable' });
     }
 
-    if (!withinBiddingWindow(gc)) {
+    const win = evaluateBtcJackpotBiddingWindow(gc);
+    if (!win.ok) {
       return res.status(400).json({
-        message: `Bidding closed. Window: ${gc.biddingStartTime || '00:00'}–${gc.biddingEndTime || '23:29'} IST.`,
+        message: btcJackpotBiddingWindowUserMessage(gc, win.reason),
       });
     }
 
@@ -223,7 +208,7 @@ router.post('/bid', protectUser, async (req, res) => {
     }
 
     const userDoc = await User.findById(userId).select('admin').lean();
-    const nowIst = istNow();
+    const placedAtIst = istNowHhmmss();
 
     try {
       const bid = await BtcJackpotBid.create({
@@ -234,7 +219,7 @@ router.post('/bid', protectUser, async (req, res) => {
         ticketPrice,
         predictedBtc,
         betDate: today,
-        placedAtIst: nowIst.hhmmss,
+        placedAtIst,
         status: 'pending',
       });
 
@@ -315,9 +300,10 @@ router.put('/bid/:id', protectUser, async (req, res) => {
     if (!gc || gc.enabled === false) {
       return res.status(400).json({ message: 'BTC Jackpot is currently disabled' });
     }
-    if (!withinBiddingWindow(gc)) {
+    const winPut = evaluateBtcJackpotBiddingWindow(gc);
+    if (!winPut.ok) {
       return res.status(400).json({
-        message: `Bidding window closed (${gc.biddingStartTime}–${gc.biddingEndTime} IST). Bids cannot be modified.`,
+        message: btcJackpotBiddingWindowUserMessage(gc, winPut.reason),
       });
     }
 

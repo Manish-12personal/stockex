@@ -8,6 +8,7 @@ import { getLiveBtcSpotForJackpot } from '../utils/btcJackpotSpot.js';
 import { declareBtcJackpotForDate } from '../services/btcJackpotDeclareService.js';
 import { declareBtcNumberResultForDate } from '../services/btcNumberDeclareService.js';
 import { getTodayISTString } from '../utils/istDate.js';
+import { biddingEndInclusiveSecondsFromConfig } from '../utils/btcJackpotBiddingWindow.js';
 
 function istSecondsNow() {
   const t = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false });
@@ -39,14 +40,22 @@ export async function btcJackpotAutoTick() {
     const numberOn = gcN && gcN.enabled !== false;
     if (!jackpotOn && !numberOn) return;
 
-    const resultTimeCombined =
-      numberOn && jackpotOn
-        ? (gcN.resultTime || gcJ?.resultTime || '23:30')
-        : numberOn && !jackpotOn
-          ? (gcN.resultTime || '23:30')
-          : (gcJ?.resultTime || '23:30');
-    const resultSec = parseTimeToSecIST(resultTimeCombined);
-    if (istSecondsNow() < resultSec) return;
+    const nowSec = istSecondsNow();
+    let shouldRun = false;
+    /** Log label only */
+    let scheduleLabel = '';
+    if (numberOn && jackpotOn) {
+      scheduleLabel = gcN.resultTime || '23:30';
+      shouldRun = nowSec >= parseTimeToSecIST(scheduleLabel);
+    } else if (numberOn && !jackpotOn) {
+      scheduleLabel = gcN.resultTime || '23:30';
+      shouldRun = nowSec >= parseTimeToSecIST(scheduleLabel);
+    } else if (jackpotOn && !numberOn) {
+      const endInc = biddingEndInclusiveSecondsFromConfig(gcJ?.biddingEndTime || '23:29');
+      shouldRun = nowSec > endInc;
+      scheduleLabel = `after bidding end (${gcJ?.biddingEndTime || '23:29'} IST)`;
+    }
+    if (!shouldRun) return;
 
     const today = getTodayISTString();
     const pendingJ = jackpotOn
@@ -93,7 +102,7 @@ export async function btcJackpotAutoTick() {
         );
 
         console.log(
-          `[btc22h] auto-locked @ $${Number(spot.price).toFixed(2)} for ${today} (IST ≥ ${resultTimeCombined}, source=${spot.source})`
+          `[btc22h] auto-locked @ $${Number(spot.price).toFixed(2)} for ${today} (${scheduleLabel}, source=${spot.source})`
         );
       } catch (e) {
         if (e?.code !== 11000) console.warn('[btc22h] auto-lock:', e?.message || e);

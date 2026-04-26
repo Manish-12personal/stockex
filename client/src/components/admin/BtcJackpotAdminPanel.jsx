@@ -18,13 +18,18 @@ import {
  * Capabilities:
  *   - View today's bids
  *   - Lock the BTC closing price (manual override of scheduler) for any IST date
- *   - Manually declare result (scheduler will also auto-run at configured resultTime)
+ *   - Manually declare result (scheduler auto-runs after bidding ends, or at BTC Number result time if both games are on)
  *   - Edit config (ticket price, times, prize ladder, hierarchy %s)
  */
 
 function inr(n, dp = 2) {
   if (!Number.isFinite(Number(n))) return '—';
   return Number(n).toLocaleString('en-IN', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+
+function usd(n, dp = 2) {
+  if (!Number.isFinite(Number(n))) return '—';
+  return Number(n).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
 
 function todayIST() {
@@ -42,6 +47,7 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
 
   const [date, setDate] = useState(todayIST());
   const [bids, setBids] = useState([]);
+  const [bidsReferenceBtc, setBidsReferenceBtc] = useState(null);
   const [bank, setBank] = useState(null);
   const [locked, setLocked] = useState(null);
   const [settings, setSettings] = useState(null);
@@ -65,6 +71,11 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
         axios.get('/api/admin/btc-jackpot/settings', { headers }),
       ]);
       setBids(Array.isArray(bidsRes.data?.bids) ? bidsRes.data.bids : []);
+      setBidsReferenceBtc(
+        bidsRes.data?.referenceBtc != null && Number.isFinite(Number(bidsRes.data.referenceBtc))
+          ? Number(bidsRes.data.referenceBtc)
+          : null
+      );
       setBank(bankRes.data || null);
       setLocked(lockRes.data || null);
       setSettings(setRes.data?.btcJackpot || null);
@@ -144,7 +155,6 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
           bidsPerDay: Number(settingsDraft.bidsPerDay),
           biddingStartTime: settingsDraft.biddingStartTime,
           biddingEndTime: settingsDraft.biddingEndTime,
-          resultTime: settingsDraft.resultTime,
           topWinners: Number(settingsDraft.topWinners),
           prizePercentages: Array.isArray(settingsDraft.prizePercentages)
             ? settingsDraft.prizePercentages.map((p) => ({
@@ -315,7 +325,7 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
               <Trophy size={14} className="inline mr-1" /> Declare &amp; Distribute
             </button>
             <div className="text-[11px] text-gray-500 mt-2">
-              Scheduler will also auto-run at {settings?.resultTime || '23:30'} IST for today.
+              Scheduler auto-runs after today&apos;s bidding window ends (IST). If BTC Number is enabled too, the same job uses BTC Number&apos;s result time.
             </div>
           </div>
         </div>
@@ -324,6 +334,19 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
       {/* Bids table */}
       <div className="bg-dark-800 border border-dark-600 rounded p-4 overflow-x-auto">
         <div className="font-semibold mb-2">Bids for {date}</div>
+        {(locked?.lockedBtcPrice != null && Number.isFinite(Number(locked.lockedBtcPrice))) ||
+        bidsReferenceBtc != null ? (
+          <div className="text-[11px] text-gray-500 mb-2">
+            Distance = |predicted − reference|; reference BTC $
+            {usd(
+              locked?.lockedBtcPrice != null && Number.isFinite(Number(locked.lockedBtcPrice))
+                ? locked.lockedBtcPrice
+                : bidsReferenceBtc,
+              2
+            )}{' '}
+            ({locked?.lockedBtcPrice != null ? 'locked' : 'live spot'}).
+          </div>
+        ) : null}
         {bids.length === 0 ? (
           <div className="text-gray-400 text-sm py-4">No bids placed.</div>
         ) : (
@@ -332,6 +355,7 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
               <tr className="text-left text-gray-400 text-xs uppercase border-b border-dark-600">
                 <th className="py-2 pr-2">User</th>
                 <th className="py-2 pr-2">Predicted BTC</th>
+                <th className="py-2 pr-2">Distance</th>
                 <th className="py-2 pr-2">Amount</th>
                 <th className="py-2 pr-2">Status</th>
                 <th className="py-2 pr-2">Rank</th>
@@ -346,7 +370,10 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
                     <div className="font-medium">{b.user?.username || '—'}</div>
                     <div className="text-[10px] text-gray-500">{b.user?.clientId || ''}</div>
                   </td>
-                  <td className="py-1 pr-2">${inr(b.predictedBtc, 2)}</td>
+                  <td className="py-1 pr-2">${usd(b.predictedBtc, 2)}</td>
+                  <td className="py-1 pr-2 text-cyan-300/90 tabular-nums">
+                    {b.distance != null && Number.isFinite(Number(b.distance)) ? `$${usd(b.distance, 2)}` : '—'}
+                  </td>
                   <td className="py-1 pr-2">₹{inr(b.amount, 2)}</td>
                   <td className="py-1 pr-2">
                     <span
@@ -430,15 +457,6 @@ const BtcJackpotAdminPanel = ({ adminToken }) => {
                 type="time"
                 value={settingsDraft.biddingEndTime}
                 onChange={(e) => setSettingsDraft({ ...settingsDraft, biddingEndTime: e.target.value })}
-                className="w-full mt-1 px-2 py-1 rounded bg-dark-900 border border-dark-600 text-white"
-              />
-            </label>
-            <label className="block">
-              <span className="text-xs text-gray-400">Result Time (IST, dynamic)</span>
-              <input
-                type="time"
-                value={settingsDraft.resultTime}
-                onChange={(e) => setSettingsDraft({ ...settingsDraft, resultTime: e.target.value })}
                 className="w-full mt-1 px-2 py-1 rounded bg-dark-900 border border-dark-600 text-white"
               />
             </label>

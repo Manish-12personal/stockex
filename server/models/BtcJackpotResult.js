@@ -1,8 +1,8 @@
 import mongoose from 'mongoose';
 
 /**
- * BTC Jackpot — daily result anchor. `lockedBtcPrice` is the BTC/USDT spot at the
- * configured result time (default 23:30 IST, dynamic per GameSettings.games.btcJackpot.resultTime).
+ * BTC Jackpot — daily result anchor. `lockedBtcPrice` is the BTC/USDT spot when locked
+ * (auto after bidding ends, at BTC Number result time when both games run, or manual).
  */
 const btcJackpotResultSchema = new mongoose.Schema(
   {

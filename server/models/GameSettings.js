@@ -271,7 +271,7 @@ const gameSettingsSchema = new mongoose.Schema({
       description: {
         type: String,
         default:
-          'Predict BTC USD price, win from the Bank by ranking closest to the 23:30 IST close. Top 20 share prizes; ties split equally.',
+          'Predict BTC USD price, win from the Bank by ranking closest to the locked close after bidding ends. Top 20 share prizes; ties split equally.',
       },
       enabled: { type: Boolean, default: true },
 
@@ -289,7 +289,8 @@ const gameSettingsSchema = new mongoose.Schema({
 
       biddingStartTime: { type: String, default: '00:00' }, // HH:mm IST
       biddingEndTime: { type: String, default: '23:29' },   // inclusive through :59
-      resultTime: { type: String, default: '23:30' },        // DYNAMIC — admin editable
+      /** Legacy field; auto-settlement uses biddingEndTime (jackpot-only) or btcNumber.resultTime when both games run */
+      resultTime: { type: String, default: '23:30' },
 
       topWinners: { type: Number, default: 20 },
 

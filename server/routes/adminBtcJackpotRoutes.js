@@ -8,6 +8,7 @@ import BtcJackpotBank from '../models/BtcJackpotBank.js';
 
 import { btcJackpotDayFilter } from '../utils/btcJackpotDay.js';
 import { getLiveBtcSpotForJackpot } from '../utils/btcJackpotSpot.js';
+import { absDist } from '../utils/btcJackpotRanking.js';
 import {
   declareBtcJackpotForDate,
   BtcJackpotDeclareError,
@@ -37,11 +38,50 @@ function assertDate(date) {
 router.get('/bids', protectAdmin, async (req, res) => {
   try {
     const date = assertDate(req.query.date || getTodayISTString());
-    const bids = await BtcJackpotBid.find({ $and: [btcJackpotDayFilter(date)] })
-      .populate('user', 'username clientId email phone')
-      .sort({ predictedBtc: 1, createdAt: 1 })
-      .lean();
-    res.json({ date, count: bids.length, bids });
+    const [bids, resultRow] = await Promise.all([
+      BtcJackpotBid.find({ $and: [btcJackpotDayFilter(date)] })
+        .populate('user', 'username clientId email phone')
+        .lean(),
+      BtcJackpotResult.findOne({ resultDate: date }).lean(),
+    ]);
+
+    let referenceBtc =
+      resultRow?.lockedBtcPrice != null && Number.isFinite(Number(resultRow.lockedBtcPrice))
+        ? Number(resultRow.lockedBtcPrice)
+        : null;
+    if (referenceBtc == null) {
+      try {
+        const spot = await getLiveBtcSpotForJackpot();
+        if (spot?.price != null && Number.isFinite(Number(spot.price))) referenceBtc = Number(spot.price);
+      } catch (_) {
+        referenceBtc = null;
+      }
+    }
+
+    const enriched = bids.map((b) => ({
+      ...b,
+      distance:
+        referenceBtc != null && Number.isFinite(Number(b.predictedBtc))
+          ? absDist(b.predictedBtc, referenceBtc)
+          : null,
+    }));
+
+    enriched.sort((a, b) => {
+      const ra = a.rank;
+      const rb = b.rank;
+      const aHas = ra != null && Number.isFinite(Number(ra));
+      const bHas = rb != null && Number.isFinite(Number(rb));
+      if (aHas && bHas) {
+        if (Number(ra) !== Number(rb)) return Number(ra) - Number(rb);
+      } else if (aHas && !bHas) return -1;
+      else if (!aHas && bHas) return 1;
+      const da = a.distance != null && Number.isFinite(a.distance) ? a.distance : Infinity;
+      const db = b.distance != null && Number.isFinite(b.distance) ? b.distance : Infinity;
+      if (da !== db) return da - db;
+      return (+new Date(a.createdAt || 0)) - (+new Date(b.createdAt || 0));
+    });
+
+    res.json({ date, count: enriched.length, bids: enriched, referenceBtc });
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message });
   }
@@ -173,7 +213,6 @@ router.patch('/settings', protectAdmin, superAdminOnly, async (req, res) => {
       'topWinners',
       'biddingStartTime',
       'biddingEndTime',
-      'resultTime',
       'prizePercentages',
       'hierarchy',
       'referralDistribution',

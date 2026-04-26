@@ -1300,7 +1300,7 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Bidding opens at <span className="text-cyan-400 font-bold">{gs.biddingStartTime || '00:00'} IST</span>.</li>
                         <li>2. Bidding closes at <span className="text-cyan-400 font-bold">{gs.biddingEndTime || '23:29'} IST</span>.</li>
-                        <li>3. Results declared at <span className="text-green-400 font-bold">{gs.resultTime || '23:30'} IST</span> (top {gs.topWinners || 20} winners by rank).</li>
+                        <li>3. After bidding closes, BTC is locked and results settle for the top {gs.topWinners || 20} ranks (auto or admin declare).</li>
                       </ul>
                     </div>
                     <div>
@@ -7255,6 +7255,60 @@ const NiftyJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setti
 // Standalone BTC-Jackpot user screen. Intentionally mirrors the NiftyJackpotScreen
 // layout 1:1 (3-column grid, prize ladder, live top-5, bank card, ticket form)
 // so the game feels identical — only the symbol, endpoints and USD currency change.
+
+function clientIstSecondsFromMidnight() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const pick = (t) => parseInt(parts.find((p) => p.type === t)?.value || '0', 10);
+  return pick('hour') * 3600 + pick('minute') * 60 + pick('second');
+}
+
+function clientParseClockToSeconds(str) {
+  const s = String(str ?? '00:00').trim();
+  const parts = s.split(':').map((x) => parseInt(x, 10));
+  const h = parts[0] || 0;
+  const m = Number.isFinite(parts[1]) ? parts[1] : 0;
+  const sec = Number.isFinite(parts[2]) ? parts[2] : 0;
+  return h * 3600 + m * 60 + sec;
+}
+
+function clientBiddingEndInclusiveSeconds(endTimeStr) {
+  const s = String(endTimeStr || '23:29').trim();
+  const segments = s.split(':').filter((x) => x !== '');
+  const base = clientParseClockToSeconds(s);
+  if (segments.length >= 3) return base;
+  const minuteStart = Math.floor(base / 60) * 60;
+  return minuteStart + 59;
+}
+
+/** Mirrors server/utils/btcJackpotBiddingWindow.js for UX (place/edit disabled + banner). */
+function evaluateBtcJackpotBiddingWindowClient(settings) {
+  if (
+    import.meta.env.VITE_BTC_JACKPOT_TEST_BIDDING === 'true' ||
+    import.meta.env.VITE_BTC_JACKPOT_TEST_BIDDING === '1'
+  ) {
+    return { ok: true };
+  }
+  const startSec = clientParseClockToSeconds(settings?.biddingStartTime || '00:00');
+  const endInclusive = clientBiddingEndInclusiveSeconds(settings?.biddingEndTime || '23:29');
+  const nowSec = clientIstSecondsFromMidnight();
+  if (nowSec < startSec) return { ok: false, reason: 'before_start' };
+  if (nowSec > endInclusive) return { ok: false, reason: 'after_end' };
+  return { ok: true };
+}
+
+function btcJackpotBiddingMessageClient(settings, reason) {
+  if (reason === 'before_start') {
+    return `Bidding opens at ${settings?.biddingStartTime || '00:00'} IST.`;
+  }
+  return "Today's bidding time is over now.";
+}
+
 const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, settings, tokenValue = 500 }) => {
   const [todayBid, setTodayBid] = useState(null);
   const [todayBids, setTodayBids] = useState([]);
@@ -7279,10 +7333,20 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
   const topWinners = settings?.topWinners || 20;
   const gameEnabled = settings?.enabled !== false && settings?.enabled !== undefined && settings?.enabled !== null;
 
-  const showJackpotOffHoursTestHint =
-    import.meta.env.DEV ||
+  const showBtcJackpotClientTestBiddingHint =
     import.meta.env.VITE_BTC_JACKPOT_TEST_BIDDING === 'true' ||
     import.meta.env.VITE_BTC_JACKPOT_TEST_BIDDING === '1';
+
+  const [biddingClockTick, setBiddingClockTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setBiddingClockTick((n) => n + 1), 10000);
+    return () => clearInterval(t);
+  }, []);
+
+  const biddingWindow = useMemo(
+    () => evaluateBtcJackpotBiddingWindowClient(settings),
+    [settings, biddingClockTick]
+  );
 
   const oneTicketRs = Number(tokenValue) || Number(settings?.ticketPrice) || 500;
   const toTokens = (rs) => (oneTicketRs > 0 ? parseFloat((rs / oneTicketRs).toFixed(2)) : 0);
@@ -7475,6 +7539,13 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
       setMessage({ type: 'error', text: 'Game is currently disabled' });
       return;
     }
+    if (!biddingWindow.ok) {
+      setMessage({
+        type: 'error',
+        text: btcJackpotBiddingMessageClient(settings, biddingWindow.reason),
+      });
+      return;
+    }
     const priceParse = parseBtcPredictedPriceClient(predictedPriceInput);
     if (!priceParse.ok) {
       setMessage({ type: 'error', text: priceParse.error });
@@ -7508,6 +7579,13 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
 
   const handleUpdatePredictionBid = async (bidId) => {
     if (!bidId) return;
+    if (!biddingWindow.ok) {
+      setMessage({
+        type: 'error',
+        text: btcJackpotBiddingMessageClient(settings, biddingWindow.reason),
+      });
+      return;
+    }
     const id = String(bidId);
     const priceParse = parseBtcPredictedPriceClient(predictionDrafts[id]);
     if (!priceParse.ok) {
@@ -7627,8 +7705,8 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                   <span className="font-medium">₹{oneTicketRs}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
-                  <span className="text-gray-400">Result At</span>
-                  <span className="font-medium">{settings?.resultTime || '23:30'} IST</span>
+                  <span className="text-gray-400">Bidding until</span>
+                  <span className="font-medium">{settings?.biddingEndTime || '23:29'} IST</span>
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-gray-400">BTC Price</span>
@@ -7640,7 +7718,7 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                 </div>
               </div>
               <p className="text-[10px] text-gray-500 mt-2 text-center">
-                Closing and top {topWinners} winners are decided at {settings?.resultTime || '23:30'} IST.
+                After bidding closes, BTC is locked and the top {topWinners} tickets are settled for prizes.
               </p>
             </div>
 
@@ -7735,12 +7813,18 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                 </div>
               </div>
 
-              {showJackpotOffHoursTestHint && (
+              {showBtcJackpotClientTestBiddingHint && (
                 <div className="bg-emerald-900/20 border border-emerald-500/35 rounded-lg px-2.5 py-2 text-[10px] text-emerald-200/95 leading-snug">
                   <span className="font-semibold text-emerald-300">Test mode</span>
-                  — bidding hours are not enforced on the API in local dev. Production uses{' '}
-                  {settings?.biddingStartTime || '00:00'}–{settings?.biddingEndTime || '23:29'} IST unless{' '}
-                  <span className="font-mono text-emerald-400/90">BTC_JACKPOT_ALLOW_TEST_BIDDING</span> is set on the server.
+                  — <span className="font-mono text-emerald-400/90">VITE_BTC_JACKPOT_TEST_BIDDING</span> is on; bidding hours are
+                  skipped in this UI. Server uses{' '}
+                  <span className="font-mono text-emerald-400/90">BTC_JACKPOT_ALLOW_TEST_BIDDING</span> the same way.
+                </div>
+              )}
+
+              {!biddingWindow.ok && (
+                <div className="bg-red-900/25 border border-red-500/40 rounded-lg px-2.5 py-2 text-[10px] text-red-200 leading-snug">
+                  {btcJackpotBiddingMessageClient(settings, biddingWindow.reason)}
                 </div>
               )}
 
@@ -7867,7 +7951,9 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                         </div>
                       )}
                       {todayBid.status === 'pending' && (
-                        <div className="text-yellow-400 text-[10px] font-medium mt-2">Result at {settings?.resultTime || '23:30'} IST</div>
+                        <div className="text-yellow-400 text-[10px] font-medium mt-2">
+                          Settlement after bidding closes ({settings?.biddingEndTime || '23:29'} IST)
+                        </div>
                       )}
                       {todayBid.status === 'pending' && todayBids.filter((b) => b.status === 'pending').length > 0 && (
                         <div className="mt-3 space-y-2 text-left border-t border-yellow-500/20 pt-3">
@@ -7899,12 +7985,13 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                                     onChange={(e) =>
                                       setPredictionDrafts((p) => ({ ...p, [bidKey]: e.target.value }))
                                     }
-                                    className="w-full px-2 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-cyan-200 text-xs tabular-nums placeholder:text-gray-600 focus:border-cyan-500/50 focus:outline-none"
+                                    disabled={!biddingWindow.ok}
+                                    className="w-full px-2 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-cyan-200 text-xs tabular-nums placeholder:text-gray-600 focus:border-cyan-500/50 focus:outline-none disabled:opacity-50"
                                   />
                                   <button
                                     type="button"
                                     onClick={() => handleUpdatePredictionBid(b._id)}
-                                    disabled={modifyingBidId === b._id}
+                                    disabled={modifyingBidId === b._id || !biddingWindow.ok}
                                     className="w-full py-1.5 px-2 rounded-lg bg-dark-700 hover:bg-dark-600 border border-cyan-500/30 text-[10px] text-cyan-300 font-medium disabled:opacity-50"
                                   >
                                     {modifyingBidId === b._id ? 'Saving…' : 'Save prediction'}
@@ -7957,16 +8044,17 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                     placeholder="e.g. 92850.50"
                     value={predictedPriceInput}
                     onChange={(e) => setPredictedPriceInput(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-dark-700 border border-dark-600 text-cyan-200 text-sm tabular-nums placeholder:text-gray-600 focus:border-yellow-500/40 focus:outline-none"
+                    disabled={!biddingWindow.ok}
+                    className="w-full px-3 py-2 rounded-xl bg-dark-700 border border-dark-600 text-cyan-200 text-sm tabular-nums placeholder:text-gray-600 focus:border-yellow-500/40 focus:outline-none disabled:opacity-50"
                   />
                 </div>
               </div>
 
               <button
                 onClick={handlePlaceBid}
-                disabled={placing || oneTicketRs > balance || !gameEnabled}
+                disabled={placing || oneTicketRs > balance || !gameEnabled || !biddingWindow.ok}
                 className={`w-full py-3 rounded-xl font-bold text-sm transition-all ${
-                  !placing && oneTicketRs <= balance && gameEnabled
+                  !placing && oneTicketRs <= balance && gameEnabled && biddingWindow.ok
                     ? 'bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-black'
                     : 'bg-dark-700 text-gray-500 cursor-not-allowed'
                 }`}
@@ -7979,6 +8067,8 @@ const BtcJackpotScreen = ({ game, balance, onBack, user, refreshBalance, setting
                   'Insufficient balance'
                 ) : !gameEnabled ? (
                   'Game disabled'
+                ) : !biddingWindow.ok ? (
+                  'Bidding closed'
                 ) : (
                   `Add 1 ticket (₹${oneTicketRs.toLocaleString('en-IN')})`
                 )}

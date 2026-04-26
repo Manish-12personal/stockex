@@ -2132,7 +2132,7 @@ router.get('/game-settings', protectUser, async (req, res) => {
           ...(Number.isFinite(Number(game.ticketPrice)) && { ticketPrice: Number(game.ticketPrice) }),
           // Nifty Number specific
           ...(game.fixedProfit !== undefined && { fixedProfit: game.fixedProfit }),
-          ...(game.resultTime !== undefined && { resultTime: game.resultTime }),
+          ...(game.resultTime !== undefined && key !== 'btcJackpot' && { resultTime: game.resultTime }),
           ...(game.betsPerDay !== undefined && { betsPerDay: game.betsPerDay }),
           ...(game.biddingStartTime !== undefined && { biddingStartTime: game.biddingStartTime }),
           ...(game.biddingEndTime !== undefined && { biddingEndTime: game.biddingEndTime }),
