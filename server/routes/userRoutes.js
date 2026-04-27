@@ -21,7 +21,6 @@ import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import { protectUser, protectAdmin, generateToken, generateSessionToken } from '../middleware/auth.js';
 import {
-  distributeGameProfit,
   distributeWinBrokerage,
   computeNiftyJackpotGrossHierarchyBreakdown,
   creditNiftyJackpotGrossHierarchyFromPool,
@@ -3011,7 +3010,6 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
     let totalBalanceInc = 0;
     let totalMarginDec = 0;
     let totalPnl = 0;
-    let totalLoss = 0;
     let totalBrokerage = 0;
     let settledCount = 0;
     /** Sum of stake on winning legs — same as auto/manual settle; drives referral per-win */
@@ -3123,7 +3121,6 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
           },
         });
       } else {
-        totalLoss += amount;
         console.log(`[RESOLVE] LOSS: Amount ₹${amount} already deducted at bet placement`);
       }
       totalPnl += pnl;
@@ -3276,9 +3273,6 @@ router.post('/game-bet/resolve', protectUser, async (req, res) => {
         }
       }
     } else {
-      if (totalLoss > 0 && userForDistResolve) {
-        await distributeGameProfit(userForDistResolve, totalLoss, 'Nifty UpDown', null, gameKey);
-      }
       if (useGrossPrizeHierarchyResolve && userForDistResolve) {
         for (const job of hierarchyJobsResolve) {
           await creditNiftyJackpotGrossHierarchyFromPool(req.user._id, userForDistResolve, job.breakdown, {
@@ -4557,7 +4551,6 @@ router.post('/updown/manual-settle', protectUser, async (req, res) => {
     let totalBalanceInc = 0;
     let totalMarginDec = 0;
     let totalPnl = 0;
-    let totalLoss = 0;
     let totalBrokerage = 0;
     let settledCount = 0;
     let totalWinningStakeForReferral = 0;
@@ -4630,8 +4623,6 @@ router.post('/updown/manual-settle', protectUser, async (req, res) => {
             orderPlacedAt: bet.createdAt,
           },
         });
-      } else {
-        totalLoss += amount;
       }
       totalPnl += pnl;
       settledCount += 1;
@@ -4688,9 +4679,6 @@ router.post('/updown/manual-settle', protectUser, async (req, res) => {
         });
       }
     } else {
-      if (totalLoss > 0 && userDocManual) {
-        await distributeGameProfit(userDocManual, totalLoss, 'Nifty UpDown', null, gameKeyCfg);
-      }
       if (useGrossPrizeHierarchyManual && userDocManual) {
         for (const job of hierarchyJobsManual) {
           await creditNiftyJackpotGrossHierarchyFromPool(req.user._id, userDocManual, job.breakdown, {

@@ -30,14 +30,16 @@ function gameProfitLedgerMeta(shareAmount, baseAmount, profitKind, gameKey, tran
 }
 
 /**
- * Distribute game profit/loss amount through the user's admin hierarchy.
- * Cascading logic:
- *   - No SubBroker → SubBroker's share goes to Broker
- *   - No Broker    → Broker's share goes to Admin
- *   - No Admin     → Admin's share goes to SuperAdmin
+ * Splits a **base amount** through the user’s admin hierarchy using `profit*Percent` from GameSettings
+ * (same cascade as win-side: SubBroker → Broker → Admin → SuperAdmin remainder).
+ *
+ * **Do not use for end-user *loss* stakes in games** — games hierarchy/brokerage is funded from the
+ * **win** side only (`distributeWinBrokerage`, `creditNiftyJackpotGrossHierarchyFromPool`, etc.). Calling
+ * this on a losing bet incorrectly mints GAME_PROFIT-style hierarchy from the loss pool; production
+ * game paths must not do that. Keep this only for non-game or legacy call sites you explicitly own.
  *
  * @param {Object} user       - The user document (must have hierarchyPath, admin, adminCode)
- * @param {Number} amount     - Total amount to distribute (e.g. lost bet amount or brokerage)
+ * @param {Number} amount     - Total amount to split (not “user loss” in games; see note above)
  * @param {String} gameName   - Game identifier for logging (e.g. 'NiftyUpDown', 'NiftyNumber')
  * @param {String} refId      - Optional reference ID (bet/trade ID)
  * @param {String} gameKey    - Game settings key (e.g. 'niftyUpDown', 'niftyNumber') for per-game percentages

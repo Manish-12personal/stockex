@@ -7,7 +7,6 @@ import { atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.js';
 import {
-  distributeGameProfit,
   distributeWinBrokerage,
   computeNiftyJackpotGrossHierarchyBreakdown,
   creditNiftyJackpotGrossHierarchyFromPool,
@@ -248,8 +247,6 @@ export async function settleUpDownUserWindowFromLedger(
           orderPlacedAt: row.bet.createdAt,
         },
       });
-    } else {
-      totalLoss += row.amount;
     }
   }
 
@@ -304,9 +301,6 @@ export async function settleUpDownUserWindowFromLedger(
       });
     }
   } else {
-    if (totalLoss > 0 && userDoc) {
-      await distributeGameProfit(userDoc, totalLoss, 'Nifty UpDown', null, gameKeyCfg);
-    }
     if (useGrossPrizeHierarchy && userDoc) {
       for (const job of hierarchyJobs) {
         await creditNiftyJackpotGrossHierarchyFromPool(uid, userDoc, job.breakdown, {

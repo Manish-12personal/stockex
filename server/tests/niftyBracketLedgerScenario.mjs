@@ -129,7 +129,7 @@ function printTable4(winsByUser) {
 function printTable5(lostCount) {
   console.log('\n## Table 5 — Lost stakes (no refund)\n');
   console.log(
-    `Each lost trade forfeit ${rupee(STAKE)} (${lostCount} trades → ${rupee(lostCount * STAKE)} total). In production, distributeGameProfit splits each loss per GameSettings.profitDistribution.`
+    `Each lost trade forfeit ${rupee(STAKE)} (${lostCount} trades → ${rupee(lostCount * STAKE)} total). Loss stakes do not fund admin/broker hierarchy; only win-side paths (gross hierarchy / win brokerage) debit the SA pool.`
   );
 }
 

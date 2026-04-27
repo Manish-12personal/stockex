@@ -24,7 +24,6 @@ import { resolveNiftyBracketTrade } from '../services/niftyBracketResolve.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
 import WalletTransferService from '../services/walletTransferService.js';
 import {
-  distributeGameProfit,
   distributeWinBrokerage,
   computeNiftyJackpotGrossHierarchyBreakdown,
   creditNiftyJackpotGrossHierarchyFromPool,

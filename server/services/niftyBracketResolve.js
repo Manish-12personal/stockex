@@ -3,7 +3,6 @@ import GameSettings from '../models/GameSettings.js';
 import { atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 import {
-  distributeGameProfit,
   distributeWinBrokerage,
   computeNiftyJackpotGrossHierarchyBreakdown,
   creditNiftyJackpotGrossHierarchyFromPool,
@@ -257,12 +256,6 @@ export async function resolveNiftyBracketTrade(trade, currentPrice, options = {}
       upperTarget: trade.upperTarget,
       lowerTarget: trade.lowerTarget
     });
-  }
-  if (status === 'lost' && stakeSafe > 0) {
-    const userDoc = await User.findById(userIdForTrade);
-    if (userDoc) {
-      await distributeGameProfit(userDoc, stakeSafe, 'NiftyBracket', trade._id?.toString(), 'niftyBracket');
-    }
   }
 
   if (status === 'won' && bracketUserDoc) {
