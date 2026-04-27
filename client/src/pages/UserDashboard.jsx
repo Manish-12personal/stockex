@@ -168,6 +168,13 @@ function getCryptoMarketQuote(marketData, instrument) {
   return null;
 }
 
+/** Zerodha tick keys are string token ids; instruments may use number or string */
+function marketDataRowForInstrumentToken(marketData, token) {
+  if (token == null || token === '' || !marketData || typeof marketData !== 'object') return null;
+  const s = String(token);
+  return marketData[s] ?? marketData[Number.parseInt(s, 10)] ?? null;
+}
+
 /** Binance base (e.g. BTC) for {BASE}INR/{BASE}USDT implied multiplier. */
 function cryptoBaseForInrMultiplier(inst) {
   if (!inst) return '';
@@ -320,8 +327,12 @@ function alignIndianBookBidAskWithLtp(liveData, item, options = {}) {
     liveData?.ltp ?? liveData?.last_price ?? liveData?.close ?? item?.ltp ?? item?.lastPrice ?? 0
   );
   const anchor = Number(options?.chartAnchorLtp);
-  const ltp =
-    Number.isFinite(anchor) && anchor > 0 ? anchor : fromFeed;
+  // When the chart has sent an anchor LTP, bid/ask must center on that (same as candle close / axis), not the raw depth feed
+  if (Number.isFinite(anchor) && anchor > 0) {
+    const half = Math.max(anchor * 0.00002, 1);
+    return { bid: anchor - half, ask: anchor + half };
+  }
+  const ltp = fromFeed;
   let bid = Number(liveData?.bid);
   let ask = Number(liveData?.ask);
   const rel = (x) =>
@@ -355,7 +366,7 @@ function getUsdSpotBidAsk(marketData, item, options) {
     if (!(ask > 0)) ask = ltp;
     return { bidPrice: bid, askPrice: ask };
   }
-  const liveData = marketData[item?.token] || {};
+  const liveData = marketDataRowForInstrumentToken(marketData, item?.token) || {};
   const { bid, ask } = alignIndianBookBidAskWithLtp(liveData, item, options);
   return { bidPrice: bid, ask: ask };
 }
@@ -514,38 +525,55 @@ const UserDashboard = () => {
   useEffect(() => {
     const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5001';
     const socket = io(socketUrl);
-    
-    socket.on('connect', () => {
-      console.log('Socket.IO connected for real-time ticks');
-    });
-    
-    socket.on('market_tick', (ticks) => {
-      // Track latency for major indices
+    const pending = {};
+    const MARKET_TICK_FLUSH_MS = 80;
+    let flushTimer = null;
+    const flushBatchedTicks = () => {
+      flushTimer = null;
+      const keys = Object.keys(pending);
+      if (keys.length === 0) return;
+      const batch = {};
+      for (const k of keys) {
+        batch[k] = pending[k];
+        delete pending[k];
+      }
+      setMarketData((prev) => ({ ...prev, ...batch }));
+      const vals = Object.values(batch);
       const clientReceiveTime = Date.now();
-      const nifty = Object.values(ticks).find(d => d.symbol === 'NIFTY 50' || d.symbol === 'NIFTY');
+      const nifty = vals.find((d) => d.symbol === 'NIFTY 50' || d.symbol === 'NIFTY');
       if (nifty?.serverTimestamp) {
         const latency = clientReceiveTime - nifty.serverTimestamp;
         if (latency > 1000) {
           console.warn(`[Price Delay] Market tick latency: ${latency}ms`);
         }
       }
-      
-      setMarketData(prev => ({ ...prev, ...ticks }));
-      // Also update indices
-      const banknifty = Object.values(ticks).find(d => d.symbol === 'NIFTY BANK' || d.symbol === 'BANKNIFTY');
-      const finnifty = Object.values(ticks).find(d => d.symbol === 'NIFTY FIN SERVICE' || d.symbol === 'FINNIFTY');
+      const banknifty = vals.find((d) => d.symbol === 'NIFTY BANK' || d.symbol === 'BANKNIFTY');
+      const finnifty = vals.find((d) => d.symbol === 'NIFTY FIN SERVICE' || d.symbol === 'FINNIFTY');
       if (nifty || banknifty || finnifty) {
-        setIndicesData(prev => ({
+        setIndicesData((prev) => ({
           nifty: nifty || prev.nifty,
           banknifty: banknifty || prev.banknifty,
           finnifty: finnifty || prev.finnifty
         }));
       }
+    };
+    const queueTicks = (ticks) => {
+      Object.assign(pending, ticks);
+      if (flushTimer) return;
+      flushTimer = setTimeout(flushBatchedTicks, MARKET_TICK_FLUSH_MS);
+    };
+
+    socket.on('connect', () => {
+      console.log('Socket.IO connected for real-time ticks');
     });
-    
+
+    socket.on('market_tick', (ticks) => {
+      queueTicks(ticks);
+    });
+
     // Listen for real-time crypto ticks from Binance WebSocket
     socket.on('crypto_tick', (ticks) => {
-      setMarketData(prev => ({ ...prev, ...ticks }));
+      queueTicks(ticks);
     });
 
     socket.on('trade_update', (data) => {
@@ -553,8 +581,11 @@ const UserDashboard = () => {
         setPositionsRefreshKey((k) => k + 1);
       }
     });
-    
-    return () => socket.disconnect();
+
+    return () => {
+      if (flushTimer) clearTimeout(flushTimer);
+      socket.disconnect();
+    };
   }, []);
 
   const fetchWallet = useCallback(async () => {
@@ -593,10 +624,10 @@ const UserDashboard = () => {
     fetchWallet();
     fetchUsdSpotClientSpreads();
     fetchMarketData();
-    // Fetch market data every 3 seconds as fallback
-    const interval = setInterval(fetchMarketData, 3000);
+    // MCX: slightly slower poll — socket is primary; reduces main-thread merge load
+    const interval = setInterval(fetchMarketData, mcxOnly ? 8000 : 3000);
     return () => clearInterval(interval);
-  }, [fetchWallet, fetchUsdSpotClientSpreads]);
+  }, [fetchWallet, fetchUsdSpotClientSpreads, mcxOnly]);
 
   const fetchMarketData = async () => {
     try {
@@ -1252,6 +1283,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
     'FOREX': []
   });
   const [watchlistLoaded, setWatchlistLoaded] = useState(false);
+  const mcxTickSubscribeTimerRef = useRef(null);
   const [cryptoDerivBrowseList, setCryptoDerivBrowseList] = useState([]);
   const [cryptoDerivBrowseLoading, setCryptoDerivBrowseLoading] = useState(false);
   
@@ -1360,6 +1392,45 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
     };
     loadWatchlist();
   }, [user?.token, refreshKey]);
+
+  // MCX wallet: subscribe Zerodha ticker to watchlist + selected contract so socket ticks flow (live chart / LTP without full refresh)
+  useEffect(() => {
+    if (!mcxOnly || !user?.token || !watchlistLoaded) return;
+    if (mcxTickSubscribeTimerRef.current) clearTimeout(mcxTickSubscribeTimerRef.current);
+    mcxTickSubscribeTimerRef.current = setTimeout(async () => {
+      mcxTickSubscribeTimerRef.current = null;
+      const ids = new Set();
+      const pushTok = (inst) => {
+        if (!inst || inst.isCrypto || inst.isForex) return;
+        if (isUsdSpotInstrument(inst)) return;
+        const t = inst.token;
+        if (t == null || t === '') return;
+        const n = parseInt(String(t), 10);
+        if (!Number.isNaN(n) && n > 0) ids.add(n);
+      };
+      ['FAVORITES', 'MCXFUT', 'MCXOPT'].forEach((seg) => {
+        (watchlistBySegment[seg] || []).forEach(pushTok);
+      });
+      if (selectedInstrument?.token != null) {
+        const n = parseInt(String(selectedInstrument.token), 10);
+        if (!Number.isNaN(n) && n > 0) ids.add(n);
+      }
+      const tokens = [...ids];
+      if (tokens.length === 0) return;
+      try {
+        await axios.post(
+          '/api/zerodha/tick-subscribe',
+          { tokens },
+          { headers: { Authorization: `Bearer ${user.token}` } }
+        );
+      } catch {
+        // Server may queue when ticker is down; retry on next watchlist/selection change
+      }
+    }, 500);
+    return () => {
+      if (mcxTickSubscribeTimerRef.current) clearTimeout(mcxTickSubscribeTimerRef.current);
+    };
+  }, [mcxOnly, user?.token, watchlistLoaded, watchlistBySegment, selectedInstrument?.token]);
 
   // Persist watchlist locally as fallback (including favorites)
   useEffect(() => {
@@ -1606,7 +1677,12 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
     const pairKey = pair ? String(pair).toUpperCase() : '';
     if (pairKey && marketData[pairKey]) return marketData[pairKey];
     if (pair && cryptoData[pair]) return cryptoData[pair];
-    if (token && marketData[token]) return marketData[token];
+    if (token != null && token !== '') {
+      const s = String(token);
+      if (marketData[s]) return marketData[s];
+      const n = parseInt(s, 10);
+      if (!Number.isNaN(n) && marketData[n]) return marketData[n];
+    }
     return { ltp: 0, change: 0, changePercent: 0 };
   };
 
@@ -2359,17 +2435,30 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
     }
   }, [sidebarOpen]);
 
-  // Update live price from marketData (Socket.IO)
+  const tokenKeyForTick =
+    selectedInstrument?.token != null && String(selectedInstrument.token) !== ''
+      ? String(selectedInstrument.token)
+      : '';
+  const tickForChart =
+    tokenKeyForTick && !isUsdSpotInstrument(selectedInstrument)
+      ? (marketData[tokenKeyForTick] ?? marketData[Number.parseInt(tokenKeyForTick, 10)])
+      : null;
+  const usdChartQuote =
+    selectedInstrument && isUsdSpotInstrument(selectedInstrument)
+      ? getCryptoMarketQuote(marketData, selectedInstrument)
+      : null;
+
+  // Update live price from marketData (Socket.IO) — deps narrow to this symbol’s slice so unrelated ticks do not re-run chart logic
   useEffect(() => {
     const isUsdSpot = isUsdSpotInstrument(selectedInstrument);
     let data = null;
 
     if (isUsdSpot) {
-      data = getCryptoMarketQuote(marketData, selectedInstrument);
-    } else if (selectedInstrument?.token && marketData[selectedInstrument.token]) {
-      data = marketData[selectedInstrument.token];
+      data = usdChartQuote;
+    } else if (tokenKeyForTick) {
+      data = tickForChart;
     }
-    
+
     if (data) {
       setLivePrice({
         ltp: data.ltp,
@@ -2380,7 +2469,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
         change: data.change,
         changePercent: data.changePercent
       });
-    } else if (selectedInstrument && !livePrice) {
+    } else if (selectedInstrument && !data) {
       // Fallback to instrument's last price when no live data is available
       setFallbackPrice({
         ltp: selectedInstrument.ltp || selectedInstrument.lastPrice || 0,
@@ -2447,7 +2536,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
         console.warn('[ChartPanel] candle update skipped:', e?.message || e);
       }
     }
-  }, [selectedInstrument, marketData, chartInterval, usdRate, onChartLtp]);
+  }, [selectedInstrument, chartInterval, usdRate, onChartLtp, tokenKeyForTick, tickForChart, usdChartQuote]);
 
   const getIntervalSeconds = (interval) => {
     const map = {
@@ -3079,7 +3168,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       const isUsdSpot = isUsdSpotInstrument(selectedInstrument);
       const liveData = isUsdSpot
         ? (getCryptoMarketQuote(marketData, selectedInstrument) || {})
-        : (marketData[selectedInstrument.token] || {});
+        : (marketDataRowForInstrumentToken(marketData, selectedInstrument.token) || {});
       const ltp = liveData.ltp || liveData.close || selectedInstrument.ltp || 0;
       const bidPrice = liveData.bid || ltp;
       const askPrice = liveData.ask || ltp;
@@ -3247,7 +3336,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
               {selectedInstrument?.symbol || 'No Symbol'}
             </span>
             <span className="text-xs text-gray-400">
-              ₹{(selectedInstrument ? (marketData[selectedInstrument.token]?.ltp || selectedInstrument.ltp || 0) : 0).toLocaleString()}
+              ₹{(selectedInstrument ? (marketDataRowForInstrumentToken(marketData, selectedInstrument.token)?.ltp || selectedInstrument.ltp || 0) : 0).toLocaleString()}
             </span>
             <button 
               onClick={() => executeQuickTrade('sell')}
@@ -3527,7 +3616,7 @@ const TradingPanel = ({
   const isUsdSpot = isCryptoOnly || isForex;
   
   const cryptoQuote = isUsdSpot ? getCryptoMarketQuote(marketData, instrument) : null;
-  const liveData = isUsdSpot ? (cryptoQuote || {}) : (marketData[instrument?.token] || {});
+  const liveData = isUsdSpot ? (cryptoQuote || {}) : (marketDataRowForInstrumentToken(marketData, instrument?.token) || {});
   const livePrice = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(instrument?.ltp) || 0)
     : (liveData.ltp || instrument?.ltp || 0);
@@ -4633,6 +4722,8 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
     'FOREXOPT': [],
     'FOREX': []
   });
+  const [watchlistLoaded, setWatchlistLoaded] = useState(false);
+  const mcxTickSubscribeTimerRef = useRef(null);
   
   // Segment tabs - filter based on cryptoOnly or mcxOnly mode
   const segmentTabs = forexOnly
@@ -4685,12 +4776,53 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
         };
         const merged = { ...defaults, ...(data || {}) };
         setWatchlistBySegment(mergeLegacyForexWatchlistBuckets(merged));
+        setWatchlistLoaded(true);
       } catch (error) {
         console.error('Error loading watchlist:', error);
+        setWatchlistLoaded(true);
       }
     };
     loadWatchlist();
   }, [user?.token]);
+
+  // MCX wallet (mobile): subscribe Zerodha tokens for live ticks
+  useEffect(() => {
+    if (!mcxOnly || !user?.token || !watchlistLoaded) return;
+    if (mcxTickSubscribeTimerRef.current) clearTimeout(mcxTickSubscribeTimerRef.current);
+    mcxTickSubscribeTimerRef.current = setTimeout(async () => {
+      mcxTickSubscribeTimerRef.current = null;
+      const ids = new Set();
+      const pushTok = (inst) => {
+        if (!inst || inst.isCrypto || inst.isForex) return;
+        if (isUsdSpotInstrument(inst)) return;
+        const t = inst.token;
+        if (t == null || t === '') return;
+        const n = parseInt(String(t), 10);
+        if (!Number.isNaN(n) && n > 0) ids.add(n);
+      };
+      ['FAVORITES', 'MCXFUT', 'MCXOPT'].forEach((seg) => {
+        (watchlistBySegment[seg] || []).forEach(pushTok);
+      });
+      if (selectedInstrument?.token != null) {
+        const n = parseInt(String(selectedInstrument.token), 10);
+        if (!Number.isNaN(n) && n > 0) ids.add(n);
+      }
+      const tokens = [...ids];
+      if (tokens.length === 0) return;
+      try {
+        await axios.post(
+          '/api/zerodha/tick-subscribe',
+          { tokens },
+          { headers: { Authorization: `Bearer ${user.token}` } }
+        );
+      } catch {
+        /* tick-subscribe may fail until Kite is connected; server queues tokens */
+      }
+    }, 500);
+    return () => {
+      if (mcxTickSubscribeTimerRef.current) clearTimeout(mcxTickSubscribeTimerRef.current);
+    };
+  }, [mcxOnly, user?.token, watchlistLoaded, watchlistBySegment, selectedInstrument?.token]);
 
   useEffect(() => {
     if (
@@ -5006,7 +5138,11 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
   };
   
   // Get price
-  const getPrice = (token) => marketData[token] || { ltp: 0, change: 0, changePercent: 0 };
+  const getPrice = (token) => {
+    if (token == null || token === '') return { ltp: 0, change: 0, changePercent: 0 };
+    const s = String(token);
+    return marketData[s] || marketData[Number.parseInt(s, 10)] || { ltp: 0, change: 0, changePercent: 0 };
+  };
   
   // Fetch crypto data from Binance
   useEffect(() => {
@@ -5435,10 +5571,14 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
   const lastCandleRef = useRef(null);
 
   const isCryptoInstr = selectedInstrument?.isCrypto || selectedInstrument?.exchange === 'BINANCE';
+  const tokenStr =
+    selectedInstrument?.token != null && String(selectedInstrument.token) !== ''
+      ? String(selectedInstrument.token)
+      : '';
   const livePrice = isCryptoInstr
     ? getCryptoMarketQuote(marketData, selectedInstrument)
-    : selectedInstrument?.token && marketData[selectedInstrument.token]
-      ? marketData[selectedInstrument.token]
+    : tokenStr
+      ? (marketData[tokenStr] ?? marketData[Number.parseInt(tokenStr, 10)])
       : null;
 
   useEffect(() => {
@@ -7744,7 +7884,7 @@ const BuySellModal = ({
   const effectiveInstrument = freshInstrument || instrument;
 
   const cryptoQuoteModal = isUsdSpot ? getCryptoMarketQuote(marketData, effectiveInstrument) : null;
-  const liveData = isUsdSpot ? (cryptoQuoteModal || {}) : (marketData[effectiveInstrument?.token] || {});
+  const liveData = isUsdSpot ? (cryptoQuoteModal || {}) : (marketDataRowForInstrumentToken(marketData, effectiveInstrument?.token) || {});
   const ltp = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(effectiveInstrument?.ltp) || 0)
     : (liveData.ltp || effectiveInstrument?.ltp || 0);
@@ -7758,7 +7898,9 @@ const BuySellModal = ({
     ? (Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0)
     : indianBookModal.ask;
 
-  const feedRow = effectiveInstrument?.token ? marketData[effectiveInstrument.token] : null;
+  const feedRow = effectiveInstrument?.token
+    ? marketDataRowForInstrumentToken(marketData, effectiveInstrument.token)
+    : null;
   const ltpFromLiveFeed = !!(
     feedRow &&
     (feedRow.ltp != null ||

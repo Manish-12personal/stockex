@@ -5,6 +5,8 @@ import Instrument from '../models/Instrument.js';
 let ticker = null;
 let io = null;
 let subscribedTokens = [];
+/** Tokens to subscribe on next ticker connect (e.g. user watchlist while Zerodha was still connecting) */
+let pendingUserSubscribe = new Set();
 let marketData = {};
 let marginMonitorEnabled = true; // Toggle for margin monitoring
 
@@ -75,9 +77,13 @@ export const connectTicker = (apiKey, accessToken, tokens = []) => {
     if (io) {
       io.emit('zerodha_status', { connected: true });
     }
-    // Always subscribe to essential tokens (NIFTY 50, BANKNIFTY) for games
-    const allTokens = [...new Set([...ESSENTIAL_TOKENS, ...tokens])];
-    console.log(`Subscribing to ${allTokens.length} tokens (including ${ESSENTIAL_TOKENS.length} essential tokens)`);
+    const queued = [...pendingUserSubscribe];
+    pendingUserSubscribe.clear();
+    // Always subscribe to essential tokens (NIFTY 50, BANKNIFTY) for games, plus any queued user tokens
+    const allTokens = [...new Set([...ESSENTIAL_TOKENS, ...tokens, ...queued])];
+    console.log(
+      `Subscribing to ${allTokens.length} tokens (including ${ESSENTIAL_TOKENS.length} essential + ${queued.length} queued)`
+    );
     if (allTokens.length > 0) {
       subscribeTokens(allTokens);
     }
@@ -108,16 +114,19 @@ export const connectTicker = (apiKey, accessToken, tokens = []) => {
 
   ticker.on('reconnect', (reconnect_count, reconnect_interval) => {
     console.log(`Zerodha WebSocket reconnecting... Attempt: ${reconnect_count}, Interval: ${reconnect_interval}s`);
-    // Resubscribe to tokens after reconnection
-    if (subscribedTokens.length > 0) {
-      console.log(`Resubscribing to ${subscribedTokens.length} tokens after reconnection`);
-      setTimeout(() => {
-        if (ticker && ticker.connected()) {
-          ticker.subscribe(subscribedTokens);
-          ticker.setMode(ticker.modeFull, subscribedTokens);
-        }
-      }, 1000);
-    }
+    setTimeout(() => {
+      if (!ticker || !ticker.connected()) return;
+      if (subscribedTokens.length > 0) {
+        console.log(`Resubscribing to ${subscribedTokens.length} tokens after reconnection`);
+        ticker.subscribe(subscribedTokens);
+        ticker.setMode(ticker.modeFull, subscribedTokens);
+      }
+      const queued = [...pendingUserSubscribe];
+      if (queued.length > 0) {
+        pendingUserSubscribe.clear();
+        subscribeTokens(queued);
+      }
+    }, 1000);
   });
 
   ticker.on('noreconnect', () => {
@@ -144,16 +153,19 @@ const BATCH_SIZE = 100; // Subscribe in batches of 100 tokens
 const BATCH_DELAY = 100; // 100ms delay between batches
 
 export const subscribeTokens = async (tokens) => {
-  if (!ticker || !ticker.connected()) {
-    console.log('Ticker not connected, cannot subscribe');
-    return { subscribed: 0, total: tokens.length };
-  }
-
   // Map legacy DB tokens → official Kite tokens so Zerodha streams match Kite / TradingView
   const numericTokens = tokens
     .map((t) => normalizeKiteInstrumentToken(t))
     .filter((t) => !isNaN(t) && t > 0);
-  
+
+  if (!ticker || !ticker.connected()) {
+    numericTokens.forEach((t) => pendingUserSubscribe.add(t));
+    console.log(
+      `Ticker not connected; queued ${numericTokens.length} token(s) for next connect (queue size ${pendingUserSubscribe.size})`
+    );
+    return { subscribed: 0, total: subscribedTokens.length, queued: numericTokens.length };
+  }
+
   // Remove already subscribed tokens
   const newTokens = numericTokens.filter(t => !subscribedTokens.includes(t));
   
@@ -346,6 +358,7 @@ export const disconnectTicker = () => {
     ticker.disconnect();
     ticker = null;
     subscribedTokens = [];
+    pendingUserSubscribe.clear();
     marketData = {};
   }
 };

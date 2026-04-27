@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { protectAdmin, superAdminOnly } from '../middleware/auth.js';
+import { protectAdmin, protectUser, superAdminOnly } from '../middleware/auth.js';
 import { connectTicker, subscribeTokens, getMarketData, getTickerStatus, disconnectTicker } from '../services/zerodhaWebSocket.js';
 import { fetchNifty50SessionClearing15mCached } from '../utils/kiteNiftyQuote.js';
 
@@ -554,6 +554,34 @@ router.get('/market-data', async (req, res) => {
   } catch (error) {
     console.error('Zerodha market data error:', error.response?.data || error.message);
     res.status(500).json({ message: error.response?.data?.message || error.message });
+  }
+});
+
+/**
+ * Users: subscribe Zerodha ticker to instrument_token(s) (e.g. MCX watchlist) so market_tick
+ * streams without waiting for an admin "subscribe all". Rate-limits batch size.
+ */
+router.post('/tick-subscribe', protectUser, async (req, res) => {
+  try {
+    const raw = req.body?.tokens;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return res.status(400).json({ message: 'tokens array required' });
+    }
+    const nums = [
+      ...new Set(
+        raw
+          .map((t) => parseInt(String(t).trim(), 10))
+          .filter((n) => !isNaN(n) && n > 0)
+      ),
+    ].slice(0, 500);
+    if (nums.length === 0) {
+      return res.status(400).json({ message: 'no valid token ids' });
+    }
+    const result = await subscribeTokens(nums);
+    return res.json({ ok: true, requested: nums.length, subscribed: result.subscribed, total: result.total });
+  } catch (e) {
+    console.error('tick-subscribe:', e);
+    return res.status(500).json({ message: e?.message || 'subscribe failed' });
   }
 });
 
