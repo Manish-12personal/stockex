@@ -126,6 +126,13 @@ const instrumentsData = {
   }
 };
 
+/** USDT spot "Lots" mode: step 0.25 in lot count (0.25, 0.5, 1, 1.25, …) */
+const CRYPTO_LOT_MIN_STEP = 0.25;
+function roundCryptoLotsToStep(n) {
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n / CRYPTO_LOT_MIN_STEP) * CRYPTO_LOT_MIN_STEP;
+}
+
 /** 1..N from Super Admin segment exposure (intraday / carry); null if unset. */
 function leverageChoicesFromSegmentExposure(exposure, cap = 125) {
   const n = Math.floor(Number(exposure));
@@ -303,6 +310,36 @@ function watchlistInstrumentKey(inst) {
   return inst.token != null ? String(inst.token).trim() : '';
 }
 
+/**
+ * NSE / MCX / etc.: chart and LTP use `marketData[token].ltp`. Bid/ask from the same tick can be missing
+ * or stale vs LTP; if they drift too far from LTP, anchor bid/ask around LTP so the panel matches the chart.
+ */
+function alignIndianBookBidAskWithLtp(liveData, item) {
+  const ltp = Number(
+    liveData?.ltp ?? liveData?.last_price ?? liveData?.close ?? item?.ltp ?? item?.lastPrice ?? 0
+  );
+  let bid = Number(liveData?.bid);
+  let ask = Number(liveData?.ask);
+  const rel = (x) =>
+    Number.isFinite(x) && x > 0 && ltp > 0 ? Math.abs(x - ltp) / ltp : 1;
+  const MAX_REL_DRIFT = 0.005;
+
+  if (!Number.isFinite(ltp) || ltp <= 0) {
+    const fbBid = liveData?.bid || item?.lastBid || item?.ltp || item?.currentPrice;
+    const fbAsk = liveData?.ask || item?.lastAsk || item?.ltp || item?.currentPrice;
+    return { bid: Number(fbBid) || 0, ask: Number(fbAsk) || 0 };
+  }
+
+  const bidOk = Number.isFinite(bid) && bid > 0 && rel(bid) <= MAX_REL_DRIFT;
+  const askOk = Number.isFinite(ask) && ask > 0 && rel(ask) <= MAX_REL_DRIFT;
+  if (bidOk && askOk && bid <= ask) {
+    return { bid, ask };
+  }
+
+  const half = Math.max(ltp * 0.00002, 1);
+  return { bid: ltp - half, ask: ltp + half };
+}
+
 /** Bid/ask in USD for crypto/forex (server close path multiplies by FX); else token feed prices. */
 function getUsdSpotBidAsk(marketData, item) {
   if (isUsdSpotInstrument(item)) {
@@ -315,10 +352,8 @@ function getUsdSpotBidAsk(marketData, item) {
     return { bidPrice: bid, askPrice: ask };
   }
   const liveData = marketData[item?.token] || {};
-  // For non-USD spot (includes MCX), fall back to instrument's lastBid/lastAsk when live bid/ask are 0
-  const bid = liveData.bid || liveData.ltp || item?.lastBid || item?.ltp || item?.currentPrice || item?.entryPrice;
-  const ask = liveData.ask || liveData.ltp || item?.lastAsk || item?.ltp || item?.currentPrice || item?.entryPrice;
-  return { bidPrice: bid, askPrice: ask };
+  const { bid, ask } = alignIndianBookBidAskWithLtp(liveData, item);
+  return { bidPrice: bid, ask: ask };
 }
 
 /** Segment `cryptoSpreadInr` = total ₹ width per coin on quote; half widens bid/ask in USDT before FX display. */
@@ -3439,9 +3474,10 @@ const TradingPanel = ({
   const [success, setSuccess] = useState('');
   const [showSettingsInfo, setShowSettingsInfo] = useState(false);
   
-  // Crypto: amount mode = INR to spend; units mode = coin quantity (server still receives USDT price)
+  // Crypto: amount = INR; units = base qty; lots = 0.25-step contract lots (× lotSize from margin preview)
   const [cryptoAmount, setCryptoAmount] = useState('10000');
-  const [cryptoInputMode, setCryptoInputMode] = useState('amount');
+  const [cryptoInputMode, setCryptoInputMode] = useState('amount'); // 'amount' | 'units' | 'lots' (lots = crypto only)
+  const [cryptoLotInput, setCryptoLotInput] = useState('1');
   const [intradayOnly, setIntradayOnly] = useState(false);
   
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.segment === 'CRYPTO' || instrument?.exchange === 'BINANCE');
@@ -3453,27 +3489,34 @@ const TradingPanel = ({
   const livePrice = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(instrument?.ltp) || 0)
     : (liveData.ltp || instrument?.ltp || 0);
-  // Use marketData first, then instrument's lastBid/lastAsk as fallback (last closing prices)
+  const indianBook = !isUsdSpot ? alignIndianBookBidAskWithLtp(liveData, instrument) : null;
   const liveBid = isUsdSpot
     ? (Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0)
-    : (liveData.bid || liveData.ltp || instrument?.lastBid || instrument?.ltp || 0);
+    : indianBook.bid;
   const liveAsk = isUsdSpot
     ? (Number(liveData.ask) || livePrice || Number(instrument?.ltp) || 0)
-    : (liveData.ask || liveData.ltp || instrument?.lastAsk || instrument?.ltp || 0);
+    : indianBook.ask;
   
   const cryptoUnitPrice = livePrice > 0 ? livePrice : 0;
   const cryptoUnitNotionalInr =
     cryptoUnitPrice > 0 && instrument
       ? spotPxToDisplayedInr(instrument, cryptoUnitPrice, usdRate)
       : 0;
+  const baseQtyPerCryptoLot = marginPreview?.lotSize != null && Number(marginPreview.lotSize) > 0
+    ? Number(marginPreview.lotSize)
+    : 1;
   const cryptoUnits =
-    cryptoInputMode === 'amount'
-      ? cryptoUnitNotionalInr > 0
-        ? (parseFloat(cryptoAmount) || 0) / cryptoUnitNotionalInr
-        : 0
-      : parseFloat(cryptoAmount) || 0;
+    isCryptoOnly && cryptoInputMode === 'lots'
+      ? roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0) * baseQtyPerCryptoLot
+      : cryptoInputMode === 'amount'
+        ? cryptoUnitNotionalInr > 0
+          ? (parseFloat(cryptoAmount) || 0) / cryptoUnitNotionalInr
+          : 0
+        : parseFloat(cryptoAmount) || 0;
   const cryptoTotalCost =
-    cryptoInputMode === 'amount'
+    isCryptoOnly && cryptoInputMode === 'lots'
+    ? (cryptoUnitNotionalInr > 0 ? cryptoUnits * cryptoUnitNotionalInr : 0)
+    : cryptoInputMode === 'amount'
       ? parseFloat(cryptoAmount) || 0
       : cryptoUnitNotionalInr > 0
         ? (parseFloat(cryptoAmount) || 0) * cryptoUnitNotionalInr
@@ -3541,10 +3584,22 @@ const TradingPanel = ({
       if (!newLeverages.includes(leverage)) {
         setLeverage(newLeverages[0] || 1);
       }
-    } else if ((isCryptoOnly || isForex) && availableLeverages.length > 0 && !availableLeverages.includes(leverage)) {
+    } else if (isForex && availableLeverages.length > 0 && !availableLeverages.includes(leverage)) {
       setLeverage(availableLeverages[0] || 1);
     }
   }, [productType, intradayLeverages, carryForwardLeverages, isUsdSpot, isCryptoOnly, isForex, availableLeverages, leverage]);
+
+  useEffect(() => {
+    if (isCryptoOnly) setLeverage(1);
+  }, [isCryptoOnly, instrument?.token, instrument?.pair, instrument?.symbol]);
+
+  useEffect(() => {
+    if (isForex && cryptoInputMode === 'lots') setCryptoInputMode('amount');
+  }, [isForex, cryptoInputMode, instrument?.token, instrument?.pair, instrument?.symbol]);
+
+  useEffect(() => {
+    setCryptoLotInput('1');
+  }, [instrument?.token, instrument?.pair, instrument?.symbol]);
 
   // When instrument changes, seed price + limit from the current quote (crypto → INR)
   useEffect(() => {
@@ -3640,7 +3695,8 @@ const TradingPanel = ({
   // Fetch margin preview when inputs change
   useEffect(() => {
     const fetchMarginPreview = async () => {
-      if (!instrument || !lots) return;
+      if (!instrument) return;
+      if (!isUsdSpot && !lots) return;
       if (isUsdSpot) {
         if (!livePrice) return;
       } else if (!price) {
@@ -3648,7 +3704,10 @@ const TradingPanel = ({
       }
 
       try {
-        const { data } = await axios.post('/api/trading/margin-preview', {
+        const usdSpotLots = isUsdSpot && isCryptoOnly && cryptoInputMode === 'lots'
+          ? roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0)
+          : null;
+        const body = {
           symbol: instrument.symbol,
           tradingSymbol: instrument.tradingSymbol || instrument.symbol,
           exchange: instrument.exchange,
@@ -3663,17 +3722,25 @@ const TradingPanel = ({
           productType,
           side: orderType.toUpperCase(),
           quantity: totalQuantity,
-          lots: parseInt(lots),
-          lotSize: lotSize,
+          lotSize: isUsdSpot ? 1 : lotSize,
           price: isUsdSpot ? Number(livePrice) : parseFloat(price),
-          leverage: leverage,
+          leverage: isCryptoOnly ? 1 : leverage,
           isCrypto: isCryptoOnly,
           isForex: isForex
-        }, {
+        };
+        if (!isUsdSpot) {
+          body.lots = parseInt(lots, 10);
+        } else if (usdSpotLots != null) {
+          body.lots = usdSpotLots;
+          body.cryptoLotStepOrder = true;
+        } else {
+          body.cryptoLotStepOrder = false;
+        }
+        const { data } = await axios.post('/api/trading/margin-preview', body, {
           headers: { Authorization: `Bearer ${user?.token}` }
         });
         setMarginPreview(data);
-        if (isUsdSpot && (isCryptoOnly || isForex)) {
+        if (isUsdSpot && isForex) {
           const fromSeg = leverageChoicesFromSegmentExposure(data?.exposureIntraday);
           if (fromSeg?.length) setAvailableLeverages(fromSeg);
         }
@@ -3684,7 +3751,7 @@ const TradingPanel = ({
 
     const debounce = setTimeout(fetchMarginPreview, 300);
     return () => clearTimeout(debounce);
-  }, [instrument, lots, price, productType, orderType, user, totalQuantity, lotSize, leverage, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice]);
+  }, [instrument, lots, price, productType, orderType, user, totalQuantity, lotSize, leverage, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice, cryptoInputMode, cryptoLotInput]);
 
   // Place order
   const handlePlaceOrder = async () => {
@@ -3727,18 +3794,23 @@ const TradingPanel = ({
         orderType: orderMode,
         side: orderType.toUpperCase(),
         quantity: isUsdSpot ? cryptoUnits : totalQuantity,
-        lots: isUsdSpot ? 1 : parseInt(lots),
-        lotSize: lotSize,
+        lotSize: isUsdSpot ? baseQtyPerCryptoLot : lotSize,
         price: isUsdSpot ? livePrice : parseFloat(price),
         bidPrice: liveBid,
         askPrice: liveAsk,
-        leverage: leverage,
+        leverage: isCryptoOnly ? 1 : leverage,
         stopLoss: stopLoss ? (isUsdSpot ? parseFloat(stopLoss) / usdRate : parseFloat(stopLoss)) : null,
         target: target ? (isUsdSpot ? parseFloat(target) / usdRate : parseFloat(target)) : null,
         cryptoAmount: isUsdSpot ? cryptoTotalCost : null,
         forexAmount: isForex ? cryptoTotalCost : null,
         intradayOnly: intradayOnly
       };
+      if (!isUsdSpot) {
+        orderData.lots = parseInt(lots, 10);
+      } else if (isCryptoOnly && cryptoInputMode === 'lots') {
+        orderData.lots = roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0);
+        orderData.cryptoLotStepOrder = true;
+      }
       
       console.log('Placing order:', orderData);
 
@@ -4060,12 +4132,12 @@ const TradingPanel = ({
           </div>
         </div>
 
-        {/* Leverage: NSE/MCX etc.; USD crypto/forex spot uses segment exposureIntraday from margin-preview */}
-        {(!isUsdSpot || (isUsdSpot && (isCryptoOnly || isForex))) && (
+        {/* Leverage: NSE/MCX; USD forex spot (not crypto) uses segment exposure from margin-preview */}
+        {!isCryptoOnly && (!isUsdSpot || isForex) && (
           <div>
             <label className="block text-xs text-gray-400 mb-2">
               Leverage
-              {isUsdSpot && (isCryptoOnly || isForex) && marginPreview?.exposureIntraday != null && (
+              {isUsdSpot && isForex && marginPreview?.exposureIntraday != null && (
                 <span className="text-gray-500 font-normal"> (max {marginPreview.exposureIntraday}× segment)</span>
               )}
             </label>
@@ -4085,8 +4157,8 @@ const TradingPanel = ({
               ))}
             </div>
             <div className="text-xs text-gray-500 mt-1">
-              {isUsdSpot && (isCryptoOnly || isForex)
-                ? 'Max options match Super Admin CRYPTO/FOREX intraday exposure; higher × = less margin.'
+              {isUsdSpot && isForex
+                ? 'Options match Super Admin FOREX intraday exposure; higher × = less margin.'
                 : 'Higher leverage = Lower margin required, Higher risk'}
             </div>
           </div>
@@ -4095,47 +4167,103 @@ const TradingPanel = ({
         {/* Crypto / Forex: USD-quote, INR notional */}
         {isUsdSpot ? (
           <div>
-            {/* Toggle between INR notional and coin units */}
-            <div className="flex gap-2 mb-3">
+            {/* Crypto: amount / units / lots (0.25 lot step). Forex: amount / units only */}
+            <div className={`grid gap-2 mb-3 ${isCryptoOnly ? 'grid-cols-3' : 'grid-cols-2'}`}>
               <button
+                type="button"
                 onClick={() => setCryptoInputMode('amount')}
-                className={`flex-1 py-2 rounded text-sm font-medium transition ${
+                className={`py-2 rounded text-sm font-medium transition ${
                   cryptoInputMode === 'amount' ? (isForex ? 'bg-cyan-600 text-white' : 'bg-orange-600 text-white') : 'bg-dark-700 text-gray-400'
                 }`}
               >
-                ₹ INR Amount
+                ₹ Amount
               </button>
               <button
+                type="button"
                 onClick={() => setCryptoInputMode('units')}
-                className={`flex-1 py-2 rounded text-sm font-medium transition ${
+                className={`py-2 rounded text-sm font-medium transition ${
                   cryptoInputMode === 'units' ? (isForex ? 'bg-cyan-600 text-white' : 'bg-orange-600 text-white') : 'bg-dark-700 text-gray-400'
                 }`}
               >
-                {isForex ? '◆' : '₿'} {instrument?.symbol} Units
+                {isForex ? '◆' : '₿'} Units
               </button>
+              {isCryptoOnly && (
+                <button
+                  type="button"
+                  onClick={() => setCryptoInputMode('lots')}
+                  className={`py-2 rounded text-sm font-medium transition ${
+                    cryptoInputMode === 'lots' ? 'bg-orange-600 text-white' : 'bg-dark-700 text-gray-400'
+                  }`}
+                >
+                  Lots
+                </button>
+              )}
             </div>
             
             <label className="block text-xs text-gray-400 mb-2">
-              {cryptoInputMode === 'amount' ? 'Amount (INR)' : `${instrument?.symbol} Units`}
+              {cryptoInputMode === 'amount'
+                ? 'Amount (INR)'
+                : cryptoInputMode === 'units'
+                  ? `${instrument?.symbol} Units`
+                  : `Lots (min ${CRYPTO_LOT_MIN_STEP}, step ${CRYPTO_LOT_MIN_STEP} × ${baseQtyPerCryptoLot} ${instrument?.symbol} / lot)`}
             </label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                {cryptoInputMode === 'amount' ? '₹' : ''}
-              </span>
-              <input
-                type="number"
-                value={cryptoAmount}
-                onChange={(e) => setCryptoAmount(e.target.value)}
-                placeholder={cryptoInputMode === 'amount' ? 'Enter INR amount' : 'Enter units'}
-                className={`w-full bg-dark-700 border border-dark-600 rounded px-3 py-3 text-lg font-bold focus:outline-none focus:border-orange-500 ${cryptoInputMode === 'amount' ? 'pl-8' : ''}`}
-                step="any"
-              />
-            </div>
+            {isCryptoOnly && cryptoInputMode === 'lots' ? (
+              <div>
+                <input
+                  type="number"
+                  value={cryptoLotInput}
+                  onChange={(e) => setCryptoLotInput(e.target.value)}
+                  onBlur={() => {
+                    const r = roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0);
+                    if (r > 0) setCryptoLotInput(String(r));
+                  }}
+                  min={CRYPTO_LOT_MIN_STEP}
+                  step={CRYPTO_LOT_MIN_STEP}
+                  placeholder="e.g. 0.25, 1, 1.5"
+                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-3 text-lg font-bold focus:outline-none focus:border-orange-500"
+                />
+                <div className="flex gap-1 mt-2 flex-wrap">
+                  {[0.25, 0.5, 0.75, 1, 1.25, 2, 2.5, 3].map((l) => (
+                    <button
+                      type="button"
+                      key={l}
+                      onClick={() => {
+                        setCryptoInputMode('lots');
+                        setCryptoLotInput(String(l));
+                      }}
+                      className={`flex-1 min-w-[40px] py-1 text-xs rounded ${
+                        roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0) === l && cryptoInputMode === 'lots'
+                          ? 'bg-orange-600'
+                          : 'bg-dark-600 hover:bg-dark-500'
+                      }`}
+                    >
+                      {l}L
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                  {cryptoInputMode === 'amount' ? '₹' : ''}
+                </span>
+                <input
+                  type="number"
+                  value={cryptoAmount}
+                  onChange={(e) => setCryptoAmount(e.target.value)}
+                  placeholder={cryptoInputMode === 'amount' ? 'Enter INR amount' : 'Enter units'}
+                  className={`w-full bg-dark-700 border border-dark-600 rounded px-3 py-3 text-lg font-bold focus:outline-none focus:border-orange-500 ${cryptoInputMode === 'amount' ? 'pl-8' : ''}`}
+                  step="any"
+                />
+              </div>
+            )}
             
             {/* Quick INR notional presets */}
+            {!(isCryptoOnly && cryptoInputMode === 'lots') && (
             <div className="flex gap-1 mt-2 flex-wrap">
               {[5000, 10000, 25000, 50000, 100000].map((amt) => (
                 <button
+                  type="button"
                   key={amt}
                   onClick={() => { setCryptoInputMode('amount'); setCryptoAmount(amt.toString()); }}
                   className={`flex-1 min-w-[52px] py-1 text-xs rounded ${cryptoAmount === amt.toString() && cryptoInputMode === 'amount' ? 'bg-orange-600' : 'bg-dark-600 hover:bg-dark-500'}`}
@@ -4144,6 +4272,7 @@ const TradingPanel = ({
                 </button>
               ))}
             </div>
+            )}
             
             {/* Show conversion */}
             <div className="bg-dark-600 rounded p-3 mt-3 space-y-1">
@@ -7570,13 +7699,13 @@ const BuySellModal = ({
   const ltp = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(effectiveInstrument?.ltp) || 0)
     : (liveData.ltp || effectiveInstrument?.ltp || 0);
-  // Use marketData first, then effectiveInstrument's lastBid/lastAsk as fallback (last closing prices)
-  const liveBid = isUsdSpot 
-    ? (Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0) 
-    : (liveData.bid || liveData.ltp || effectiveInstrument?.lastBid || effectiveInstrument?.ltp || 0);
-  const liveAsk = isUsdSpot 
-    ? (Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0) 
-    : (liveData.ask || liveData.ltp || effectiveInstrument?.lastAsk || effectiveInstrument?.ltp || 0);
+  const indianBookModal = !isUsdSpot ? alignIndianBookBidAskWithLtp(liveData, effectiveInstrument) : null;
+  const liveBid = isUsdSpot
+    ? (Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0)
+    : indianBookModal.bid;
+  const liveAsk = isUsdSpot
+    ? (Number(liveData.ask) || ltp || Number(effectiveInstrument?.ltp) || 0)
+    : indianBookModal.ask;
 
   const feedRow = effectiveInstrument?.token ? marketData[effectiveInstrument.token] : null;
   const ltpFromLiveFeed = !!(
@@ -7641,8 +7770,9 @@ const BuySellModal = ({
   const orderValue = ltp * totalQuantity;
   
   // Calculate margin required with leverage (fallback before margin-preview returns)
-  const marginRequired = isUsdSpot ? (orderValue / leverage) : orderValue;
-  const buyingPower = activeWallet.available * leverage;
+  const effLeverage = isUsdSpot && isCryptoOnly ? 1 : leverage;
+  const marginRequired = isUsdSpot ? (orderValue / effLeverage) : orderValue;
+  const buyingPower = activeWallet.available * (isUsdSpot ? effLeverage : leverage);
 
   const commissionPerLot = 10;
   const totalCommission = parseFloat(quantity || 0.01) * commissionPerLot;
@@ -7660,11 +7790,15 @@ const BuySellModal = ({
   );
 
   useEffect(() => {
+    if (isCryptoOnly) {
+      setLeverage(1);
+      return;
+    }
     if (!leverageOptions.length) return;
     const maxL = Math.max(...leverageOptions);
     if (leverage > maxL) setLeverage(maxL);
     else if (!leverageOptions.includes(leverage)) setLeverage(leverageOptions[0] || 1);
-  }, [leverageOptions, leverage]);
+  }, [leverageOptions, leverage, isCryptoOnly]);
 
   const estBrokerageInr = Number.isFinite(Number(marginPreview?.brokerage))
     ? Number(marginPreview.brokerage)
@@ -7697,7 +7831,7 @@ const BuySellModal = ({
           lots: parseFloat(quantity),
           lotSize: lotSize,
           price: parseFloat(ltp),
-          leverage: leverage,
+          leverage: isCryptoOnly ? 1 : leverage,
           isCrypto: isCryptoOnly,
           isForex: isForex
         }, {
@@ -7802,7 +7936,7 @@ const BuySellModal = ({
         price: ltp,
         bidPrice: liveBid,
         askPrice: liveAsk,
-        leverage: isUsdSpot ? leverage : 1,
+        leverage: isCryptoOnly ? 1 : (isUsdSpot ? leverage : 1),
         takeProfit: takeProfit ? (isUsdSpot ? parseFloat(takeProfit) / usdRate : parseFloat(takeProfit)) : null,
         stopLoss: stopLoss ? (isUsdSpot ? parseFloat(stopLoss) / usdRate : parseFloat(stopLoss)) : null,
         cryptoAmount: isCryptoOnly ? inrNotionalCalc : null,
@@ -7985,6 +8119,8 @@ const BuySellModal = ({
             </div>
           </div>
 
+          {!isCryptoOnly && (
+            <>
           {/* Leverage Dropdown — options from segment exposure (Super Admin CRYPTO/FOREX) via margin-preview */}
           <div className="px-3 pb-3">
             <div className="text-sm text-gray-400 mb-2">
@@ -8022,6 +8158,8 @@ const BuySellModal = ({
               Buying Power (×{leverage}): ₹{buyingPower.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
             </div>
           </div>
+            </>
+          )}
 
           {/* Take Profit Section */}
           <div className="px-3 pb-2">

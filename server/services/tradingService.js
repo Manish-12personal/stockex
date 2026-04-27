@@ -623,16 +623,16 @@ class TradingService {
     const isForexWallet = orderIsForex(orderData);
     const usdInr = isUsdSpot ? getUsdInrRate() : 1;
 
-    // Get lot size - prefer from order data, then database, then fallback to hardcoded
-    // For USD spot: lot size is always 1 (fractional units allowed)
-    let lotSize = isUsdSpot ? 1 : orderData.lotSize;
+    // Get lot size: segment crypto mapping (reference lots ÷ quantity) for BINANCE/CRYPTO; else DB / request
+    let lotSize = isUsdSpot
+      ? (orderData.lotSize > 0 ? Number(orderData.lotSize) : 1)
+      : (orderData.lotSize || 1);
     if (!isUsdSpot && (!lotSize || lotSize <= 0)) {
       lotSize = await this.getLotSizeAsync(orderData.symbol, orderData.token, orderData.exchange);
     }
     const segU = String(orderData.segment || '').toUpperCase();
     const segCryptoLot = TradeService.segmentCryptoLotSizePerUnitLot(segmentSettings);
     if (
-      !isUsdSpot &&
       segCryptoLot != null &&
       (segU === 'CRYPTOFUT' ||
         segU === 'CRYPTOOPT' ||
@@ -644,7 +644,10 @@ class TradingService {
 
     // For USD spot: use fractional quantity directly
     // For others: use quantity from frontend if provided (quantity mode), otherwise lots * lotSize
-    const lots = orderData.lots || 1;
+    let lots =
+      orderData.lots != null && orderData.lots !== '' && Number.isFinite(Number(orderData.lots))
+        ? Number(orderData.lots)
+        : 1;
     // Check if frontend sent quantity directly (quantity mode) - quantity won't equal lots * lotSize
     const isQuantityMode = orderData.quantity && orderData.quantity !== (lots * lotSize);
     const inrNotional = orderData.cryptoAmount || orderData.forexAmount;
@@ -654,6 +657,25 @@ class TradingService {
             ? inrNotional / (orderData.price * usdInr)
             : 0))
       : (orderData.quantity || lots * lotSize);
+    
+    if (isUsdSpot && lotSize > 0) {
+      lots = totalQuantity / lotSize;
+    }
+    if (isUsdSpot && isCryptoWallet && orderData.cryptoLotStepOrder) {
+      const CRYPTO_LOT_MIN_STEP = 0.25;
+      const el = lotSize > 0 ? totalQuantity / lotSize : 0;
+      if (el < CRYPTO_LOT_MIN_STEP) {
+        throw new Error(`Minimum ${CRYPTO_LOT_MIN_STEP} lot for ${orderData.symbol}`);
+      }
+      const maxLotsAllowed = scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots || 1000;
+      if (el > maxLotsAllowed) {
+        throw new Error(`Maximum ${maxLotsAllowed} lots per order for ${orderData.symbol}`);
+      }
+      const x = el / CRYPTO_LOT_MIN_STEP;
+      if (Math.abs(x - Math.round(x)) > 1e-6) {
+        throw new Error('Lot size must be in steps of 0.25 (e.g. 0.25, 0.5, 1)');
+      }
+    }
     
     // Skip lot validation for USD spot (uses INR notional, not lots)
     if (!isUsdSpot) {

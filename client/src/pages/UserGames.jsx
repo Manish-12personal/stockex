@@ -2366,6 +2366,45 @@ const GameLivePricePanel = ({
   const displayPrice = isBTC ? livePrice : nseCashOpen ? livePrice : lastKnownPrice;
   const isUp = priceChange ? parseFloat(priceChange.change) >= 0 : true;
 
+  const chartTfLabel = isBTC
+    ? BTC_CHART_OPTIONS.find((o) => o.interval === btcChartInterval)?.label || btcChartInterval
+    : NIFTY_KITE_CHART_OPTIONS.find((o) => o.kite === niftyChartInterval)?.label || niftyChartInterval;
+
+  const formatGameOhlcPx = (v) =>
+    v != null && Number.isFinite(Number(v))
+      ? Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : '—';
+
+  const { formingOhlc, closedOhlc } = useMemo(() => {
+    const ltp = displayPrice != null && Number.isFinite(Number(displayPrice)) ? Number(displayPrice) : null;
+    const rows = historicalData;
+    if (!rows?.length || ltp == null) {
+      return { formingOhlc: null, closedOhlc: null };
+    }
+    const last = rows[rows.length - 1];
+    const o = Number(last.open);
+    const hi = Number(last.high);
+    const lo = Number(last.low);
+    if (![o, hi, lo].every((x) => Number.isFinite(x))) {
+      return { formingOhlc: null, closedOhlc: null };
+    }
+    const high = Math.max(hi, ltp);
+    const low = Math.min(lo, ltp);
+    const forming = { open: o, high, low, close: ltp };
+    let closed = null;
+    if (rows.length >= 2) {
+      const p = rows[rows.length - 2];
+      const co = Number(p.open);
+      const ch = Number(p.high);
+      const cl = Number(p.low);
+      const cc = Number(p.close);
+      if ([co, ch, cl, cc].every((x) => Number.isFinite(x))) {
+        closed = { open: co, high: ch, low: cl, close: cc };
+      }
+    }
+    return { formingOhlc: forming, closedOhlc: closed };
+  }, [historicalData, displayPrice]);
+
   // Notify parent of price data updates
   useEffect(() => {
     onPriceDataUpdateRef.current?.({ displayPrice, priceChange });
@@ -2536,6 +2575,70 @@ const GameLivePricePanel = ({
         </p>
         </div>
       )}
+      <div className="mb-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+        <div className="rounded-lg border border-emerald-600/30 bg-dark-900/70 px-2.5 py-2">
+          <div className="text-[10px] font-semibold text-emerald-400/95 mb-1.5">
+            {isBTC ? 'BTC' : 'NIFTY 50'} · current {chartTfLabel} candle (forming)
+          </div>
+          {formingOhlc ? (
+            <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 tabular-nums text-gray-200">
+              <span className="text-gray-500">Open</span>
+              <span className="text-right">
+                {isBTC ? '$' : '₹'}
+                {formatGameOhlcPx(formingOhlc.open)}
+              </span>
+              <span className="text-gray-500">High</span>
+              <span className="text-right">
+                {isBTC ? '$' : '₹'}
+                {formatGameOhlcPx(formingOhlc.high)}
+              </span>
+              <span className="text-gray-500">Low</span>
+              <span className="text-right">
+                {isBTC ? '$' : '₹'}
+                {formatGameOhlcPx(formingOhlc.low)}
+              </span>
+              <span className="text-gray-500">Close</span>
+              <span className="text-right font-medium text-white">
+                {isBTC ? '$' : '₹'}
+                {formatGameOhlcPx(formingOhlc.close)}
+              </span>
+            </div>
+          ) : (
+            <p className="text-gray-500 text-[10px] leading-snug">
+              Select a timeframe above; O/H/L/C update from the same Kite / Binance bars as the chart.
+            </p>
+          )}
+        </div>
+        <div className="rounded-lg border border-slate-600/45 bg-dark-900/70 px-2.5 py-2">
+          <div className="text-[10px] font-semibold text-slate-400 mb-1.5">Last closed {chartTfLabel} candle</div>
+          {closedOhlc ? (
+            <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 tabular-nums text-gray-200">
+              <span className="text-gray-500">Open</span>
+              <span className="text-right">
+                {isBTC ? '$' : '₹'}
+                {formatGameOhlcPx(closedOhlc.open)}
+              </span>
+              <span className="text-gray-500">High</span>
+              <span className="text-right">
+                {isBTC ? '$' : '₹'}
+                {formatGameOhlcPx(closedOhlc.high)}
+              </span>
+              <span className="text-gray-500">Low</span>
+              <span className="text-right">
+                {isBTC ? '$' : '₹'}
+                {formatGameOhlcPx(closedOhlc.low)}
+              </span>
+              <span className="text-gray-500">Close</span>
+              <span className="text-right font-medium text-slate-100">
+                {isBTC ? '$' : '₹'}
+                {formatGameOhlcPx(closedOhlc.close)}
+              </span>
+            </div>
+          ) : (
+            <p className="text-gray-500 text-[10px]">Need at least two bars for a prior close.</p>
+          )}
+        </div>
+      </div>
       <div className="mt-2 sm:mt-4 flex flex-col min-h-0 flex-1">
         <div className="min-h-0 flex-1 overflow-hidden max-lg:max-h-[min(32vh,320px)]">
           <LiveChart

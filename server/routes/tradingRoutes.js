@@ -5,6 +5,7 @@ import { getUsdInrRate } from '../utils/usdInr.js';
 import User from '../models/User.js';
 import Admin from '../models/Admin.js';
 import { protectUser as protect, protectAdmin } from '../middleware/auth.js';
+import { orderIsUsdSpot } from '../utils/tradingUsdSpot.js';
 
 const router = express.Router();
 
@@ -102,7 +103,9 @@ router.get('/wallet', protect, async (req, res) => {
 router.post('/margin-preview', protect, async (req, res) => {
   try {
     let leverage = req.body.leverage || 1;
-    const { symbol, productType, side, lots = 1, instrumentType, category, segment } = req.body;
+    const { symbol, productType, side, instrumentType, category, segment } = req.body;
+    const lotsRaw = req.body.lots;
+    const lots = lotsRaw != null && lotsRaw !== '' && Number.isFinite(Number(lotsRaw)) ? Number(lotsRaw) : 1;
     
     // Import TradeService for user settings helpers
     const TradeService = (await import('../services/tradeService.js')).default;
@@ -146,15 +149,23 @@ router.post('/margin-preview', protect, async (req, res) => {
     ) {
       lotSize = segLotPreview;
     }
-    const quantity = req.body.quantity || (lots * lotSize);
+    const quantity =
+      req.body.quantity != null && req.body.quantity !== '' && Number.isFinite(Number(req.body.quantity))
+        ? Number(req.body.quantity)
+        : lots * lotSize;
     const isCryptoPreview = segment === 'CRYPTO' || segment === 'CRYPTOFUT' || segment === 'CRYPTOOPT' ||
       req.body.exchange === 'BINANCE' || req.body.isCrypto ||
       segment === 'FOREX' || segment === 'FOREXFUT' || segment === 'FOREXOPT' ||
       req.body.exchange === 'FOREX' || req.body.isForex;
     const tradeValue = isCryptoPreview ? price * getUsdInrRate() * quantity : price * quantity;
     
-    // Calculate effective lots from quantity (for quantity mode support)
-    const effectiveLots = lotSize > 0 ? Math.ceil(quantity / lotSize) : lots;
+    // Effective lots: exact fraction for USDT/forex; ceil for F&O-style sizing
+    const effectivePreviewLots = lotSize > 0 && quantity > 0 ? quantity / lotSize : lots;
+    const effectiveLots = isCryptoPreview
+      ? effectivePreviewLots
+      : lotSize > 0
+        ? Math.ceil(quantity / lotSize)
+        : lots;
     
     // Priority 1: Check for fixed margin in script settings
     if (scriptSettings?.fixedMargin) {
@@ -254,8 +265,39 @@ router.post('/margin-preview', protect, async (req, res) => {
     const segmentMaxBid = segmentSettings?.quantitySettings?.maxBid;
     const maxBid = instrumentMaxBid || segmentMaxBid || 0;
     
-    // Check if lots exceed limit
-    const lotsValid = lots >= minLots && lots <= maxLots;
+    // Binance spot: optional 0.25-lot steps when client sends cryptoLotStepOrder (right-panel "Lots" mode)
+    const CRYPTO_LOT_MIN_STEP = 0.25;
+    const isCryptoUsdSpotForMargin =
+      orderIsUsdSpot({ ...req.body, segment, instrumentType }) && req.body.isCrypto && req.body.exchange === 'BINANCE';
+    const isQuarterLotMode = req.body.cryptoLotStepOrder === true;
+    let lotsValid;
+    let lotsError = null;
+    if (isCryptoUsdSpotForMargin && isQuarterLotMode) {
+      if (quantity <= 0) {
+        lotsValid = false;
+        lotsError = 'Enter a valid size';
+      } else if (effectivePreviewLots < CRYPTO_LOT_MIN_STEP) {
+        lotsValid = false;
+        lotsError = `Minimum ${CRYPTO_LOT_MIN_STEP} lot`;
+      } else if (effectivePreviewLots > maxLots) {
+        lotsValid = false;
+        lotsError = `Maximum ${maxLots} lots per order`;
+      } else {
+        const x = effectivePreviewLots / CRYPTO_LOT_MIN_STEP;
+        const isStep = Math.abs(x - Math.round(x)) < 1e-7;
+        lotsValid = isStep;
+        if (!isStep) {
+          lotsError = 'Lots must be in steps of 0.25 (e.g. 0.25, 0.5, 1, 1.25)';
+        }
+      }
+    } else if (isCryptoUsdSpotForMargin) {
+      lotsValid = quantity > 0 && effectivePreviewLots <= maxLots;
+      if (quantity > 0 && !lotsValid) {
+        lotsError = `Exceeds maximum ${maxLots} lots for this order`;
+      }
+    } else {
+      lotsValid = lots >= minLots && lots <= maxLots;
+    }
     
     // Get commission from segment settings
     const commission = segmentSettings?.commissionLot || segmentSettings?.commission || 0;
@@ -276,11 +318,13 @@ router.post('/margin-preview', protect, async (req, res) => {
       brokerage: Math.round(brokerage * 100) / 100,
       commission: Math.round(commission * 100) / 100,
       spread,
+      lotSize,
+      effectiveLots: Math.round(effectivePreviewLots * 1e8) / 1e8,
       maxLots,
       minLots,
       perOrderLots,
       lotsValid,
-      lotsError: !lotsValid ? `Lots must be between ${minLots} and ${maxLots}` : null,
+      lotsError: !lotsValid ? (lotsError || `Lots must be between ${minLots} and ${maxLots}`) : null,
       shortfall: totalRequired > availableBalance ? totalRequired - availableBalance : 0,
       exposureIntraday: segmentSettingsForMargin?.exposureIntraday || null,
       exposureCarryForward: segmentSettingsForMargin?.exposureCarryForward || null,
