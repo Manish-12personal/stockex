@@ -492,7 +492,8 @@ router.get('/user', protectUser, async (req, res) => {
 // Get all instruments (admin view)
 router.get('/admin', protectAdmin, async (req, res) => {
   try {
-    let { segment, category, search, enabled, optionType, displaySegment, expiryDate } = req.query;
+    let { segment, category, search, enabled, optionType, displaySegment, expiryDate, includeExpired } =
+      req.query;
     // UI historically sent segment=FOREXFUT; DB filter is on displaySegment
     if (!displaySegment && (segment === 'FOREXFUT' || segment === 'FOREXOPT')) {
       displaySegment = segment;
@@ -550,6 +551,12 @@ router.get('/admin', protectAdmin, async (req, res) => {
         filterDate.setHours(23, 59, 59, 999);
         query.expiry = { $lte: filterDate };
       }
+    }
+
+    // Market Watch: hide rolled / past F&O (same as user lists). Opt out: ?includeExpired=true
+    // Skip when `expiryDate` is set — that filter controls expiry range and can include the past.
+    if (!expiryDate && includeExpired !== 'true' && includeExpired !== '1') {
+      addActiveDerivExpiryToQuery(query);
     }
 
     if (displaySegment === 'CRYPTOFUT' || displaySegment === 'CRYPTOOPT') {
