@@ -1522,6 +1522,59 @@ const niftyMarketOpenSnappedSecForGame = (openTime) => {
   return Math.floor(s / 60) * 60;
 };
 
+/** Unix seconds for today (IST) at `istSecSinceMidnight` — matches Kite 15m bar open. */
+function istSecSinceMidnightToUnixToday(istSecSinceMidnight) {
+  const total = Number(istSecSinceMidnight);
+  if (!Number.isFinite(total) || total < 0) return null;
+  const ymd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const h = Math.floor(total / 3600) % 24;
+  const mi = Math.floor((total % 3600) / 60);
+  const s = Math.floor(total % 60);
+  const ms = Date.parse(
+    `${ymd}T${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}:${String(s).padStart(2, '0')}+05:30`
+  );
+  if (!Number.isFinite(ms)) return null;
+  return Math.floor(ms / 1000);
+}
+
+/**
+ * Kite 15m candle **close** for the bar that completes when Nifty Up/Down window `prevWinNum` ends
+ * (Zerodha 15m chart C for that bar). Returns null if history unavailable.
+ */
+async function fetchKite15mCloseForCompletedWindow(prevWinNum, gameStartTime, roundDurationSec) {
+  const m = niftyMarketOpenSnappedSecForGame(gameStartTime);
+  const D = Math.max(
+    NIFTY_UP_DOWN_MIN_ROUND_SEC,
+    Number(roundDurationSec) || DEFAULT_NIFTY_ROUND_DURATION_SEC
+  );
+  const barOpenIstSec = m + (prevWinNum - 1) * D;
+  const targetUnix = istSecSinceMidnightToUnixToday(barOpenIstSec);
+  if (targetUnix == null) return null;
+  try {
+    const { data } = await axios.get('/api/market/nifty-history', { params: { interval: '15minute' } });
+    const rows = Array.isArray(data) ? data : data?.data;
+    if (!rows || rows.length === 0) return null;
+    let bestClose = null;
+    let bestDist = Infinity;
+    for (const c of rows) {
+      let t;
+      if (c.time != null && typeof c.time === 'number' && Number.isFinite(c.time)) {
+        t = c.time > 1e12 ? Math.floor(c.time / 1000) : Math.floor(c.time);
+      } else continue;
+      const dist = Math.abs(t - targetUnix);
+      if (dist < bestDist) {
+        bestDist = dist;
+        const cl = Number(c.close);
+        if (Number.isFinite(cl) && cl > 0) bestClose = cl;
+      }
+    }
+    if (bestClose != null && bestDist < 300) return bestClose;
+  } catch (e) {
+    console.warn('[NiftyUpDown] Kite 15m close lookup failed', e);
+  }
+  return null;
+}
+
 /** Last second of betting window `winNum` (1-based) — LTP clock. */
 const niftyLtpEndSecForWindowNum = (winNum, openTime, roundDurationSec) => {
   const m = niftyMarketOpenSnappedSecForGame(openTime);
@@ -3074,6 +3127,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   }, [game.id, user.token, computeUpDownSettlement, refreshBalance, fetchGameResults]);
 
   // When window number changes, capture LTP and queue for result (Nifty). BTC: results 100% from DB; no client LTP.
+  // Nifty Up/Down: window-end price = Kite 15m candle **close** (Zerodha 15m C), not socket last_price at the tick.
   useEffect(() => {
     const prevWinNum = prevWindowNumberRef.current;
     prevWindowNumberRef.current = windowInfo.windowNumber;
@@ -3081,86 +3135,77 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
     if (prevWinNum <= 0 || prevWinNum === windowInfo.windowNumber) return;
 
-    // Capture the price at the exact moment window changes - prioritize live price for accuracy
     const livePriceNow = currentPriceRef.current;
     const lastPrice = lastNonZeroPriceRef.current;
-    
-    // For Nifty Up/Down, always use live price if available to match real-time data
-    // Only fall back to lastPrice if livePrice is not available
-    const windowEndLTP = isBTC 
-      ? (livePriceNow || lastPrice || 0)
-      : (livePriceNow || lastPrice || 0);
-    
-    // For Nifty, store this price so it can be used when creating the pending window
-    if (!isBTC) {
-      capturedWindowEndPriceRef.current = windowEndLTP;
-      // Capture the exact end time for LTP
-      const exactEndTime = formatIstClockFromSec(windowInfo.windowEndSec ?? 0);
-      capturedWindowEndTimeRef.current = exactEndTime;
-      
-      // Production LTP capture - use live price for accuracy
-      console.log('[LTP] Window', prevWinNum, '->', windowInfo.windowNumber, 'captured LTP:', windowEndLTP, 'at', exactEndTime);
-    }
-    
-    const nowSecTick = isBTC ? currentTotalSecondsISTLib() : getTotalSecondsIST();
-    let resultTimeSecVal;
-    let resultEpochVal;
-    let settleEpochVal;
-    if (isBTC) {
-      resultTimeSecVal = btcResultRefSecForUiWindow(prevWinNum);
-      resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
-      settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
-    } else {
-      const Dw = windowInfo.roundDurationSec ?? NIFTY_UP_DOWN_MIN_ROUND_SEC;
-      resultTimeSecVal = (windowInfo.resultTimeSec ?? 0) - Dw;
-      resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
-      settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
-    }
+    const fallbackLtp = livePriceNow || lastPrice || 0;
 
+    const exactEndTime = formatIstClockFromSec(windowInfo.windowEndSec ?? 0);
+    capturedWindowEndTimeRef.current = exactEndTime;
+
+    const nowSecTick = getTotalSecondsIST();
+    const Dw = windowInfo.roundDurationSec ?? NIFTY_UP_DOWN_MIN_ROUND_SEC;
+    const resultTimeSecVal = (windowInfo.resultTimeSec ?? 0) - Dw;
+    const resultEpochVal = Date.now() + Math.max(0, resultTimeSecVal - nowSecTick) * 1000;
+    const settleEpochVal = Date.now() + Math.max(0, resultTimeSecVal + 1 - nowSecTick) * 1000;
     const tradesSnapshot = activeTradesRef.current;
 
-    setPendingWindows((prev) => {
-      const existingIdx = prev.findIndex((pw) => pw.windowNumber === prevWinNum);
-      const prevPendingRow = prev.find((pw) => pw.windowNumber === prevWinNum - 1);
-      const windowOpenLTP = prevPendingRow?.windowEndLTP ?? null;
-      const lockedLtp = !isBTC
-        ? (lockedWindowLtpsRef.current[prevWinNum] ?? parseFloat(windowEndLTP.toFixed(2)))
-        : parseFloat(windowEndLTP.toFixed(2));
-      const row = {
-        windowNumber: prevWinNum,
-        windowEndLTP: lockedLtp,
-        windowOpenLTP,
-        ltpTime: !isBTC ? (capturedWindowEndTimeRef.current || formatIstClockFromSec(windowInfo.windowEndSec ?? 0)) : windowInfo.windowStart,
-        resultTimeSec: resultTimeSecVal,
-        resultEpoch: resultEpochVal,
-        settleEpoch: settleEpochVal,
-        resultTime: !isBTC ? formatIstClockFromSec(resultTimeSecVal) : (windowInfo.resultTime || ''),
-        trades: [...tradesSnapshot],
-      };
-      if (existingIdx >= 0) {
-        const ex = prev[existingIdx];
-        const mergedTrades =
-          tradesSnapshot.length > 0 ? [...tradesSnapshot] : [...(ex.trades || [])];
-        const existingOpenLTP = ex.windowOpenLTP ?? windowOpenLTP;
-        const next = [...prev];
-        // Always update windowEndLTP with the captured price from window change
-        // This ensures the correct price is used even if pending window was created earlier
-        console.log('[LTP] Updating existing pending window', prevWinNum, 'from', ex.windowEndLTP, 'to', windowEndLTP);
-        next[existingIdx] = { 
-          ...ex, 
-          windowOpenLTP: existingOpenLTP, 
-          trades: mergedTrades,
+    const applyWindowEndLtp = (windowEndLTP) => {
+      const n = Number(windowEndLTP);
+      if (!Number.isFinite(n) || n <= 0) return;
+      capturedWindowEndPriceRef.current = n;
+      const lockedLtp = parseFloat(n.toFixed(2));
+      setLockedWindowLtps((prev) => ({ ...prev, [prevWinNum]: lockedLtp }));
+      setPendingWindows((prev) => {
+        const existingIdx = prev.findIndex((pw) => pw.windowNumber === prevWinNum);
+        const prevPendingRow = prev.find((pw) => pw.windowNumber === prevWinNum - 1);
+        const windowOpenLTP = prevPendingRow?.windowEndLTP ?? null;
+        const row = {
+          windowNumber: prevWinNum,
           windowEndLTP: lockedLtp,
+          windowOpenLTP,
+          ltpTime: capturedWindowEndTimeRef.current || formatIstClockFromSec(windowInfo.windowEndSec ?? 0),
           resultTimeSec: resultTimeSecVal,
           resultEpoch: resultEpochVal,
           settleEpoch: settleEpochVal,
-          resultTime: !isBTC ? formatIstClockFromSec(resultTimeSecVal) : (windowInfo.resultTime || '')
+          resultTime: formatIstClockFromSec(resultTimeSecVal),
+          trades: [...tradesSnapshot],
         };
-        return next;
-      }
-      return [...prev, row];
-    });
-    setActiveTrades([]);
+        if (existingIdx >= 0) {
+          const ex = prev[existingIdx];
+          const mergedTrades =
+            tradesSnapshot.length > 0 ? [...tradesSnapshot] : [...(ex.trades || [])];
+          const existingOpenLTP = ex.windowOpenLTP ?? windowOpenLTP;
+          const next = [...prev];
+          next[existingIdx] = {
+            ...ex,
+            windowOpenLTP: existingOpenLTP,
+            trades: mergedTrades,
+            windowEndLTP: lockedLtp,
+            resultTimeSec: resultTimeSecVal,
+            resultEpoch: resultEpochVal,
+            settleEpoch: settleEpochVal,
+            resultTime: formatIstClockFromSec(resultTimeSecVal),
+          };
+          return next;
+        }
+        return [...prev, row];
+      });
+      setActiveTrades([]);
+    };
+
+    if (game.id === 'updown') {
+      void (async () => {
+        const kite = await fetchKite15mCloseForCompletedWindow(prevWinNum, gameStartTime, niftyRoundSec);
+        const w =
+          kite != null && Number.isFinite(kite) && kite > 0
+            ? kite
+            : fallbackLtp;
+        if (w != null && Number.isFinite(Number(w)) && Number(w) > 0) applyWindowEndLtp(w);
+      })();
+      return;
+    }
+
+    if (fallbackLtp != null && Number.isFinite(fallbackLtp) && fallbackLtp > 0) applyWindowEndLtp(fallbackLtp);
   }, [
     windowInfo.windowNumber,
     windowInfo.windowStart,
@@ -3168,7 +3213,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     windowInfo.resultTime,
     windowInfo.resultTimeSec,
     windowInfo.roundDurationSec,
+    windowInfo.windowEndSec,
     isBTC,
+    game.id,
+    gameStartTime,
+    niftyRoundSec,
   ]);
 
   // Bets in the current window only (for Active Trades section; API may return older unsettled rows)
