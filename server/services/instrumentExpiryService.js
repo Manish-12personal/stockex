@@ -10,16 +10,19 @@ import cron from 'node-cron';
  */
 export async function checkAndDisableExpiredInstruments() {
   try {
-    const now = new Date();
+    const ref = new Date();
 
-    // Find enabled F&O rows whose contract expiry is in the past
+    // IST calendar day: disable only after expiry day has passed in Asia/Kolkata
     const expiredInstruments = await Instrument.find({
       isEnabled: true,
-      expiry: { $lt: now },
-      $or: [
-        { instrumentType: 'FUTURES' },
-        { instrumentType: 'OPTIONS' }
-      ]
+      expiry: { $ne: null, $exists: true },
+      $or: [{ instrumentType: 'FUTURES' }, { instrumentType: 'OPTIONS' }],
+      $expr: {
+        $lt: [
+          { $dateToString: { format: '%Y-%m-%d', date: '$expiry', timezone: 'Asia/Kolkata' } },
+          { $dateToString: { format: '%Y-%m-%d', date: ref, timezone: 'Asia/Kolkata' } }
+        ]
+      }
     }).select('_id symbol expiry');
 
     if (expiredInstruments.length === 0) {
