@@ -318,19 +318,16 @@ function watchlistInstrumentKey(inst) {
 }
 
 /**
- * NSE / MCX / etc.: depth bid/ask can disagree with the chart (Kite historical + bar close vs another feed).
- * When `options.chartAnchorLtp` is set (last bar close from ChartPanel), use it as the reference LTP so
- * the trading panel matches the chart; otherwise use the live tick LTP.
+ * NSE / MCX / etc.: when `options.chartAnchorLtp` is set to the same live LTP as chart/watchlist, show that
+ * value on both bid and ask (no fake spread) so the order panel matches the on-screen price and moves with the feed.
  */
 function alignIndianBookBidAskWithLtp(liveData, item, options = {}) {
   const fromFeed = Number(
     liveData?.ltp ?? liveData?.last_price ?? liveData?.close ?? item?.ltp ?? item?.lastPrice ?? 0
   );
   const anchor = Number(options?.chartAnchorLtp);
-  // When the chart has sent an anchor LTP, bid/ask must center on that (same as candle close / axis), not the raw depth feed
   if (Number.isFinite(anchor) && anchor > 0) {
-    const half = Math.max(anchor * 0.00002, 1);
-    return { bid: anchor - half, ask: anchor + half };
+    return { bid: anchor, ask: anchor };
   }
   const ltp = fromFeed;
   let bid = Number(liveData?.bid);
@@ -659,6 +656,31 @@ const UserDashboard = () => {
     if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) return;
     setMarketData((prev) => ({ ...prev, ...patch }));
   }, []);
+
+  /** Live LTP for Indian instruments — same source as watchlist; drives bid/ask to match UI + market updates. */
+  const resolveIndianBookAnchorLtp = useCallback(
+    (inst) => {
+      if (!inst?.token || isUsdSpotInstrument(inst)) return null;
+      const row = marketDataRowForInstrumentToken(marketData, inst.token);
+      const live = Number(row?.ltp ?? row?.close ?? 0);
+      if (Number.isFinite(live) && live > 0) return live;
+      if (chartLtpAnchor?.token != null && String(chartLtpAnchor.token) === String(inst.token)) {
+        const a = Number(chartLtpAnchor.ltp);
+        if (Number.isFinite(a) && a > 0) return a;
+      }
+      return null;
+    },
+    [marketData, chartLtpAnchor]
+  );
+
+  const tradePanelBookAnchorLtp = useMemo(
+    () => (tradeInstrument ? resolveIndianBookAnchorLtp(tradeInstrument) : null),
+    [tradeInstrument, resolveIndianBookAnchorLtp]
+  );
+  const buySellModalBookAnchorLtp = useMemo(
+    () => (selectedInstrument ? resolveIndianBookAnchorLtp(selectedInstrument) : null),
+    [selectedInstrument, resolveIndianBookAnchorLtp]
+  );
 
   useEffect(() => {
     const onSoftRefresh = () => fetchWallet();
@@ -1107,13 +1129,7 @@ const UserDashboard = () => {
                 onRefreshPositions={refreshPositions}
                 usdRate={usdRate}
                 usdSpotClientSpreads={usdSpotClientSpreads}
-                chartAnchorLtp={
-                  chartLtpAnchor?.token != null &&
-                  tradeInstrument?.token != null &&
-                  String(chartLtpAnchor.token) === String(tradeInstrument.token)
-                    ? chartLtpAnchor.ltp
-                    : null
-                }
+                chartAnchorLtp={tradePanelBookAnchorLtp}
               />
             </div>
           )}
@@ -1214,13 +1230,7 @@ const UserDashboard = () => {
           onRefreshPositions={refreshPositions}
           usdRate={usdRate}
           usdSpotClientSpreads={usdSpotClientSpreads}
-          chartAnchorLtp={
-            chartLtpAnchor?.token != null &&
-            selectedInstrument?.token != null &&
-            String(chartLtpAnchor.token) === String(selectedInstrument.token)
-              ? chartLtpAnchor.ltp
-              : null
-          }
+          chartAnchorLtp={buySellModalBookAnchorLtp}
         />
       )}
 
@@ -3659,7 +3669,7 @@ const TradingPanel = ({
   onRefreshPositions,
   usdRate = 83.5,
   usdSpotClientSpreads = { crypto: 0, forex: 0 },
-  /** Last bar close from chart — NSE/MCX bid/ask align to this so panel matches the candlestick LTP. */
+  /** Live LTP (same as watchlist) — bid/ask display match this and follow marketData updates. */
   chartAnchorLtp = null,
 }) => {
   const [lots, setLots] = useState(instrument?.defaultQty?.toString() || '1');
