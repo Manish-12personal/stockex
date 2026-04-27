@@ -2165,14 +2165,22 @@ const GameLivePricePanel = ({
           ? response.data
           : response.data?.data;
         if (rawRows && rawRows.length > 0) {
-          const formatted = rawRows.map((candle) => ({
-            time: Math.floor(new Date(candle.time || candle.timestamp).getTime() / 1000),
-            timestamp: candle.timestamp || candle.time,
-            open: Number(candle.open),
-            high: Number(candle.high),
-            low: Number(candle.low),
-            close: Number(candle.close),
-          }));
+          const formatted = rawRows.map((candle) => {
+            let t;
+            if (candle.time != null && typeof candle.time === 'number' && Number.isFinite(candle.time)) {
+              t = candle.time > 1e12 ? Math.floor(candle.time / 1000) : Math.floor(candle.time);
+            } else {
+              t = Math.floor(new Date(candle.time || candle.timestamp).getTime() / 1000);
+            }
+            return {
+              time: t,
+              timestamp: candle.timestamp || candle.time,
+              open: Number(candle.open),
+              high: Number(candle.high),
+              low: Number(candle.low),
+              close: Number(candle.close),
+            };
+          });
           setHistoricalData(formatted);
         }
       } catch (error) {

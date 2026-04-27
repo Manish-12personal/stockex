@@ -38,6 +38,8 @@ const LiveChart = ({
   const candleSeriesRef = useRef(null);
   const priceLineRefs = useRef({});
   const lastBarTimeRef = useRef(null);
+  /** Last candle from history + live: update() must use this bar's time (Kite/interval), never `Date.now` — that created fake 1m bars. */
+  const lastFormingCandleRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [chartReady, setChartReady] = useState(false);
 
@@ -164,6 +166,7 @@ const LiveChart = ({
       if (formattedData.length === 0) {
         setLoading(false);
         lastBarTimeRef.current = null;
+        lastFormingCandleRef.current = null;
         return;
       }
 
@@ -177,7 +180,15 @@ const LiveChart = ({
       }
 
       candleSeriesRef.current.setData(deduped);
-      lastBarTimeRef.current = deduped[deduped.length - 1].time;
+      const last = deduped[deduped.length - 1];
+      lastBarTimeRef.current = last.time;
+      lastFormingCandleRef.current = {
+        time: last.time,
+        open: last.open,
+        high: last.high,
+        low: last.low,
+        close: last.close,
+      };
       setLoading(false);
     } catch (error) {
       console.error('LiveChart - Error loading historical data:', error);
@@ -185,26 +196,31 @@ const LiveChart = ({
     }
   }, [historicalData, chartReady]);
 
-  // Update last candle with latest LTP — time must not be older than series last bar (lightweight-charts throws otherwise).
+  // Update the forming candle in place: same `time` as the last Kite/Binance bar (5m/15m/30m/1h). Never use wall-clock `now` as bar time
+  // or the chart will inject extra sub-interval bars and the x-axis will look like 1m ticks.
   useEffect(() => {
     if (!candleSeriesRef.current || livePrice == null || !Number.isFinite(Number(livePrice))) return;
 
-    const now = Math.floor(Date.now() / 1000);
-    const lastT = lastBarTimeRef.current;
-    const updateTime = lastT != null && now < lastT ? lastT : now;
+    const base = lastFormingCandleRef.current;
+    if (base == null || base.time == null) return;
+
     const p = Number(livePrice);
+    const open = Number(base.open);
+    const hi0 = Number(base.high);
+    const lo0 = Number(base.low);
+    if (![open, hi0, lo0].every((x) => Number.isFinite(x))) return;
+
+    const next = {
+      time: base.time,
+      open,
+      high: Math.max(hi0, p),
+      low: Math.min(lo0, p),
+      close: p,
+    };
 
     try {
-      candleSeriesRef.current.update({
-        time: updateTime,
-        open: p,
-        high: p,
-        low: p,
-        close: p,
-      });
-      if (lastBarTimeRef.current == null || updateTime >= lastBarTimeRef.current) {
-        lastBarTimeRef.current = updateTime;
-      }
+      candleSeriesRef.current.update(next);
+      lastFormingCandleRef.current = next;
     } catch (e) {
       console.warn('LiveChart - update skipped:', e?.message || e);
     }

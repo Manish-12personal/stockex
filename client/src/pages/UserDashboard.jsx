@@ -311,13 +311,17 @@ function watchlistInstrumentKey(inst) {
 }
 
 /**
- * NSE / MCX / etc.: chart and LTP use `marketData[token].ltp`. Bid/ask from the same tick can be missing
- * or stale vs LTP; if they drift too far from LTP, anchor bid/ask around LTP so the panel matches the chart.
+ * NSE / MCX / etc.: depth bid/ask can disagree with the chart (Kite historical + bar close vs another feed).
+ * When `options.chartAnchorLtp` is set (last bar close from ChartPanel), use it as the reference LTP so
+ * the trading panel matches the chart; otherwise use the live tick LTP.
  */
-function alignIndianBookBidAskWithLtp(liveData, item) {
-  const ltp = Number(
+function alignIndianBookBidAskWithLtp(liveData, item, options = {}) {
+  const fromFeed = Number(
     liveData?.ltp ?? liveData?.last_price ?? liveData?.close ?? item?.ltp ?? item?.lastPrice ?? 0
   );
+  const anchor = Number(options?.chartAnchorLtp);
+  const ltp =
+    Number.isFinite(anchor) && anchor > 0 ? anchor : fromFeed;
   let bid = Number(liveData?.bid);
   let ask = Number(liveData?.ask);
   const rel = (x) =>
@@ -341,7 +345,7 @@ function alignIndianBookBidAskWithLtp(liveData, item) {
 }
 
 /** Bid/ask in USD for crypto/forex (server close path multiplies by FX); else token feed prices. */
-function getUsdSpotBidAsk(marketData, item) {
+function getUsdSpotBidAsk(marketData, item, options) {
   if (isUsdSpotInstrument(item)) {
     const q = getCryptoMarketQuote(marketData, item) || {};
     const ltp = Number(q.ltp || q.close || 0);
@@ -352,7 +356,7 @@ function getUsdSpotBidAsk(marketData, item) {
     return { bidPrice: bid, askPrice: ask };
   }
   const liveData = marketData[item?.token] || {};
-  const { bid, ask } = alignIndianBookBidAskWithLtp(liveData, item);
+  const { bid, ask } = alignIndianBookBidAskWithLtp(liveData, item, options);
   return { bidPrice: bid, ask: ask };
 }
 
@@ -436,7 +440,21 @@ const UserDashboard = () => {
   const [usdSpotClientSpreads, setUsdSpotClientSpreads] = useState({ crypto: 0, forex: 0 });
   const [watchlistRefreshKey, setWatchlistRefreshKey] = useState(0); // Key to trigger watchlist refresh
   const [currentTime, setCurrentTime] = useState(new Date());
-  
+  /** Last bar close from ChartPanel / mobile chart — bid/ask align to this (fixes MCX feed vs Kite chart mismatch). */
+  const [chartLtpAnchor, setChartLtpAnchor] = useState({ token: null, ltp: null });
+
+  useEffect(() => {
+    setChartLtpAnchor({ token: null, ltp: null });
+  }, [selectedInstrument?.token]);
+
+  const handleChartLtp = useCallback((emitToken, ltp) => {
+    if (emitToken == null || emitToken === '') return;
+    if (String(selectedInstrument?.token) !== String(emitToken)) return;
+    const n = Number(ltp);
+    if (!Number.isFinite(n) || n <= 0) return;
+    setChartLtpAnchor({ token: String(emitToken), ltp: n });
+  }, [selectedInstrument?.token]);
+
   // Update clock every second
   useEffect(() => {
     const timer = setInterval(() => {
@@ -1010,6 +1028,7 @@ const UserDashboard = () => {
             marketData={marketData}
             sidebarOpen={!!tradeInstrument}
             usdRate={usdRate}
+            onChartLtp={handleChartLtp}
           />
           
           {/* Bottom - Positions */}
@@ -1046,6 +1065,13 @@ const UserDashboard = () => {
                 onRefreshPositions={refreshPositions}
                 usdRate={usdRate}
                 usdSpotClientSpreads={usdSpotClientSpreads}
+                chartAnchorLtp={
+                  chartLtpAnchor?.token != null &&
+                  tradeInstrument?.token != null &&
+                  String(chartLtpAnchor.token) === String(tradeInstrument.token)
+                    ? chartLtpAnchor.ltp
+                    : null
+                }
               />
             </div>
           )}
@@ -1078,6 +1104,7 @@ const UserDashboard = () => {
             onBack={() => setMobileView('quotes')}
             marketData={marketData}
             usdRate={usdRate}
+            onChartLtp={handleChartLtp}
           />
         )}
         {mobileView === 'positions' && (
@@ -1144,6 +1171,13 @@ const UserDashboard = () => {
           onRefreshPositions={refreshPositions}
           usdRate={usdRate}
           usdSpotClientSpreads={usdSpotClientSpreads}
+          chartAnchorLtp={
+            chartLtpAnchor?.token != null &&
+            selectedInstrument?.token != null &&
+            String(chartLtpAnchor.token) === String(selectedInstrument.token)
+              ? chartLtpAnchor.ltp
+              : null
+          }
         />
       )}
 
@@ -2285,7 +2319,7 @@ const InstrumentRow = ({ instrument, isSelected, onSelect, isCall, isPut, isFutu
   );
 };
 
-const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.5 }) => {
+const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.5, onChartLtp }) => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const candlestickSeriesRef = useRef(null);
@@ -2407,11 +2441,13 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
           lastCandleRef.current = newCandle;
           candleSeries.update(newCandle);
         }
+        const c = lastCandleRef.current?.close;
+        if (Number.isFinite(Number(c)) && Number(c) > 0) onChartLtp?.(selectedInstrument?.token, Number(c));
       } catch (e) {
         console.warn('[ChartPanel] candle update skipped:', e?.message || e);
       }
     }
-  }, [selectedInstrument, marketData, chartInterval, usdRate]);
+  }, [selectedInstrument, marketData, chartInterval, usdRate, onChartLtp]);
 
   const getIntervalSeconds = (interval) => {
     const map = {
@@ -2617,6 +2653,10 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
           
           // Set last candle for real-time updates
           lastCandleRef.current = displayCandles[displayCandles.length - 1];
+          const lastClose = displayCandles[displayCandles.length - 1]?.close;
+          if (Number.isFinite(Number(lastClose)) && Number(lastClose) > 0) {
+            onChartLtp?.(selectedInstrument?.token, Number(lastClose));
+          }
           
           // Generate volume data
           const volumeData = displayCandles.map(c => ({
@@ -2635,7 +2675,7 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
     return () => {
       cancelled = true;
     };
-  }, [selectedInstrument, chartInterval, usdRate]);
+  }, [selectedInstrument, chartInterval, usdRate, onChartLtp]);
 
   const intervals = [
     { label: '1m', value: 'ONE_MINUTE' },
@@ -3454,6 +3494,8 @@ const TradingPanel = ({
   onRefreshPositions,
   usdRate = 83.5,
   usdSpotClientSpreads = { crypto: 0, forex: 0 },
+  /** Last bar close from chart — NSE/MCX bid/ask align to this so panel matches the candlestick LTP. */
+  chartAnchorLtp = null,
 }) => {
   const [lots, setLots] = useState(instrument?.defaultQty?.toString() || '1');
   const [price, setPrice] = useState('');
@@ -3489,7 +3531,9 @@ const TradingPanel = ({
   const livePrice = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(instrument?.ltp) || 0)
     : (liveData.ltp || instrument?.ltp || 0);
-  const indianBook = !isUsdSpot ? alignIndianBookBidAskWithLtp(liveData, instrument) : null;
+  const indianBook = !isUsdSpot
+    ? alignIndianBookBidAskWithLtp(liveData, instrument, { chartAnchorLtp })
+    : null;
   const liveBid = isUsdSpot
     ? (Number(liveData.bid) || livePrice || Number(instrument?.ltp) || 0)
     : indianBook.bid;
@@ -5384,7 +5428,7 @@ const MobileInstrumentRow = ({ instrument, isCall, isPut, isFuture, isCrypto, on
   );
 };
 
-const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = {}, usdRate = 83.5 }) => {
+const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = {}, usdRate = 83.5, onChartLtp }) => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const candlestickSeriesRef = useRef(null);
@@ -5436,6 +5480,8 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
         : candles;
     candlestickSeries.setData(displayCandles);
     lastCandleRef.current = displayCandles[displayCandles.length - 1];
+    const _lc = displayCandles[displayCandles.length - 1]?.close;
+    if (Number.isFinite(Number(_lc)) && Number(_lc) > 0) onChartLtp?.(selectedInstrument?.token, Number(_lc));
 
     const handleResize = () => {
       if (chartContainerRef.current) {
@@ -5453,7 +5499,7 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [selectedInstrument, usdRate]);
+  }, [selectedInstrument, usdRate, onChartLtp]);
 
   // Update chart with real-time price
   useEffect(() => {
@@ -5494,12 +5540,14 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
             lastCandleRef.current = newCandle;
             candlestickSeriesRef.current.update(newCandle);
           }
+          const c = lastCandleRef.current?.close;
+          if (Number.isFinite(Number(c)) && Number(c) > 0) onChartLtp?.(selectedInstrument?.token, Number(c));
         }
       } catch (err) {
         console.warn('Chart update error:', err.message);
       }
     }
-  }, [livePrice, selectedInstrument, usdRate]);
+  }, [livePrice, selectedInstrument, usdRate, onChartLtp]);
 
   return (
     <div className="flex-1 flex flex-col bg-dark-800">
@@ -7647,6 +7695,7 @@ const BuySellModal = ({
   onRefreshPositions,
   usdRate = 83.5,
   usdSpotClientSpreads = { crypto: 0, forex: 0 },
+  chartAnchorLtp = null,
 }) => {
   const [quantity, setQuantity] = useState('0.01');
   const [limitPrice, setLimitPrice] = useState('');
@@ -7699,7 +7748,9 @@ const BuySellModal = ({
   const ltp = isUsdSpot
     ? (Number(liveData.ltp) || Number(liveData.close) || Number(effectiveInstrument?.ltp) || 0)
     : (liveData.ltp || effectiveInstrument?.ltp || 0);
-  const indianBookModal = !isUsdSpot ? alignIndianBookBidAskWithLtp(liveData, effectiveInstrument) : null;
+  const indianBookModal = !isUsdSpot
+    ? alignIndianBookBidAskWithLtp(liveData, effectiveInstrument, { chartAnchorLtp })
+    : null;
   const liveBid = isUsdSpot
     ? (Number(liveData.bid) || ltp || Number(effectiveInstrument?.ltp) || 0)
     : indianBookModal.bid;
