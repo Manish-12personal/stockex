@@ -2657,6 +2657,7 @@ const GameLivePricePanel = ({
             isLiveConnected={isLiveConnected}
             priceLines={priceLines}
             historicalData={historicalData}
+            visibleBarCount={isBTC ? null : 3}
           />
         </div>
         {niftyLtpTape && !isBTC && (

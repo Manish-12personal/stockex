@@ -31,7 +31,9 @@ const LiveChart = ({
   livePrice, 
   isLiveConnected, 
   priceLines = [],
-  historicalData = []
+  historicalData = [],
+  /** Show only the last N bars in view (x-axis); full series still used for OHLC. Nifty: 3. */
+  visibleBarCount = null,
 }) => {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -101,7 +103,6 @@ const LiveChart = ({
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     setChartReady(true);
-    console.log('LiveChart - Chart initialized');
 
     const applySize = () => {
       if (!chartContainerRef.current || !chartRef.current) return;
@@ -129,17 +130,8 @@ const LiveChart = ({
 
   // Load historical data
   useEffect(() => {
-    console.log('LiveChart - Historical data:', historicalData?.length, 'candles', 'Chart ready:', chartReady);
-    
-    if (!chartReady || !candleSeriesRef.current) {
-      console.log('LiveChart - Waiting for chart to be ready');
-      return;
-    }
-    
-    if (!historicalData || historicalData.length === 0) {
-      console.log('LiveChart - No historical data available yet');
-      return;
-    }
+    if (!chartReady || !candleSeriesRef.current) return;
+    if (!historicalData || historicalData.length === 0) return;
 
     try {
       setLoading(true);
@@ -189,12 +181,25 @@ const LiveChart = ({
         low: last.low,
         close: last.close,
       };
+      const n = deduped.length;
+      const want = Number(visibleBarCount);
+      if (Number.isFinite(want) && want > 0 && chartRef.current) {
+        const from = Math.max(0, n - want);
+        const to = n - 1;
+        requestAnimationFrame(() => {
+          try {
+            chartRef.current?.timeScale().setVisibleLogicalRange({ from, to });
+          } catch {
+            /* ignore invalid range */
+          }
+        });
+      }
       setLoading(false);
     } catch (error) {
       console.error('LiveChart - Error loading historical data:', error);
       setLoading(false);
     }
-  }, [historicalData, chartReady]);
+  }, [historicalData, chartReady, visibleBarCount]);
 
   // Update the forming candle in place: same `time` as the last Kite/Binance bar (5m/15m/30m/1h). Never use wall-clock `now` as bar time
   // or the chart will inject extra sub-interval bars and the x-axis will look like 1m ticks.
