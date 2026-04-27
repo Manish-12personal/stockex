@@ -8032,31 +8032,23 @@ const SubordinateFundRequests = () => {
   );
 };
 
-/** GAME_PROFIT: share % from API (sharePercentResolved), meta, amount/base, or description patterns. */
+/** GAME_PROFIT: server sends displaySharePercent; client fallbacks for cached/offline. */
 function formatLedgerSharePercent(entry) {
-  const p =
-    entry?.sharePercentResolved != null
-      ? Number(entry.sharePercentResolved)
-      : entry?.meta?.sharePercent;
-  if (entry?.reason === 'GAME_PROFIT' && p != null && Number.isFinite(Number(p))) {
+  if (entry?.displaySharePercent) return entry.displaySharePercent;
+  if (entry?.reason !== 'GAME_PROFIT') return '—';
+  const p = entry?.sharePercentResolved ?? entry?.meta?.sharePercent;
+  if (p != null && Number.isFinite(Number(p))) {
     return `${Number(p).toFixed(2)}%`;
   }
   const base = entry?.meta?.baseAmount;
   const amt = entry?.amount;
-  if (
-    entry?.reason === 'GAME_PROFIT' &&
-    base != null &&
-    Number.isFinite(Number(base)) &&
-    Number(base) > 0 &&
-    Number.isFinite(Number(amt))
-  ) {
+  if (base != null && Number.isFinite(Number(base)) && Number(base) > 0 && Number.isFinite(Number(amt))) {
     return `${((Number(amt) / Number(base)) * 100).toFixed(2)}%`;
   }
-  if (entry?.reason !== 'GAME_PROFIT') return '—';
-  const desc = entry?.description || '';
+  const desc = String(entry?.description || '');
   const m =
-    desc.match(/\((\d+\.?\d*)% of [₹]/) ||
-    desc.match(/(\d+\.?\d*)%\s*of\s*[₹]/i);
+    desc.match(/\((\d+\.?\d*)\s*%\s*of/) ||
+    desc.match(/(\d+\.?\d*)\s*%\s*of/i);
   if (m) return `${parseFloat(m[1], 10).toFixed(2)}%`;
   return '—';
 }

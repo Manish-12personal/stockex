@@ -33,6 +33,10 @@ import { closingPriceToDecimalPart } from '../utils/niftyNumberResult.js';
 import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 import { matchAdminLedgerGameKey, WALLET_LEDGER_GAME_OPTIONS } from '../utils/walletLedgerGameFilter.js';
+import {
+  resolveGameProfitSharePercent,
+  displaySharePercentString,
+} from '../utils/resolveGameProfitSharePercent.js';
 import { declareBtcNumberResultForDate } from '../services/btcNumberDeclareService.js';
 import { declareNiftyNumberResultForDate } from '../services/niftyNumberDeclareService.js';
 import {
@@ -3094,7 +3098,8 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
       ...gameMatch,
     })
       .sort({ createdAt: -1 })
-      .limit(100);
+      .limit(100)
+      .lean();
 
     // Enrich with transaction slip information for game profit entries and user names
     const enrichedLedger = await Promise.all(ledger.map(async (entry) => {
@@ -3151,19 +3156,10 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
       // For old GAME_PROFIT entries without user data, show N/A
       // (New transactions will have meta.relatedUserId populated)
 
-      const obj = entry.toObject();
+      const obj = { ...entry };
       const meta = obj.meta || {};
-      let sharePercentResolved = meta.sharePercent;
-      if (
-        entry.reason === 'GAME_PROFIT' &&
-        (sharePercentResolved == null || !Number.isFinite(Number(sharePercentResolved))) &&
-        meta.baseAmount > 0 &&
-        Number.isFinite(Number(obj.amount))
-      ) {
-        sharePercentResolved = parseFloat(
-          ((Number(obj.amount) / Number(meta.baseAmount)) * 100).toFixed(2)
-        );
-      }
+      const sharePct = resolveGameProfitSharePercent(obj);
+      const displaySharePercent = displaySharePercentString(sharePct);
 
       const roleToLabel = (r) => {
         if (!r) return null;
@@ -3194,10 +3190,8 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
         ...obj,
         transactionSlip: transactionSlipInfo,
         userName: userName,
-        sharePercentResolved:
-          sharePercentResolved != null && Number.isFinite(Number(sharePercentResolved))
-            ? Number(sharePercentResolved)
-            : undefined,
+        sharePercentResolved: sharePct != null && Number.isFinite(Number(sharePct)) ? Number(sharePct) : undefined,
+        displaySharePercent,
         brokerageRecipientLabel,
         superAdminPoolLine,
         hierarchyPayeeLine,
@@ -4752,26 +4746,11 @@ router.get('/my-ledger/download', protectAdmin, async (req, res) => {
       if (to) query.createdAt.$lte = new Date(to);
     }
 
-    const ledger = await WalletLedger.find(query).sort({ createdAt: -1 });
+    const ledger = await WalletLedger.find(query).sort({ createdAt: -1 }).lean();
 
     const csvSharePercent = (entry) => {
-      const meta = entry.meta || {};
-      let p = meta.sharePercent;
-      if (
-        (p == null || !Number.isFinite(Number(p))) &&
-        entry.reason === 'GAME_PROFIT' &&
-        meta.baseAmount > 0 &&
-        Number.isFinite(Number(entry.amount))
-      ) {
-        p = parseFloat(((Number(entry.amount) / Number(meta.baseAmount)) * 100).toFixed(2));
-      }
-      if (entry?.reason === 'GAME_PROFIT' && p != null && Number.isFinite(Number(p))) {
-        return `${Number(p).toFixed(2)}%`;
-      }
       if (entry?.reason !== 'GAME_PROFIT') return '';
-      const d = entry.description || '';
-      const m = d.match(/\((\d+\.?\d*)% of [₹]/) || d.match(/(\d+\.?\d*)%\s*of\s*[₹]/i);
-      return m ? `${parseFloat(m[1], 10).toFixed(2)}%` : '';
+      return displaySharePercentString(resolveGameProfitSharePercent(entry)) || '';
     };
     
     // Generate CSV
