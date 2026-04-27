@@ -521,14 +521,18 @@ router.get('/market-data', async (req, res) => {
           const zerodhaToken = quote.instrument_token?.toString();
           const tokenKey = dbToken != null ? String(dbToken) : zerodhaToken;
           if (!tokenKey) continue;
+          const rb = quote.depth?.buy?.[0]?.price;
+          const ra = quote.depth?.sell?.[0]?.price;
           fromRest[tokenKey] = {
             symbol: quote.tradingsymbol,
             token: tokenKey,
             zerodhaToken: zerodhaToken,
             exchange: key.split(':')[0],
             ltp: quote.last_price,
-            bid: quote.depth?.buy?.[0]?.price || quote.last_price,
-            ask: quote.depth?.sell?.[0]?.price || quote.last_price,
+            rawBid: rb && rb > 0 ? rb : 0,
+            rawAsk: ra && ra > 0 ? ra : 0,
+            bid: rb && rb > 0 ? rb : quote.last_price,
+            ask: ra && ra > 0 ? ra : quote.last_price,
             open: quote.ohlc?.open,
             high: quote.ohlc?.high,
             low: quote.ohlc?.low,
@@ -622,14 +626,18 @@ router.post('/instruments-quote', protectUser, async (req, res) => {
         ch != null && close
           ? ((ch / close) * 100).toFixed(2)
           : 0;
+      const rb = quote.depth?.buy?.[0]?.price;
+      const ra = quote.depth?.sell?.[0]?.price;
       const row = {
         symbol: quote.tradingsymbol,
         token: zt,
         zerodhaToken: zt,
         exchange: kiteKey.split(':')[0],
         ltp: quote.last_price,
-        bid: quote.depth?.buy?.[0]?.price || quote.last_price,
-        ask: quote.depth?.sell?.[0]?.price || quote.last_price,
+        rawBid: rb && rb > 0 ? rb : 0,
+        rawAsk: ra && ra > 0 ? ra : 0,
+        bid: rb && rb > 0 ? rb : quote.last_price,
+        ask: ra && ra > 0 ? ra : quote.last_price,
         open: quote.ohlc?.open,
         high: quote.ohlc?.high,
         low: quote.ohlc?.low,

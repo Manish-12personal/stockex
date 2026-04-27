@@ -318,23 +318,40 @@ function watchlistInstrumentKey(inst) {
 }
 
 /**
- * NSE / MCX / etc.: when `options.chartAnchorLtp` is set to the same live LTP as chart/watchlist, show that
- * value on both bid and ask (no fake spread) so the order panel matches the on-screen price and moves with the feed.
+ * NSE / MCX: SELL = best bid, BUY = best ask (Kite `rawBid` / `rawAsk` or depth in quote & ticks).
+ * If the feed has no book, both map to LTP — then show a tight synthetic spread, not the same LTP on both.
  */
 function alignIndianBookBidAskWithLtp(liveData, item, options = {}) {
   const fromFeed = Number(
     liveData?.ltp ?? liveData?.last_price ?? liveData?.close ?? item?.ltp ?? item?.lastPrice ?? 0
   );
   const anchor = Number(options?.chartAnchorLtp);
-  if (Number.isFinite(anchor) && anchor > 0) {
-    return { bid: anchor, ask: anchor };
+  const ltp =
+    Number.isFinite(fromFeed) && fromFeed > 0
+      ? fromFeed
+      : Number.isFinite(anchor) && anchor > 0
+        ? anchor
+        : 0;
+
+  const rawBid = Number(liveData?.rawBid);
+  const rawAsk = Number(liveData?.rawAsk);
+  if (Number.isFinite(rawBid) && Number.isFinite(rawAsk) && rawBid > 0 && rawAsk > 0) {
+    const b = Math.min(rawBid, rawAsk);
+    const a = Math.max(rawBid, rawAsk);
+    if (b <= a) return { bid: b, ask: a };
   }
-  const ltp = fromFeed;
-  let bid = Number(liveData?.bid);
-  let ask = Number(liveData?.ask);
+  if (rawBid > 0 && ltp > 0 && (!rawAsk || rawAsk <= 0)) {
+    return { bid: rawBid, ask: ltp };
+  }
+  if (rawAsk > 0 && ltp > 0 && (!rawBid || rawBid <= 0)) {
+    return { bid: ltp, ask: rawAsk };
+  }
+
+  const bid = Number(liveData?.bid);
+  const ask = Number(liveData?.ask);
   const rel = (x) =>
     Number.isFinite(x) && x > 0 && ltp > 0 ? Math.abs(x - ltp) / ltp : 1;
-  const MAX_REL_DRIFT = 0.005;
+  const MAX_REL_DRIFT = 0.02;
 
   if (!Number.isFinite(ltp) || ltp <= 0) {
     const fbBid = liveData?.bid || item?.lastBid || item?.ltp || item?.currentPrice;
@@ -342,10 +359,15 @@ function alignIndianBookBidAskWithLtp(liveData, item, options = {}) {
     return { bid: Number(fbBid) || 0, ask: Number(fbAsk) || 0 };
   }
 
-  const bidOk = Number.isFinite(bid) && bid > 0 && rel(bid) <= MAX_REL_DRIFT;
-  const askOk = Number.isFinite(ask) && ask > 0 && rel(ask) <= MAX_REL_DRIFT;
-  if (bidOk && askOk && bid <= ask) {
-    return { bid, ask };
+  if (Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0 && bid <= ask) {
+    const bothLtp = Math.abs(bid - ltp) < 0.5 && Math.abs(ask - ltp) < 0.5;
+    if (bothLtp) {
+      const half = Math.max(ltp * 0.00002, 1);
+      return { bid: ltp - half, ask: ltp + half };
+    }
+    if (rel(bid) <= MAX_REL_DRIFT && rel(ask) <= MAX_REL_DRIFT) {
+      return { bid, ask };
+    }
   }
 
   const half = Math.max(ltp * 0.00002, 1);
@@ -656,31 +678,6 @@ const UserDashboard = () => {
     if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) return;
     setMarketData((prev) => ({ ...prev, ...patch }));
   }, []);
-
-  /** Live LTP for Indian instruments — same source as watchlist; drives bid/ask to match UI + market updates. */
-  const resolveIndianBookAnchorLtp = useCallback(
-    (inst) => {
-      if (!inst?.token || isUsdSpotInstrument(inst)) return null;
-      const row = marketDataRowForInstrumentToken(marketData, inst.token);
-      const live = Number(row?.ltp ?? row?.close ?? 0);
-      if (Number.isFinite(live) && live > 0) return live;
-      if (chartLtpAnchor?.token != null && String(chartLtpAnchor.token) === String(inst.token)) {
-        const a = Number(chartLtpAnchor.ltp);
-        if (Number.isFinite(a) && a > 0) return a;
-      }
-      return null;
-    },
-    [marketData, chartLtpAnchor]
-  );
-
-  const tradePanelBookAnchorLtp = useMemo(
-    () => (tradeInstrument ? resolveIndianBookAnchorLtp(tradeInstrument) : null),
-    [tradeInstrument, resolveIndianBookAnchorLtp]
-  );
-  const buySellModalBookAnchorLtp = useMemo(
-    () => (selectedInstrument ? resolveIndianBookAnchorLtp(selectedInstrument) : null),
-    [selectedInstrument, resolveIndianBookAnchorLtp]
-  );
 
   useEffect(() => {
     const onSoftRefresh = () => fetchWallet();
@@ -1129,7 +1126,7 @@ const UserDashboard = () => {
                 onRefreshPositions={refreshPositions}
                 usdRate={usdRate}
                 usdSpotClientSpreads={usdSpotClientSpreads}
-                chartAnchorLtp={tradePanelBookAnchorLtp}
+                chartAnchorLtp={null}
               />
             </div>
           )}
@@ -1230,7 +1227,7 @@ const UserDashboard = () => {
           onRefreshPositions={refreshPositions}
           usdRate={usdRate}
           usdSpotClientSpreads={usdSpotClientSpreads}
-          chartAnchorLtp={buySellModalBookAnchorLtp}
+          chartAnchorLtp={null}
         />
       )}
 
@@ -3669,7 +3666,7 @@ const TradingPanel = ({
   onRefreshPositions,
   usdRate = 83.5,
   usdSpotClientSpreads = { crypto: 0, forex: 0 },
-  /** Live LTP (same as watchlist) — bid/ask display match this and follow marketData updates. */
+  /** Optional chart reference LTP; bid/ask use Kite book from marketData, not LTP. */
   chartAnchorLtp = null,
 }) => {
   const [lots, setLots] = useState(instrument?.defaultQty?.toString() || '1');
