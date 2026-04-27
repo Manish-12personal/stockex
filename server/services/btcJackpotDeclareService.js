@@ -194,7 +194,8 @@ async function creditHierarchyMember(adminMember, amount, gameLabel, winnerUserI
       ? `${gameLabel} win brokerage — ${roleLabel} (${pctOfGross.toFixed(2)}% of ₹${G.toFixed(2)})`
       : `${gameLabel} — hierarchy brokerage`;
 
-  const meta = buildGameProfitLedgerMeta(amt, G, 'BTC_JACKPOT_HIERARCHY', 'btcJackpot', null, winnerUserId);
+  const baseMeta = buildGameProfitLedgerMeta(amt, G, 'BTC_JACKPOT_HIERARCHY', 'btcJackpot', null, winnerUserId);
+  const meta = { ...baseMeta, hierarchyRole: roleLabel, gameKey: 'btcJackpot' };
 
   await WalletLedger.create({
     ownerType: 'ADMIN',
@@ -208,12 +209,12 @@ async function creditHierarchyMember(adminMember, amount, gameLabel, winnerUserI
     meta,
   });
 
-  // Mirror DEBIT on Super Admin pool
-  await debitSuperAdminForBtcJackpotPayout(
-    amt,
-    `${gameLabel} — hierarchy brokerage to ${updated.username || updated.role}`,
-    { relatedUserId: winnerUserId, profitKind: 'BTC_JACKPOT_HIERARCHY', hierarchyRole: updated.role }
-  );
+  // Mirror DEBIT on Super Admin pool (player + recipient role = visible in SA wallet ledger)
+  await debitSuperAdminForBtcJackpotPayout(amt, `${gameLabel} — hierarchy brokerage to ${updated.username || updated.role}`, {
+    relatedUserId: winnerUserId,
+    profitKind: 'BTC_JACKPOT_HIERARCHY',
+    hierarchyPayoutToRole: roleLabel,
+  });
 
   return { credited: amt };
 }

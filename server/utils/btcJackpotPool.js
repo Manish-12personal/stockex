@@ -92,7 +92,13 @@ export async function debitSuperAdminForBtcJackpotPayout(amount, description, me
     );
   }
 
-  const ledgerMeta = { gameKey: 'btcJackpot', poolDebitKind: 'BTC_JACKPOT_PAYOUT', ...meta };
+  const { hierarchyPayoutToRole, ...restMeta } = meta || {};
+  const ledgerMeta = {
+    gameKey: 'btcJackpot',
+    poolDebitKind: 'BTC_JACKPOT_PAYOUT',
+    ...restMeta,
+    ...(hierarchyPayoutToRole ? { hierarchyPayoutToRole: String(hierarchyPayoutToRole) } : {}),
+  };
 
   await WalletLedger.create({
     ownerType: 'ADMIN',

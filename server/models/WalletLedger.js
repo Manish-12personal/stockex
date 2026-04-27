@@ -104,6 +104,10 @@ const walletLedgerSchema = new mongoose.Schema({
     /** Super Admin pool debit tagging (games client feed / audit) */
     poolDebitKind: { type: String },
     relatedUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    /** Who received this GAME_PROFIT (SUB_BROKER / BROKER / ADMIN / SUPER_ADMIN) — for admin wallet ledger UI */
+    hierarchyRole: { type: String },
+    /** Payout to hierarchy member — tagged on Super Admin ADJUSTMENT debits (pool outflow) */
+    hierarchyPayoutToRole: { type: String },
     /** REFERRAL_COMMISSION: wallet segment the referred user earned from (games/mcx/crypto/forex) */
     segment: { type: String },
     /** REFERRAL_COMMISSION_TRANSFER: client the Super Admin share is being routed to */

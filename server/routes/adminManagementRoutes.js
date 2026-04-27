@@ -3150,11 +3150,57 @@ router.get('/my-ledger', protectAdmin, async (req, res) => {
 
       // For old GAME_PROFIT entries without user data, show N/A
       // (New transactions will have meta.relatedUserId populated)
-      
+
+      const obj = entry.toObject();
+      const meta = obj.meta || {};
+      let sharePercentResolved = meta.sharePercent;
+      if (
+        entry.reason === 'GAME_PROFIT' &&
+        (sharePercentResolved == null || !Number.isFinite(Number(sharePercentResolved))) &&
+        meta.baseAmount > 0 &&
+        Number.isFinite(Number(obj.amount))
+      ) {
+        sharePercentResolved = parseFloat(
+          ((Number(obj.amount) / Number(meta.baseAmount)) * 100).toFixed(2)
+        );
+      }
+
+      const roleToLabel = (r) => {
+        if (!r) return null;
+        const u = String(r).toUpperCase();
+        if (u === 'SUB_BROKER') return 'Sub-broker wallet';
+        if (u === 'BROKER') return 'Broker wallet';
+        if (u === 'ADMIN') return 'Admin wallet';
+        if (u === 'SUPER_ADMIN') return 'Super Admin wallet';
+        return r;
+      };
+
+      const brokerageRecipientLabel =
+        entry.reason === 'GAME_PROFIT' ? roleToLabel(meta.hierarchyRole) : null;
+      const isSaViewer = String(req.admin?.role || '') === 'SUPER_ADMIN';
+      const hierarchyPayeeLine =
+        entry.reason === 'ADJUSTMENT' && isSaViewer && meta.hierarchyPayoutToRole
+          ? `Payout toward: ${roleToLabel(meta.hierarchyPayoutToRole) || meta.hierarchyPayoutToRole}`
+          : null;
+      const superAdminPoolLine =
+        entry.reason === 'ADJUSTMENT' &&
+        isSaViewer &&
+        meta.poolDebitKind === 'BTC_JACKPOT_PAYOUT' &&
+        !meta.hierarchyPayoutToRole
+          ? 'Super Admin main wallet (pool outflow — e.g. winner prize)'
+          : null;
+
       return {
-        ...entry.toObject(),
+        ...obj,
         transactionSlip: transactionSlipInfo,
-        userName: userName
+        userName: userName,
+        sharePercentResolved:
+          sharePercentResolved != null && Number.isFinite(Number(sharePercentResolved))
+            ? Number(sharePercentResolved)
+            : undefined,
+        brokerageRecipientLabel,
+        superAdminPoolLine,
+        hierarchyPayeeLine,
       };
     }));
 
@@ -4709,12 +4755,22 @@ router.get('/my-ledger/download', protectAdmin, async (req, res) => {
     const ledger = await WalletLedger.find(query).sort({ createdAt: -1 });
 
     const csvSharePercent = (entry) => {
-      const p = entry?.meta?.sharePercent;
+      const meta = entry.meta || {};
+      let p = meta.sharePercent;
+      if (
+        (p == null || !Number.isFinite(Number(p))) &&
+        entry.reason === 'GAME_PROFIT' &&
+        meta.baseAmount > 0 &&
+        Number.isFinite(Number(entry.amount))
+      ) {
+        p = parseFloat(((Number(entry.amount) / Number(meta.baseAmount)) * 100).toFixed(2));
+      }
       if (entry?.reason === 'GAME_PROFIT' && p != null && Number.isFinite(Number(p))) {
         return `${Number(p).toFixed(2)}%`;
       }
       if (entry?.reason !== 'GAME_PROFIT') return '';
-      const m = (entry.description || '').match(/\((\d+\.?\d*)% of ₹/);
+      const d = entry.description || '';
+      const m = d.match(/\((\d+\.?\d*)% of [₹]/) || d.match(/(\d+\.?\d*)%\s*of\s*[₹]/i);
       return m ? `${parseFloat(m[1], 10).toFixed(2)}%` : '';
     };
     

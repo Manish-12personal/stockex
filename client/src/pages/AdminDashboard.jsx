@@ -8032,14 +8032,31 @@ const SubordinateFundRequests = () => {
   );
 };
 
-/** GAME_PROFIT: show share % of the loss/brokerage/gross pool; older rows fall back to description. */
+/** GAME_PROFIT: share % from API (sharePercentResolved), meta, amount/base, or description patterns. */
 function formatLedgerSharePercent(entry) {
-  const p = entry?.meta?.sharePercent;
+  const p =
+    entry?.sharePercentResolved != null
+      ? Number(entry.sharePercentResolved)
+      : entry?.meta?.sharePercent;
   if (entry?.reason === 'GAME_PROFIT' && p != null && Number.isFinite(Number(p))) {
     return `${Number(p).toFixed(2)}%`;
   }
+  const base = entry?.meta?.baseAmount;
+  const amt = entry?.amount;
+  if (
+    entry?.reason === 'GAME_PROFIT' &&
+    base != null &&
+    Number.isFinite(Number(base)) &&
+    Number(base) > 0 &&
+    Number.isFinite(Number(amt))
+  ) {
+    return `${((Number(amt) / Number(base)) * 100).toFixed(2)}%`;
+  }
   if (entry?.reason !== 'GAME_PROFIT') return '—';
-  const m = (entry?.description || '').match(/\((\d+\.?\d*)% of ₹/);
+  const desc = entry?.description || '';
+  const m =
+    desc.match(/\((\d+\.?\d*)% of [₹]/) ||
+    desc.match(/(\d+\.?\d*)%\s*of\s*[₹]/i);
   if (m) return `${parseFloat(m[1], 10).toFixed(2)}%`;
   return '—';
 }
@@ -8177,7 +8194,16 @@ const LedgerView = () => {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-400">
-                    {entry.transactionSlip?.userName || entry.userName || 'N/A'}
+                    <div>{entry.transactionSlip?.userName || entry.userName || 'N/A'}</div>
+                    {entry.brokerageRecipientLabel && (
+                      <div className="text-[10px] text-amber-400/90 mt-0.5">{entry.brokerageRecipientLabel}</div>
+                    )}
+                    {entry.hierarchyPayeeLine && (
+                      <div className="text-[10px] text-cyan-400/80 mt-0.5">{entry.hierarchyPayeeLine}</div>
+                    )}
+                    {entry.superAdminPoolLine && (
+                      <div className="text-[10px] text-purple-300/90 mt-0.5">{entry.superAdminPoolLine}</div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-400">
                     <div>{entry.reason}</div>
