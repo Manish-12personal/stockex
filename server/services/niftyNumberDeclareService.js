@@ -127,6 +127,7 @@ export async function declareNiftyNumberResultForDate({ date, resultNumber, clos
           description: 'Nifty Number — result: win (gross prize, stake not re-credited; hierarchy from pool)',
           orderPlacedAt: bet.createdAt,
           meta: {
+            won: true,
             betId: bet._id,
             resultNumber: num,
             grossPrize,

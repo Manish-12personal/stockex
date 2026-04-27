@@ -127,6 +127,7 @@ export async function declareBtcNumberResultForDate({ date, resultNumber, closin
           description: 'BTC Number — result: win (gross prize, stake not re-credited; hierarchy from pool)',
           orderPlacedAt: bet.createdAt,
           meta: {
+            won: true,
             betId: bet._id,
             resultNumber: num,
             grossPrize,

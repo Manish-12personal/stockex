@@ -862,10 +862,9 @@ const UserGames = () => {
                   ) : (
                     <div className="space-y-2">
                       <p className="text-[10px] text-gray-500 mb-3">
-                        {isLTP 
+                        {isLTP
                           ? 'Showing the last traded price (LTP) at market close for the last 5 completed trading days.'
-                          : 'Showing the clearing price (last 15-minute bar close) for the last 5 completed trading days.'
-                        }
+                          : 'Top row (when shown) is the current NIFTY 50 LTP from Kite; rows below are prior session day closes (EOD). Reopen the list to refresh the live row.'}
                       </p>
                       {last5DaysData.map((item, index) => (
                         <div key={index} className="bg-dark-700 rounded-lg p-3 flex items-center justify-between">
@@ -901,7 +900,8 @@ const UserGames = () => {
                               })}
                             </div>
                             <div className="text-xs text-gray-600 mt-1">
-                              Source: {isLTP ? 'LTP API' : 'Clearing API'}
+                              {item.source ||
+                                (isLTP ? 'LTP API' : item.isLive ? 'Kite LTP' : 'Kite EOD')}
                             </div>
                           </div>
                         </div>

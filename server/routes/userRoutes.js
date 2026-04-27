@@ -1139,7 +1139,8 @@ router.get('/games-wallet/today-net', protectUser, async (req, res) => {
             { 'meta.won': true },
             {
               description: {
-                $regex: 'win \\(gross|win \\(stake|prize payout|Up/Down.*win',
+                $regex:
+                  'win \\(gross|win \\(stake|prize payout|Up/Down.*win|BTC Jackpot —|Nifty Number — result: win|Nifty Number —|BTC Number — result: win',
                 $options: 'i',
               },
             },
@@ -5424,38 +5425,72 @@ router.get('/nifty-jackpot/last-5-days', protectUser, async (req, res) => {
   }
 });
 
-// Get last 5 days clearing prices for Nifty Number and Nifty Jackpot
+// Get last 5 days clearing / LTP for Nifty Number and Nifty Jackpot (row 1 = today’s live LTP when Kite is connected; next rows = prior sessions’ day close)
 router.get('/nifty-jackpot/last-5-days-clearing', protectUser, async (req, res) => {
   try {
-    // Import Kite historical data fetcher
-    const { fetchNifty50HistoricalFromKite, istCalendarDateString } = await import('../utils/kiteNiftyQuote.js');
-    
-    // Fetch last 7 days of historical data (day candles)
+    const {
+      fetchNifty50HistoricalFromKite,
+      fetchNifty50LastPriceFromKite,
+      istCalendarDateString,
+    } = await import('../utils/kiteNiftyQuote.js');
+
+    const today = istCalendarDateString();
+    const now = new Date();
+    const ltp = await fetchNifty50LastPriceFromKite();
+
     const candles = await fetchNifty50HistoricalFromKite({
       interval: 'day',
-      daysBack: 10,
-      maxCandles: 10
+      daysBack: 45,
+      maxCandles: 40,
     });
-    
-    if (!candles || candles.length === 0) {
-      return res.json([]);
+
+    const results = [];
+    if (ltp != null && Number.isFinite(Number(ltp))) {
+      results.push({
+        date: today,
+        closedAt: now.toISOString(),
+        closingPrice: Number(ltp),
+        source: 'Kite LTP (now)',
+        isLive: true,
+        note: 'Live NIFTY 50 LTP — reopen this list to refresh',
+      });
     }
-    
-    // Get last 5 completed days (exclude today if market is still open)
-    const today = istCalendarDateString();
-    const completedDays = candles
-      .filter(c => istCalendarDateString(new Date(c.time * 1000)) !== today)
-      .slice(-5)
-      .reverse();
-    
-    // Format for Nifty Number/Jackpot display - use close price as clearing price
-    const formattedResults = completedDays.map(c => ({
-      date: istCalendarDateString(new Date(c.time * 1000)),
-      closingPrice: c.close, // This represents the clearing price for the day
-      closedAt: new Date(c.time * 1000).toISOString()
-    }));
-    
-    res.json(formattedResults);
+
+    if (!candles || candles.length === 0) {
+      return res.json(results);
+    }
+
+    // Index one candle per calendar day (use latest time if duplicates)
+    const byDay = new Map();
+    for (const c of candles) {
+      const dayKey = istCalendarDateString(new Date(c.time * 1000));
+      const prev = byDay.get(dayKey);
+      if (!prev || c.time > prev.time) {
+        byDay.set(dayKey, { time: c.time, close: c.close });
+      }
+    }
+
+    const weekdayCompleted = (dateStr) => {
+      const d = new Date(`${dateStr}T12:00:00+05:30`);
+      const w = d.getDay();
+      return w !== 0 && w !== 6;
+    };
+
+    const historical = [...byDay.entries()]
+      .filter(([d]) => d !== today && weekdayCompleted(d))
+      .sort((a, b) => b[1].time - a[1].time)
+      .map(([d, { time, close }]) => ({
+        date: d,
+        closedAt: new Date(time * 1000).toISOString(),
+        closingPrice: close,
+        source: 'Kite EOD close',
+        isLive: false,
+      }));
+
+    const need = Math.max(0, 5 - results.length);
+    results.push(...historical.slice(0, need));
+
+    res.json(results);
   } catch (error) {
     console.error('Error fetching last 5 days clearing for Nifty Number/Jackpot:', error);
     res.status(500).json({ message: error.message });

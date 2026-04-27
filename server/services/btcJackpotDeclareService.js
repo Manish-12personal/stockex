@@ -18,6 +18,7 @@ import {
 import { atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
 import { creditReferralGameReward } from './referralService.js';
+import { buildGameProfitLedgerMeta } from './gameProfitDistribution.js';
 
 export class BtcJackpotDeclareError extends Error {
   constructor(message, statusCode = 400) {
@@ -167,8 +168,9 @@ async function resolveHierarchyForUser(userDoc, grossPrize, gc) {
 /**
  * Credit a hierarchy member's main wallet ₹amount (funded from Super Admin pool).
  * Recorded as a WalletLedger CREDIT row on that admin + a matching DEBIT on Super Admin.
+ * @param {{ grossPrize: number, role: string }} [ledger] — for Share % in admin wallet ledger (base = user gross prize for this win)
  */
-async function creditHierarchyMember(adminMember, amount, gameLabel, winnerUserId) {
+async function creditHierarchyMember(adminMember, amount, gameLabel, winnerUserId, ledger = null) {
   const amt = round2(amount);
   if (!adminMember?.id || !Number.isFinite(amt) || amt <= 0) return { credited: 0 };
 
@@ -183,6 +185,17 @@ async function creditHierarchyMember(adminMember, amount, gameLabel, winnerUserI
 
   if (!updated) return { credited: 0 };
 
+  const G = round2(ledger?.grossPrize ?? 0);
+  const roleLabel = ledger?.role || 'HIERARCHY';
+  const pctOfGross =
+    G > 0 && Number.isFinite(amt) ? parseFloat(((amt / G) * 100).toFixed(2)) : 0;
+  const description =
+    G > 0
+      ? `${gameLabel} win brokerage — ${roleLabel} (${pctOfGross.toFixed(2)}% of ₹${G.toFixed(2)})`
+      : `${gameLabel} — hierarchy brokerage`;
+
+  const meta = buildGameProfitLedgerMeta(amt, G, 'BTC_JACKPOT_HIERARCHY', 'btcJackpot', null, winnerUserId);
+
   await WalletLedger.create({
     ownerType: 'ADMIN',
     ownerId: updated._id,
@@ -191,12 +204,8 @@ async function creditHierarchyMember(adminMember, amount, gameLabel, winnerUserI
     reason: 'GAME_PROFIT',
     amount: amt,
     balanceAfter: updated.wallet?.balance ?? 0,
-    description: `${gameLabel} — hierarchy brokerage`,
-    meta: {
-      gameKey: 'btcJackpot',
-      profitKind: 'BTC_JACKPOT_HIERARCHY',
-      relatedUserId: winnerUserId,
-    },
+    description,
+    meta,
   });
 
   // Mirror DEBIT on Super Admin pool
@@ -301,6 +310,7 @@ export async function declareBtcJackpotForDate(date) {
           balanceAfter: Number(gwAfter?.balance) || 0,
           description: `BTC Jackpot — rank ${rankDisplay} prize${g.tied ? ` (tied ×${g.bids.length})` : ''}`,
           meta: {
+            won: true,
             bidId: bid._id,
             betDate: date,
             rank: rankDisplay,
@@ -317,15 +327,24 @@ export async function declareBtcJackpotForDate(date) {
         const plan = await resolveHierarchyForUser(userDoc, perBidGross, gc);
         let hierarchyPaidForBid = 0;
         if (plan.subBroker.amount > 0) {
-          const r = await creditHierarchyMember(plan.subBroker, plan.subBroker.amount, 'BTC Jackpot', bid.user);
+          const r = await creditHierarchyMember(plan.subBroker, plan.subBroker.amount, 'BTC Jackpot', bid.user, {
+            grossPrize: perBidGross,
+            role: 'SUB_BROKER',
+          });
           hierarchyPaidForBid += r.credited || 0;
         }
         if (plan.broker.amount > 0) {
-          const r = await creditHierarchyMember(plan.broker, plan.broker.amount, 'BTC Jackpot', bid.user);
+          const r = await creditHierarchyMember(plan.broker, plan.broker.amount, 'BTC Jackpot', bid.user, {
+            grossPrize: perBidGross,
+            role: 'BROKER',
+          });
           hierarchyPaidForBid += r.credited || 0;
         }
         if (plan.admin.amount > 0) {
-          const r = await creditHierarchyMember(plan.admin, plan.admin.amount, 'BTC Jackpot', bid.user);
+          const r = await creditHierarchyMember(plan.admin, plan.admin.amount, 'BTC Jackpot', bid.user, {
+            grossPrize: perBidGross,
+            role: 'ADMIN',
+          });
           hierarchyPaidForBid += r.credited || 0;
         }
         if (plan.superAdmin.amount > 0) {
@@ -333,7 +352,8 @@ export async function declareBtcJackpotForDate(date) {
             plan.superAdmin,
             plan.superAdmin.amount,
             'BTC Jackpot',
-            bid.user
+            bid.user,
+            { grossPrize: perBidGross, role: 'SUPER_ADMIN' }
           );
           hierarchyPaidForBid += r.credited || 0;
         }

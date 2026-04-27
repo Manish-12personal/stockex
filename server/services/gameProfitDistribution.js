@@ -29,6 +29,9 @@ function gameProfitLedgerMeta(shareAmount, baseAmount, profitKind, gameKey, tran
   return { ...meta, sharePercent, baseAmount: parseFloat(b.toFixed(2)) };
 }
 
+/** @see gameProfitLedgerMeta — exported for custom game flows (e.g. BTC Jackpot hierarchy) that still need Share % in admin wallet ledger. */
+export { gameProfitLedgerMeta as buildGameProfitLedgerMeta };
+
 /**
  * Splits a **base amount** through the user’s admin hierarchy using `profit*Percent` from GameSettings
  * (same cascade as win-side: SubBroker → Broker → Admin → SuperAdmin remainder).
