@@ -528,7 +528,7 @@ const UserDashboard = () => {
     const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5001';
     const socket = io(socketUrl);
     const pending = {};
-    const MARKET_TICK_FLUSH_MS = 80;
+    const MARKET_TICK_FLUSH_MS = 40;
     let flushTimer = null;
     const flushBatchedTicks = () => {
       flushTimer = null;
@@ -635,7 +635,7 @@ const UserDashboard = () => {
   const fetchMarketData = async () => {
     try {
       const { data } = await axios.get('/api/zerodha/market-data');
-      if (data && Object.keys(data).length > 0) {
+      if (data && typeof data === 'object' && Object.keys(data).length > 0) {
         console.log(`Received ${Object.keys(data).length} market data entries`);
         // Merge with existing market data
         setMarketData(prev => ({ ...prev, ...data }));
@@ -653,6 +653,12 @@ const UserDashboard = () => {
       // Silent fail
     }
   };
+
+  /** Merge targeted quote rows (e.g. MCX /instruments-quote) into shared marketData */
+  const mergeMarketDataPatch = useCallback((patch) => {
+    if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) return;
+    setMarketData((prev) => ({ ...prev, ...patch }));
+  }, []);
 
   useEffect(() => {
     const onSoftRefresh = () => fetchWallet();
@@ -1042,6 +1048,7 @@ const UserDashboard = () => {
             refreshKey={watchlistRefreshKey}
             socketConnectEpoch={socketConnectEpoch}
             usdRate={usdRate}
+            mergeMarketDataPatch={mergeMarketDataPatch}
             onSelectInstrument={(inst) => {
               setSelectedInstrument(inst);
               // Also update trading panel when clicking instrument
@@ -1263,7 +1270,7 @@ const UserDashboard = () => {
   );
 };
 
-const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, refreshKey = 0, socketConnectEpoch = 0, usdRate = 83.5 }) => {
+const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, refreshKey = 0, socketConnectEpoch = 0, mergeMarketDataPatch, usdRate = 83.5 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [activeSegment, setActiveSegment] = useState(() => localStorage.getItem('stockex_active_segment') || 'FAVORITES');
@@ -1436,6 +1443,70 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
       if (mcxTickSubscribeTimerRef.current) clearTimeout(mcxTickSubscribeTimerRef.current);
     };
   }, [mcxOnly, user?.token, watchlistLoaded, watchlistBySegment, selectedInstrument?.token, socketConnectEpoch]);
+
+  // MCX: targeted Kite quote every 1s for this screen's contracts (avoids missing MCX in bulk /market-data)
+  useEffect(() => {
+    if (!mcxOnly || !user?.token || typeof mergeMarketDataPatch !== 'function') return;
+    const isMcx = (inst) => {
+      if (!inst) return false;
+      const ex = String(inst.exchange || '').toUpperCase();
+      const seg = String(inst.segment || '').toUpperCase();
+      const ds = String(inst.displaySegment || '').toUpperCase();
+      return (
+        ex === 'MCX' ||
+        seg === 'MCX' ||
+        seg === 'MCXFUT' ||
+        seg === 'MCXOPT' ||
+        ds === 'MCXFUT' ||
+        ds === 'MCXOPT'
+      );
+    };
+    const collectMcxItems = () => {
+      const out = [];
+      const seen = new Set();
+      const add = (inst) => {
+        if (!isMcx(inst)) return;
+        const ex = (inst.exchange || 'MCX').toUpperCase();
+        const sym = String(inst.tradingSymbol || inst.symbol || '')
+          .replace(/"/g, '')
+          .trim();
+        if (!sym) return;
+        const uTok = inst.token != null && String(inst.token).trim() !== '' ? String(inst.token).trim() : null;
+        const dedup = `${ex}:${sym}|${uTok || ''}`;
+        if (seen.has(dedup)) return;
+        seen.add(dedup);
+        out.push(
+          uTok
+            ? { exchange: ex, tradingSymbol: sym, token: uTok }
+            : { exchange: ex, tradingSymbol: sym }
+        );
+      };
+      ['FAVORITES', 'MCXFUT', 'MCXOPT'].forEach((seg) => {
+        (watchlistBySegment[seg] || []).forEach(add);
+      });
+      if (selectedInstrument) add(selectedInstrument);
+      return out;
+    };
+    const run = async () => {
+      const items = collectMcxItems();
+      if (items.length === 0) return;
+      try {
+        const { data } = await axios.post(
+          '/api/zerodha/instruments-quote',
+          { items },
+          { headers: { Authorization: `Bearer ${user.token}` } }
+        );
+        if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+          mergeMarketDataPatch(data);
+        }
+      } catch {
+        // Session / Kite
+      }
+    };
+    run();
+    const id = setInterval(run, 1000);
+    return () => clearInterval(id);
+  }, [mcxOnly, user?.token, watchlistBySegment, selectedInstrument, mergeMarketDataPatch]);
 
   // Persist watchlist locally as fallback (including favorites)
   useEffect(() => {

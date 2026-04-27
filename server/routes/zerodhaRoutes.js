@@ -490,8 +490,12 @@ router.get('/market-data', async (req, res) => {
       }
     }
 
-    const instruments = dbInstruments
-      .filter((i) => i.symbol)
+    // Put MCX first so slice(500) is not "all NSE" and MCX contracts still get REST quotes
+    const mcxFirst = [
+      ...dbInstruments.filter((i) => i.symbol && i.exchange === 'MCX'),
+      ...dbInstruments.filter((i) => i.symbol && i.exchange !== 'MCX'),
+    ];
+    const instruments = mcxFirst
       .map((i) => `${i.exchange}:${i.symbol}`)
       .slice(0, 500);
 
@@ -549,6 +553,103 @@ router.get('/market-data', async (req, res) => {
   } catch (error) {
     console.error('Zerodha market data error:', error.response?.data || error.message);
     return res.json(wsData);
+  }
+});
+
+/**
+ * Targeted Kite quote for a small list of EXCHANGE:SYMBOL rows (e.g. user MCX watchlist).
+ * Use when bulk /market-data omits a contract (first 500 DB rows) or for faster MCX refresh.
+ */
+router.post('/instruments-quote', protectUser, async (req, res) => {
+  try {
+    if (!zerodhaSession?.accessToken) {
+      return res.json({});
+    }
+    const apiKey = process.env.ZERODHA_API_KEY;
+    if (!apiKey) {
+      return res.json({});
+    }
+
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const seen = new Set();
+    const normalized = [];
+    for (const it of items.slice(0, 120)) {
+      if (!it || typeof it !== 'object') continue;
+      const ex = String(it.exchange || '').trim().toUpperCase();
+      const sym = String(it.tradingSymbol || it.symbol || '')
+        .trim()
+        .replace(/"/g, '');
+      if (!ex || !sym) continue;
+      const kiteK = `${ex}:${sym}`;
+      if (seen.has(kiteK)) continue;
+      seen.add(kiteK);
+      normalized.push({
+        exchange: ex,
+        tradingsymbol: sym,
+        userToken: it.token != null && String(it.token).trim() !== '' ? String(it.token).trim() : null,
+      });
+    }
+    if (normalized.length === 0) {
+      return res.json({});
+    }
+
+    const iParam = normalized
+      .map((n) => `i=${encodeURIComponent(`${n.exchange}:${n.tradingsymbol}`)}`)
+      .join('&');
+    const response = await axios.get(`https://api.kite.trade/quote?${iParam}`, {
+      headers: {
+        'X-Kite-Version': '3',
+        Authorization: `token ${apiKey}:${zerodhaSession.accessToken}`,
+      },
+    });
+
+    if (response.data?.status !== 'success' || !response.data.data) {
+      return res.json({});
+    }
+
+    const symToUserToken = new Map();
+    for (const n of normalized) {
+      symToUserToken.set(`${n.exchange}:${n.tradingsymbol}`, n.userToken);
+    }
+
+    const out = {};
+    for (const [kiteKey, quote] of Object.entries(response.data.data)) {
+      const zt = quote.instrument_token != null ? String(quote.instrument_token) : '';
+      if (!zt) continue;
+      const ch = quote.net_change;
+      const close = quote.ohlc?.close;
+      const changePct =
+        ch != null && close
+          ? ((ch / close) * 100).toFixed(2)
+          : 0;
+      const row = {
+        symbol: quote.tradingsymbol,
+        token: zt,
+        zerodhaToken: zt,
+        exchange: kiteKey.split(':')[0],
+        ltp: quote.last_price,
+        bid: quote.depth?.buy?.[0]?.price || quote.last_price,
+        ask: quote.depth?.sell?.[0]?.price || quote.last_price,
+        open: quote.ohlc?.open,
+        high: quote.ohlc?.high,
+        low: quote.ohlc?.low,
+        close: quote.ohlc?.close,
+        change: ch,
+        changePercent: changePct,
+        volume: quote.volume,
+        lastUpdated: new Date(),
+        source: 'instruments-quote',
+      };
+      out[zt] = row;
+      const ut = symToUserToken.get(kiteKey);
+      if (ut && ut !== zt) {
+        out[ut] = { ...row, token: ut };
+      }
+    }
+    return res.json(out);
+  } catch (e) {
+    console.error('instruments-quote:', e.response?.data || e.message);
+    return res.json({});
   }
 });
 
