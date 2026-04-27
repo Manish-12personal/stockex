@@ -450,6 +450,8 @@ const UserDashboard = () => {
   const [usdRate, setUsdRate] = useState(83.50); // USD to INR rate (default fallback)
   const [usdSpotClientSpreads, setUsdSpotClientSpreads] = useState({ crypto: 0, forex: 0 });
   const [watchlistRefreshKey, setWatchlistRefreshKey] = useState(0); // Key to trigger watchlist refresh
+  /** Bumps on each Socket.IO connect so MCX can re-post /tick-subscribe after server is ready */
+  const [socketConnectEpoch, setSocketConnectEpoch] = useState(0);
   const [currentTime, setCurrentTime] = useState(new Date());
   /** Last bar close from ChartPanel / mobile chart — bid/ask align to this (fixes MCX feed vs Kite chart mismatch). */
   const [chartLtpAnchor, setChartLtpAnchor] = useState({ token: null, ltp: null });
@@ -558,6 +560,7 @@ const UserDashboard = () => {
       }
     };
     const queueTicks = (ticks) => {
+      if (!ticks || typeof ticks !== 'object' || Array.isArray(ticks)) return;
       Object.assign(pending, ticks);
       if (flushTimer) return;
       flushTimer = setTimeout(flushBatchedTicks, MARKET_TICK_FLUSH_MS);
@@ -565,6 +568,7 @@ const UserDashboard = () => {
 
     socket.on('connect', () => {
       console.log('Socket.IO connected for real-time ticks');
+      setSocketConnectEpoch((e) => e + 1);
     });
 
     socket.on('market_tick', (ticks) => {
@@ -624,10 +628,9 @@ const UserDashboard = () => {
     fetchWallet();
     fetchUsdSpotClientSpreads();
     fetchMarketData();
-    // MCX: slightly slower poll — socket is primary; reduces main-thread merge load
-    const interval = setInterval(fetchMarketData, mcxOnly ? 8000 : 3000);
+    const interval = setInterval(fetchMarketData, 3000);
     return () => clearInterval(interval);
-  }, [fetchWallet, fetchUsdSpotClientSpreads, mcxOnly]);
+  }, [fetchWallet, fetchUsdSpotClientSpreads]);
 
   const fetchMarketData = async () => {
     try {
@@ -1031,12 +1034,13 @@ const UserDashboard = () => {
       <div className="flex-1 hidden md:flex overflow-hidden">
         {/* Left Sidebar - Instruments - Fixed width */}
         <div className="flex-shrink-0 w-64">
-          <InstrumentsPanel 
+          <InstrumentsPanel
             selectedInstrument={selectedInstrument}
             cryptoOnly={cryptoOnly}
             mcxOnly={mcxOnly}
             forexOnly={forexOnly}
             refreshKey={watchlistRefreshKey}
+            socketConnectEpoch={socketConnectEpoch}
             usdRate={usdRate}
             onSelectInstrument={(inst) => {
               setSelectedInstrument(inst);
@@ -1117,6 +1121,7 @@ const UserDashboard = () => {
             cryptoOnly={cryptoOnly}
             mcxOnly={mcxOnly}
             forexOnly={forexOnly}
+            socketConnectEpoch={socketConnectEpoch}
             usdRate={usdRate}
             onSelectInstrument={(inst) => {
               setSelectedInstrument(inst);
@@ -1258,7 +1263,7 @@ const UserDashboard = () => {
   );
 };
 
-const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, refreshKey = 0, usdRate = 83.5 }) => {
+const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, refreshKey = 0, socketConnectEpoch = 0, usdRate = 83.5 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [activeSegment, setActiveSegment] = useState(() => localStorage.getItem('stockex_active_segment') || 'FAVORITES');
@@ -1430,7 +1435,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
     return () => {
       if (mcxTickSubscribeTimerRef.current) clearTimeout(mcxTickSubscribeTimerRef.current);
     };
-  }, [mcxOnly, user?.token, watchlistLoaded, watchlistBySegment, selectedInstrument?.token]);
+  }, [mcxOnly, user?.token, watchlistLoaded, watchlistBySegment, selectedInstrument?.token, socketConnectEpoch]);
 
   // Persist watchlist locally as fallback (including favorites)
   useEffect(() => {
@@ -4688,7 +4693,7 @@ const TradingPanel = ({
 };
 
 // Mobile Components - Uses watchlist like desktop
-const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, usdRate = 83.5 }) => {
+const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, user, marketData = {}, onSegmentChange, cryptoOnly = false, mcxOnly = false, forexOnly = false, socketConnectEpoch = 0, usdRate = 83.5 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -4822,7 +4827,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
     return () => {
       if (mcxTickSubscribeTimerRef.current) clearTimeout(mcxTickSubscribeTimerRef.current);
     };
-  }, [mcxOnly, user?.token, watchlistLoaded, watchlistBySegment, selectedInstrument?.token]);
+  }, [mcxOnly, user?.token, watchlistLoaded, watchlistBySegment, selectedInstrument?.token, socketConnectEpoch]);
 
   useEffect(() => {
     if (

@@ -463,70 +463,61 @@ router.get('/game-price/:symbol', async (req, res) => {
   }
 });
 
-// Get market data - returns WebSocket data if available, otherwise fetches from API
+// Get market data: merge Kite quote (DB universe) with live WebSocket — WS wins on overlap.
+// If we only returned getMarketData() whenever it was non-empty, NIFTY ticks would block REST
+// and MCX/user contracts never appeared until full page refresh.
 router.get('/market-data', async (req, res) => {
+  const wsData = getMarketData() || {};
+
+  if (!zerodhaSession.accessToken) {
+    return res.json(wsData);
+  }
+
+  const apiKey = process.env.ZERODHA_API_KEY;
+  if (!apiKey) {
+    return res.json(wsData);
+  }
+
   try {
-    // First check if we have WebSocket data
-    const wsData = getMarketData();
-    const wsDataCount = Object.keys(wsData).length;
-    
-    // If we have WebSocket data, return it
-    if (wsDataCount > 0) {
-      return res.json(wsData);
-    }
-    
-    // No WebSocket data - check if we have a session
-    if (!zerodhaSession.accessToken) {
-      return res.json({});
-    }
-    
-    const apiKey = process.env.ZERODHA_API_KEY;
-    
-    // Get instruments from database
     const Instrument = (await import('../models/Instrument.js')).default;
     const dbInstruments = await Instrument.find({ isEnabled: true }).select('token symbol exchange').lean();
-    
-    // Create a map of symbol to database token for matching
+
     const symbolToDbToken = {};
     for (const inst of dbInstruments) {
       if (inst.symbol) {
-        const key = `${inst.exchange}:${inst.symbol}`;
-        symbolToDbToken[key] = inst.token;
+        const exSym = `${inst.exchange}:${inst.symbol}`;
+        symbolToDbToken[exSym] = inst.token;
       }
     }
-    
-    // Build instrument list for Zerodha (format: EXCHANGE:TRADINGSYMBOL)
+
     const instruments = dbInstruments
-      .filter(i => i.symbol)
-      .map(i => `${i.exchange}:${i.symbol}`)
-      .slice(0, 500); // Zerodha limit
-    
+      .filter((i) => i.symbol)
+      .map((i) => `${i.exchange}:${i.symbol}`)
+      .slice(0, 500);
+
     if (instruments.length === 0) {
-      return res.json({});
+      return res.json(wsData);
     }
-    
-    // Fetch quotes via REST API (fallback when WebSocket not connected)
-    const response = await axios.get(
-      `https://api.kite.trade/quote?${instruments.map(i => `i=${i}`).join('&')}`,
-      {
-        headers: {
-          'X-Kite-Version': '3',
-          'Authorization': `token ${apiKey}:${zerodhaSession.accessToken}`
+
+    let fromRest = {};
+    try {
+      const response = await axios.get(
+        `https://api.kite.trade/quote?${instruments.map((i) => `i=${i}`).join('&')}`,
+        {
+          headers: {
+            'X-Kite-Version': '3',
+            'Authorization': `token ${apiKey}:${zerodhaSession.accessToken}`,
+          },
         }
-      }
-    );
-    
-    if (response.data.status === 'success' && response.data.data) {
-      const marketData = {};
-      
-      for (const [key, quote] of Object.entries(response.data.data)) {
-        // Use database token as key so frontend can match
-        const dbToken = symbolToDbToken[key];
-        const zerodhaToken = quote.instrument_token?.toString();
-        const tokenKey = dbToken || zerodhaToken;
-        
-        if (tokenKey) {
-          marketData[tokenKey] = {
+      );
+
+      if (response.data.status === 'success' && response.data.data) {
+        for (const [key, quote] of Object.entries(response.data.data)) {
+          const dbToken = symbolToDbToken[key];
+          const zerodhaToken = quote.instrument_token?.toString();
+          const tokenKey = dbToken != null ? String(dbToken) : zerodhaToken;
+          if (!tokenKey) continue;
+          fromRest[tokenKey] = {
             symbol: quote.tradingsymbol,
             token: tokenKey,
             zerodhaToken: zerodhaToken,
@@ -539,21 +530,25 @@ router.get('/market-data', async (req, res) => {
             low: quote.ohlc?.low,
             close: quote.ohlc?.close,
             change: quote.net_change,
-            changePercent: quote.net_change && quote.ohlc?.close ?
-              ((quote.net_change / quote.ohlc.close) * 100).toFixed(2) : 0,
+            changePercent:
+              quote.net_change && quote.ohlc?.close
+                ? ((quote.net_change / quote.ohlc.close) * 100).toFixed(2)
+                : 0,
             volume: quote.volume,
-            lastUpdated: new Date()
+            lastUpdated: new Date(),
+            source: 'rest',
           };
         }
       }
-      
-      res.json(marketData);
-    } else {
-      res.status(400).json({ message: response.data.message || 'Failed to fetch market data' });
+    } catch (restErr) {
+      console.error('Zerodha market-data REST merge:', restErr.response?.data || restErr.message);
     }
+
+    // Live stream overwrites same token
+    return res.json({ ...fromRest, ...wsData });
   } catch (error) {
     console.error('Zerodha market data error:', error.response?.data || error.message);
-    res.status(500).json({ message: error.response?.data?.message || error.message });
+    return res.json(wsData);
   }
 });
 
