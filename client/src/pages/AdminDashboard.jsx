@@ -13617,6 +13617,23 @@ const TradingPanel = () => {
   // Display lot size strictly from DB (no hardcoded fallbacks)
   const getDisplayLotSize = (instrument) => instrument.lotSize || 1;
 
+  const formatInstrumentExpiry = (instrument) => {
+    const e = instrument?.expiry;
+    if (e == null || e === '') return '—';
+    try {
+      const d = e instanceof Date ? e : new Date(e);
+      if (Number.isNaN(d.getTime())) return '—';
+      return d.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'Asia/Kolkata',
+      });
+    } catch {
+      return '—';
+    }
+  };
+
   return (
     <div className="p-4 md:p-6">
       <div className="mb-6">
@@ -13699,6 +13716,12 @@ const TradingPanel = () => {
                           >
                             (Contract lot size: {getDisplayLotSize(instrument)})
                           </span>
+                        </div>
+                        <div
+                          className="text-xs text-cyan-300/90 mt-0.5"
+                          title="Contract expiry from instrument record (Asia/Kolkata)"
+                        >
+                          Expiry: {formatInstrumentExpiry(instrument)}
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2 justify-end shrink-0">
@@ -13788,6 +13811,12 @@ const TradingPanel = () => {
                                     (Contract lot size: {getDisplayLotSize(instrument)})
                                   </span>
                                 </div>
+                                <div
+                                  className="text-xs text-cyan-300/90 mt-0.5"
+                                  title="Contract expiry from instrument record (Asia/Kolkata)"
+                                >
+                                  Expiry: {formatInstrumentExpiry(instrument)}
+                                </div>
                               </div>
                               <div className="flex flex-wrap gap-2 justify-end shrink-0">
                                 {isSuperAdmin && (
@@ -13852,6 +13881,12 @@ const TradingPanel = () => {
                       <span className="text-yellow-400 ml-1" title="Exchange contract: units per 1 lot (not max/min lots from Rules)">
                         (Contract lot size: {getDisplayLotSize(instrument)})
                       </span>
+                    </div>
+                    <div
+                      className="text-xs text-cyan-300/90 mt-0.5"
+                      title="Contract expiry from instrument record (Asia/Kolkata)"
+                    >
+                      Expiry: {formatInstrumentExpiry(instrument)}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2 justify-end">

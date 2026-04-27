@@ -15,6 +15,11 @@ import {
 import { sanitizeInstrumentTradingDefaultsCommission } from '../middleware/commissionValidation.js';
 import { manualCheckExpiredInstruments } from '../services/instrumentExpiryService.js';
 import {
+  addActiveDerivExpiryToQuery,
+  isExpiredDerivative,
+  watchlistItemIsExpired
+} from '../utils/derivativeExpiry.js';
+import {
   forcedCloseInstrumentsByIds,
   forcedOpenInstrumentsByIds
 } from '../services/instrumentForcedCloseService.js';
@@ -152,7 +157,8 @@ router.get('/public', async (req, res) => {
         { name: { $regex: search, $options: 'i' } }
       ];
     }
-    
+    addActiveDerivExpiryToQuery(query);
+
     // Get total count for stats
     const totalCount = await Instrument.countDocuments({});
     const enabledCount = await Instrument.countDocuments({ isEnabled: true });
@@ -228,7 +234,8 @@ router.get('/by-exchange/:exchange', protectUser, async (req, res) => {
         { visibleToAdmins: adminCode }
       ]
     };
-    
+    addActiveDerivExpiryToQuery(query);
+
     const instruments = await Instrument.find(query)
       .select('token symbol name exchange segment displaySegment instrumentType lotSize ltp change changePercent category isFeatured tradingSymbol expiry strike optionType lastBid lastAsk')
       .sort({ isFeatured: -1, symbol: 1 })
@@ -250,15 +257,17 @@ router.get('/search', protectUser, async (req, res) => {
     
     const adminCode = req.user.adminCode;
     const searchRegex = new RegExp(q, 'i');
-    
-    const instruments = await Instrument.find({
+
+    const searchQuery = {
       isEnabled: true,
       $or: [
         { symbol: searchRegex },
         { name: searchRegex },
         { tradingSymbol: searchRegex }
       ]
-    })
+    };
+    addActiveDerivExpiryToQuery(searchQuery);
+    const instruments = await Instrument.find(searchQuery)
       .select('token symbol name exchange segment displaySegment instrumentType lotSize ltp change changePercent category tradingSymbol expiry strike optionType lastBid lastAsk')
       .sort({ isFeatured: -1, exchange: 1, symbol: 1 })
       .limit(parseInt(limit));
@@ -352,6 +361,7 @@ function buildUserInstrumentListQuery(adminCode, { segment, category, search, di
       ]
     });
   }
+  addActiveDerivExpiryToQuery(query);
   return query;
 }
 
@@ -410,6 +420,9 @@ router.post('/client/request-open', protectUser, async (req, res) => {
     const inst = await Instrument.findOne({ token: String(token) });
     if (!inst) {
       return res.status(404).json({ message: 'Instrument not found' });
+    }
+    if (isExpiredDerivative({ instrumentType: inst.instrumentType, expiry: inst.expiry })) {
+      return res.status(400).json({ message: 'This contract has expired' });
     }
     if (inst.adminLockedClosed) {
       return res.status(403).json({
@@ -1853,20 +1866,35 @@ router.get('/watchlist', protectUser, async (req, res) => {
     // Collect all tokens to fetch fresh lot sizes
     const allTokens = [];
     for (const wl of watchlists) {
-      for (const inst of (wl.instruments || [])) {
-        if (inst.token && !inst.isCrypto) allTokens.push(inst.token);
+      for (const inst of wl.instruments || []) {
+        if (inst.token) allTokens.push(inst.token);
       }
     }
     
-    // Fetch current lot sizes and last bid/ask from Instrument database
-    const freshInstruments = await Instrument.find({ token: { $in: allTokens } }).select('token lotSize lastBid lastAsk').lean();
+    // Fetch current fields from Instrument database (incl. expiry to drop rolled contracts)
+    const freshInstruments = await Instrument.find({ token: { $in: allTokens } })
+      .select('token lotSize lastBid lastAsk expiry instrumentType')
+      .lean();
     const instrumentDataMap = {};
     for (const inst of freshInstruments) {
       instrumentDataMap[inst.token] = {
         lotSize: inst.lotSize,
         lastBid: inst.lastBid || 0,
-        lastAsk: inst.lastAsk || 0
+        lastAsk: inst.lastAsk || 0,
+        expiry: inst.expiry,
+        instrumentType: inst.instrumentType
       };
+    }
+
+    for (const wl of watchlists) {
+      const before = (wl.instruments || []).length;
+      const kept = (wl.instruments || []).filter(
+        (inst) => !watchlistItemIsExpired(inst, inst.token ? instrumentDataMap[inst.token] : null)
+      );
+      if (kept.length < before) {
+        await Watchlist.updateOne({ _id: wl._id }, { $set: { instruments: kept } });
+        wl.instruments = kept;
+      }
     }
     
     // Build result with refreshed lot sizes and last bid/ask (split legacy FOREX into FOREXFUT / FOREXOPT)
@@ -1884,10 +1912,14 @@ router.get('/watchlist', protectUser, async (req, res) => {
         }
         continue;
       }
-      result[wl.segment] = (wl.instruments || []).map(inst => {
-        // Update lotSize and last bid/ask from database if available (non-crypto)
+      result[wl.segment] = (wl.instruments || []).map((inst) => {
         if (inst.token && !inst.isCrypto && instrumentDataMap[inst.token]) {
-          return { ...inst, lotSize: instrumentDataMap[inst.token].lotSize, lastBid: instrumentDataMap[inst.token].lastBid, lastAsk: instrumentDataMap[inst.token].lastAsk };
+          return {
+            ...inst,
+            lotSize: instrumentDataMap[inst.token].lotSize,
+            lastBid: instrumentDataMap[inst.token].lastBid,
+            lastAsk: instrumentDataMap[inst.token].lastAsk
+          };
         }
         return inst;
       });
@@ -1927,6 +1959,18 @@ router.post('/watchlist/add', protectUser, async (req, res) => {
     if (!identifier) {
       return res.status(400).json({ message: 'Instrument has no token or pair' });
     }
+
+    const dbInst = instrument.token
+      ? await Instrument.findOne({ token: String(instrument.token) })
+          .select('expiry instrumentType')
+          .lean()
+      : null;
+    if (watchlistItemIsExpired(instrument, dbInst)) {
+      return res
+        .status(400)
+        .json({ message: 'This contract has expired and cannot be added to the watchlist' });
+    }
+
     const exists = watchlist.instruments.some((i) => {
       const id = (i.isCrypto || i.isForex || i.exchange === 'FOREX')
         ? String(i.pair || i.symbol || '').trim()
@@ -2008,17 +2052,33 @@ router.post('/watchlist/sync', protectUser, async (req, res) => {
     if (!watchlistBySegment) {
       return res.status(400).json({ message: 'Watchlist data required' });
     }
-    
+
+    const allSyncTokens = [];
+    for (const instruments of Object.values(watchlistBySegment)) {
+      for (const inst of instruments || []) {
+        if (inst && inst.token) allSyncTokens.push(inst.token);
+      }
+    }
+    const uniqueTokens = [...new Set(allSyncTokens.map((t) => String(t)))];
+    const syncDb = await Instrument.find({ token: { $in: uniqueTokens } })
+      .select('token expiry instrumentType')
+      .lean();
+    const syncMap = Object.fromEntries(syncDb.map((i) => [i.token, i]));
+
     // Update each segment
     for (const [segment, instruments] of Object.entries(watchlistBySegment)) {
       if (!['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT', 'FOREX', 'FOREXFUT', 'FOREXOPT', 'CDS', 'FAVORITES'].includes(segment)) continue;
-      
+
+      const instrumentsClean = (instruments || []).filter(
+        (inst) => !watchlistItemIsExpired(inst, inst.token ? syncMap[String(inst.token)] : null)
+      );
+
       await Watchlist.findOneAndUpdate(
         { userId, segment },
         { 
           userId, 
           segment, 
-          instruments: instruments.map(inst => ({
+          instruments: instrumentsClean.map(inst => ({
             token: inst.token,
             symbol: inst.symbol,
             name: inst.name,
