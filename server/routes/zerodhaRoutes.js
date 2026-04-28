@@ -76,6 +76,16 @@ function mcxFuturesBaseFromKite(tradingsymbol) {
   return m ? m[1] : null;
 }
 
+/** Kite instruments.csv uses `instrument_type` FUT for MCX futures; tolerate FUTURES / FUT* for ingest edge cases. */
+function isKiteMcxFuturesRow(i) {
+  if (!i || i.exchange !== 'MCX') return false;
+  const t = String(i.instrument_type ?? '')
+    .trim()
+    .toUpperCase();
+  if (t === 'CE' || t === 'PE') return false;
+  return t === 'FUT' || t === 'FUTURES' || (t.startsWith('FUT') && !t.includes('OPT'));
+}
+
 /** CSV / seed row fields — never restored from pre-reset DB doc (token & contract identity stay from Kite). */
 const ZERODHA_SYNC_KITE_FIELD_KEYS = new Set([
   'token',
@@ -971,7 +981,7 @@ router.post('/seed-mcx', protectAdmin, superAdminOnly, async (req, res) => {
     console.log(`Downloaded ${allInstruments.length} instruments from Zerodha`);
     
     // Now filter for MCX commodities
-    const mcxFutures = allInstruments.filter(i => i.exchange === 'MCX' && i.instrument_type === 'FUT');
+    const mcxFutures = allInstruments.filter(isKiteMcxFuturesRow);
     
     // Group by tradingsymbol base (GOLD, SILVER, CRUDEOIL, etc.)
     const mcxSymbols = ['GOLD', 'GOLDM', 'SILVER', 'SILVERM', 'CRUDEOIL', 'CRUDEOILM', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'NICKEL'];
@@ -1627,9 +1637,7 @@ router.post('/sync-all-instruments', protectAdmin, superAdminOnly, async (req, r
     }
     
     // 5. MCX Commodities
-    const mcxFutures = allInstruments.filter(i => 
-      i.exchange === 'MCX' && i.instrument_type === 'FUT'
-    );
+    const mcxFutures = allInstruments.filter(isKiteMcxFuturesRow);
     
     const mcxSymbols = ['GOLD', 'GOLDM', 'SILVER', 'SILVERM', 'CRUDEOIL', 'CRUDEOILM', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'NICKEL'];
     
@@ -1963,7 +1971,7 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
     }
     
     // 4. MCX COMMODITIES — one row per **tradingSymbol base** (CRUDEOIL, not "CRUDE OIL" name); front month = earliest **active** expiry
-    const mcxFutures = allInstruments.filter(i => i.exchange === 'MCX' && i.instrument_type === 'FUT');
+    const mcxFutures = allInstruments.filter(isKiteMcxFuturesRow);
     const todayYmd = kolkataCalendarDateString(new Date());
     const mcxFuturesActive = mcxFutures.filter((fut) => {
       if (!fut.expiry) return false;
@@ -2424,9 +2432,7 @@ router.post('/sync-all-nse', protectAdmin, superAdminOnly, async (req, res) => {
     }
     
     // ============ 4. MCX COMMODITIES ============
-    const mcxFutures = allInstruments.filter(i => 
-      i.exchange === 'MCX' && i.instrument_type === 'FUT'
-    );
+    const mcxFutures = allInstruments.filter(isKiteMcxFuturesRow);
     
     // Group by base symbol and get nearest expiry
     const mcxBySymbol = {};

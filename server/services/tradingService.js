@@ -574,8 +574,9 @@ class TradingService {
       }
     }
 
-    // Get user's segment and script settings
-    const segmentSettings = TradeService.getUserSegmentSettings(user, orderData.segment, orderData.instrumentType);
+    // Get user's segment and script settings (crypto/forex spread inherits Super Admin default when unset)
+    let segmentSettings = TradeService.getUserSegmentSettings(user, orderData.segment, orderData.instrumentType);
+    segmentSettings = await TradeService.mergeUsdSpotSpreadFromSuperAdmin(segmentSettings, orderData);
     const rawScriptSettings = TradeService.getUserScriptSettings(user, orderData.symbol, orderData.category);
     const scriptSettings = TradeService.mergeScriptSettingsWithInstrument(instrument, rawScriptSettings);
     

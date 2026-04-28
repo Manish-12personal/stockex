@@ -224,15 +224,19 @@ router.get('/by-exchange/:exchange', protectUser, async (req, res) => {
     const limit = parseInt(req.query.limit) || 500;
     const adminCode = req.user.adminCode;
     
+    const visOr = [
+      { visibleToAdmins: { $exists: false } },
+      { visibleToAdmins: null },
+      { visibleToAdmins: { $size: 0 } },
+    ];
+    if (adminCode != null && String(adminCode).trim() !== '') {
+      visOr.push({ visibleToAdmins: adminCode });
+    }
+
     const query = {
       isEnabled: true,
       exchange: exchange,
-      $or: [
-        { visibleToAdmins: { $exists: false } },
-        { visibleToAdmins: null },
-        { visibleToAdmins: { $size: 0 } },
-        { visibleToAdmins: adminCode }
-      ]
+      $or: visOr,
     };
     addActiveDerivExpiryToQuery(query);
 
@@ -280,23 +284,27 @@ router.get('/search', protectUser, async (req, res) => {
 
 /** Shared visibility + segment filters for `/user` and `/client/closed-search` (no isEnabled filter). */
 function buildUserInstrumentListQuery(adminCode, { segment, category, search, displaySegment }) {
+  const visibilityOr = [
+    { visibleToAdmins: { $exists: false } },
+    { visibleToAdmins: null },
+    { visibleToAdmins: { $size: 0 } },
+  ];
+  if (adminCode != null && String(adminCode).trim() !== '') {
+    visibilityOr.push({ visibleToAdmins: adminCode });
+  }
+
   const query = {
-    $or: [
-      { visibleToAdmins: { $exists: false } },
-      { visibleToAdmins: null },
-      { visibleToAdmins: { $size: 0 } },
-      { visibleToAdmins: adminCode }
-    ],
+    $or: visibilityOr,
     $and: [
       {
         $or: [
           { hiddenFromAdmins: { $exists: false } },
           { hiddenFromAdmins: null },
           { hiddenFromAdmins: { $size: 0 } },
-          { hiddenFromAdmins: { $ne: adminCode } }
-        ]
-      }
-    ]
+          { hiddenFromAdmins: { $ne: adminCode } },
+        ],
+      },
+    ],
   };
 
   if (segment) {
@@ -311,12 +319,24 @@ function buildUserInstrumentListQuery(adminCode, { segment, category, search, di
               { displaySegment: 'FOREX', instrumentType: { $exists: false } }
             ];
       query.$and.push({ $or: forexDispOr });
+    } else if (segment === 'MCXFUT') {
+      // Match admin Market Watch: displaySegment MCXFUT, or MCX commodities futures (Zerodha may use FUT / COMMODITY, not always "FUTURES")
+      query.exchange = 'MCX';
+      query.$and.push({
+        $or: [
+          { displaySegment: 'MCXFUT' },
+          { instrumentType: { $in: ['FUTURES', 'COMMODITY'] } },
+        ],
+      });
+    } else if (segment === 'MCXOPT') {
+      query.exchange = 'MCX';
+      query.$and.push({
+        $or: [{ displaySegment: 'MCXOPT' }, { instrumentType: 'OPTIONS' }],
+      });
     } else {
       const segmentMap = {
         NSEFUT: { exchange: 'NFO', instrumentType: 'FUTURES' },
         NSEOPT: { exchange: 'NFO', instrumentType: 'OPTIONS' },
-        MCXFUT: { exchange: 'MCX', instrumentType: 'FUTURES' },
-        MCXOPT: { exchange: 'MCX', instrumentType: 'OPTIONS' },
         'NSE-EQ': { exchange: 'NSE' },
         'BSE-FUT': { exchange: 'BFO', instrumentType: 'FUTURES' },
         'BSE-OPT': { exchange: 'BFO', instrumentType: 'OPTIONS' },

@@ -263,8 +263,28 @@ function scaleForexChartCandle(c, rate, pairUpper) {
   };
 }
 
-/** Binance OHLC is USDT; scale to same ₹ units as bid/ask / spotPxToDisplayedInr. */
+/** Binance OHLC: USDT candles as-is for chart; forex OHLC scaled to ₹ via spotPxToDisplayedInr. */
 function scaleUsdSpotChartCandle(c, inst, usdRate) {
+  if (isForexInstrument(inst)) {
+    return {
+      time: c.time,
+      open: spotPxToDisplayedInr(inst, c.open, usdRate),
+      high: spotPxToDisplayedInr(inst, c.high, usdRate),
+      low: spotPxToDisplayedInr(inst, c.low, usdRate),
+      close: spotPxToDisplayedInr(inst, c.close, usdRate),
+      volume: c.volume || 0,
+    };
+  }
+  if (inst?.isCrypto || inst?.exchange === 'BINANCE') {
+    return {
+      time: c.time,
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+      volume: c.volume || 0,
+    };
+  }
   return {
     time: c.time,
     open: spotPxToDisplayedInr(inst, c.open, usdRate),
@@ -273,6 +293,14 @@ function scaleUsdSpotChartCandle(c, inst, usdRate) {
     close: spotPxToDisplayedInr(inst, c.close, usdRate),
     volume: c.volume || 0,
   };
+}
+
+/** Display price: Binance USD spot in USDT ($); forex/other paths use ₹ via spotPxToDisplayedInr. */
+function spotQuoteDisplayPrice(inst, spotPx, usdRate) {
+  if (isUsdSpotInstrument(inst) && !isForexInstrument(inst)) {
+    return Number(spotPx) || 0;
+  }
+  return spotPxToDisplayedInr(inst, spotPx, usdRate);
 }
 
 /** ₹ column for crypto (USDT) & forex spot; USDINR is already INR per USD. */
@@ -942,7 +970,13 @@ const UserDashboard = () => {
                 ₹{(walletData?.forexWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </span>
             ) : cryptoOnly ? (
-              <span className="text-orange-400 font-medium">₹{(walletData?.cryptoWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+              <span className="text-orange-400 font-medium" title="Balances are stored in ₹; US$ is approximate">
+                ₹{(walletData?.cryptoWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                <span className="text-gray-500 text-xs ml-1 font-normal">
+                  (≈ $
+                  {((walletData?.cryptoWallet?.balance || 0) / usdRate).toLocaleString('en-US', { maximumFractionDigits: 0 })})
+                </span>
+              </span>
             ) : mcxOnly ? (
               <span className="text-yellow-400 font-medium">₹{(walletData?.mcxWallet?.balance || 0).toLocaleString()}</span>
             ) : (
@@ -985,7 +1019,12 @@ const UserDashboard = () => {
                 ₹{(walletData?.forexWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </span>
             ) : cryptoOnly ? (
-              <span className="text-orange-400 font-medium text-sm">₹{(walletData?.cryptoWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+              <span className="text-orange-400 font-medium text-sm" title="Stored in ₹">
+                ₹{(walletData?.cryptoWallet?.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                <span className="text-gray-500 text-[10px] ml-0.5">
+                  (~${((walletData?.cryptoWallet?.balance || 0) / usdRate).toFixed(0)})
+                </span>
+              </span>
             ) : mcxOnly ? (
               <span className="text-yellow-400 font-medium text-sm">₹{(walletData?.mcxWallet?.balance || 0).toLocaleString()}</span>
             ) : (
@@ -2130,7 +2169,11 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                       </div>
                       <div className="text-right mr-2">
                         <div className="text-sm font-medium text-gray-300">
-                          ₹{spotPxToDisplayedInr(crypto, priceData.ltp || 0, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {`$${spotQuoteDisplayPrice(
+                            { ...crypto, segment: 'CRYPTO' },
+                            priceData.ltp || 0,
+                            usdRate
+                          ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                         </div>
                         <div className={`text-xs ${parseFloat(priceData.changePercent || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                           {parseFloat(priceData.changePercent || 0) >= 0 ? '+' : ''}{parseFloat(priceData.changePercent || 0).toFixed(2)}%
@@ -2295,7 +2338,11 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
               getWatchlistForSegment().map(inst => {
                 const priceData = getPrice(inst.token, inst.pair, inst);
                 const pxUsd = priceData.ltp || inst.ltp || 0;
-                const displayLtp = (inst.isCrypto || inst.isForex) ? spotPxToDisplayedInr(inst, pxUsd, usdRate) : pxUsd;
+                const displayLtp = isUsdSpotInstrument(inst)
+                  ? spotQuoteDisplayPrice(inst, pxUsd, usdRate)
+                  : (inst.isCrypto || inst.isForex)
+                    ? spotPxToDisplayedInr(inst, pxUsd, usdRate)
+                    : pxUsd;
                 const rowKey = inst.token || inst.pair || inst.symbol;
                 const isSel = watchlistInstrumentKey(selectedInstrument) === watchlistInstrumentKey(inst);
                 return (
@@ -2317,7 +2364,17 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                         {inst.tradingSymbol || inst.symbol?.replace(/"/g, '') || inst.symbol}
                       </div>
                       <div className="text-sm font-medium text-gray-300 ml-2">
-                        {(inst.isCrypto || inst.isForex) ? `₹${displayLtp != null && !isNaN(displayLtp) ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}` : (displayLtp != null && !isNaN(displayLtp) ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--')}
+                        {isUsdSpotInstrument(inst)
+                          ? `${isForexInstrument(inst) ? '₹' : '$'}${
+                              displayLtp != null && !isNaN(displayLtp)
+                                ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                : '--'
+                            }`
+                          : (inst.isCrypto || inst.isForex)
+                            ? `₹${displayLtp != null && !isNaN(displayLtp) ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}`
+                            : displayLtp != null && !isNaN(displayLtp)
+                              ? displayLtp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                              : '--'}
                       </div>
                     </div>
                     
@@ -2574,9 +2631,11 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
       const isUsdSpot = isUsdSpotInstrument(selectedInstrument);
       const ltp = isForexInstrument(selectedInstrument)
         ? rawLtp * forexInrDisplayFactor(pairU, usdRate)
-        : isUsdSpot
-          ? spotPxToDisplayedInr(selectedInstrument, rawLtp, usdRate)
-          : rawLtp;
+        : isUsdSpotInstrument(selectedInstrument) && !isForexInstrument(selectedInstrument)
+          ? rawLtp
+          : isUsdSpot
+            ? spotPxToDisplayedInr(selectedInstrument, rawLtp, usdRate)
+            : rawLtp;
       const now = Math.floor(Date.now() / 1000);
       const intervalSeconds = getIntervalSeconds(chartInterval);
       const candleTime = Math.floor(now / intervalSeconds) * intervalSeconds;
@@ -2882,18 +2941,17 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
               {livePrice && (
                 <>
                   <span className={`font-mono font-bold ${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    ₹{isUsdSpotInstrument(selectedInstrument)
-                      ? (livePrice.ltp != null && !isNaN(livePrice.ltp) ? spotPxToDisplayedInr(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--')
-                      : (livePrice.ltp != null && !isNaN(livePrice.ltp) ? livePrice.ltp.toLocaleString(undefined, {}) : '--')}
+                    {isUsdSpotInstrument(selectedInstrument)
+                      ? livePrice.ltp != null && !isNaN(livePrice.ltp)
+                        ? `${isForexInstrument(selectedInstrument) ? '₹' : '$'}${spotQuoteDisplayPrice(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : '--'
+                      : livePrice.ltp != null && !isNaN(livePrice.ltp)
+                        ? livePrice.ltp.toLocaleString(undefined, {})
+                        : '--'}
                   </span>
                   <span className={`text-sm ${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {livePrice.change >= 0 ? '+' : ''}{(parseFloat(livePrice.changePercent) || 0).toFixed(2)}%
                   </span>
-                  {isUsdSpotInstrument(selectedInstrument) && livePrice.ltp != null && Number.isFinite(Number(livePrice.ltp)) && (
-                    <span className="text-gray-500 font-mono text-xs hidden sm:inline" title="Binance USDT quote (same as binance.com BTC/USDT)">
-                      · USDT {livePrice.ltp != null && !isNaN(livePrice.ltp) ? Number(livePrice.ltp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}
-                    </span>
-                  )}
                 </>
               )}
             </div>
@@ -2904,10 +2962,34 @@ const ChartPanel = ({ selectedInstrument, marketData, sidebarOpen, usdRate = 83.
           <div className="flex items-center gap-4 text-xs text-gray-400">
             {isUsdSpotInstrument(selectedInstrument) ? (
               <>
-                <span>O: ₹{livePrice.open != null && !isNaN(livePrice.open) ? spotPxToDisplayedInr(selectedInstrument, livePrice.open || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--'}</span>
-                <span>H: ₹{livePrice.high != null && !isNaN(livePrice.high) ? spotPxToDisplayedInr(selectedInstrument, livePrice.high || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--'}</span>
-                <span>L: ₹{livePrice.low != null && !isNaN(livePrice.low) ? spotPxToDisplayedInr(selectedInstrument, livePrice.low || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--'}</span>
-                <span>C: ₹{livePrice.close != null && !isNaN(livePrice.close) ? spotPxToDisplayedInr(selectedInstrument, livePrice.close || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--'}</span>
+                <span>
+                  O:{' '}
+                  {`${isForexInstrument(selectedInstrument) ? '₹' : '$'}`}
+                  {livePrice.open != null && !isNaN(livePrice.open)
+                    ? spotQuoteDisplayPrice(selectedInstrument, livePrice.open || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                    : '--'}
+                </span>
+                <span>
+                  H:{' '}
+                  {`${isForexInstrument(selectedInstrument) ? '₹' : '$'}`}
+                  {livePrice.high != null && !isNaN(livePrice.high)
+                    ? spotQuoteDisplayPrice(selectedInstrument, livePrice.high || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                    : '--'}
+                </span>
+                <span>
+                  L:{' '}
+                  {`${isForexInstrument(selectedInstrument) ? '₹' : '$'}`}
+                  {livePrice.low != null && !isNaN(livePrice.low)
+                    ? spotQuoteDisplayPrice(selectedInstrument, livePrice.low || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                    : '--'}
+                </span>
+                <span>
+                  C:{' '}
+                  {`${isForexInstrument(selectedInstrument) ? '₹' : '$'}`}
+                  {livePrice.close != null && !isNaN(livePrice.close)
+                    ? spotQuoteDisplayPrice(selectedInstrument, livePrice.close || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                    : '--'}
+                </span>
               </>
             ) : (
               <>
@@ -3521,19 +3603,23 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
           const isCryptoRow = pos.isCrypto || pos.segment === 'CRYPTO' || pos.exchange === 'BINANCE';
           const isForexRow = isForexInstrument(pos);
           const currencySymbol = '₹';
+          const cryptoPx = (inr) => {
+            const n = parseFloat(inr);
+            return Number.isFinite(n) && n !== 0 ? (n / usdRate).toFixed(2) : '0.00';
+          };
           return (
             <div key={pos._id} className="grid grid-cols-9 gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700">
               <div className="truncate text-purple-400 font-mono text-xs">{pos.userId || user?.userId || '-'}</div>
               <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{pos.symbol}</div>
               <div className={pos.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{pos.side}</div>
               <div className="text-right">{pos.quantity}</div>
-              <div className="text-right">{currencySymbol}{(parseFloat(pos.entryPrice) || 0).toFixed(2)}</div>
-              <div className="text-right">{currencySymbol}{(parseFloat(ltp) || 0).toFixed(2)}</div>
+              <div className="text-right">{isCryptoRow ? `$${cryptoPx(parseFloat(pos.entryPrice))}` : `${currencySymbol}${(parseFloat(pos.entryPrice) || 0).toFixed(2)}`}</div>
+              <div className="text-right">{isCryptoRow ? `$${cryptoPx(parseFloat(ltp))}` : `${currencySymbol}${(parseFloat(ltp) || 0).toFixed(2)}`}</div>
               <div className="text-right text-yellow-400" title={`Spread: ${pos.spread || 0} pts, Comm: ${currencySymbol}${pos.commission || 0}`}>
                 {currencySymbol}{(parseFloat(pos.commission) || 0).toFixed(2)}
               </div>
               <div className={`text-right font-medium ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {pnl >= 0 ? '+' : ''}{currencySymbol}{(parseFloat(pnl) || 0).toFixed(2)}
+                {pnl >= 0 ? '+' : ''}₹{(parseFloat(pnl) || 0).toFixed(2)}
               </div>
               <div className="text-center">
                 <button 
@@ -3565,6 +3651,11 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
                   usdRate
                 )
               : livePx;
+          const pendingEntryLabel =
+            isCryptoRow && !isForexRow && displayPx != null ? `$${(displayPx / usdRate).toFixed(2)}` : null;
+          const pendingLiveLabel =
+            isCryptoRow && !isForexRow && livePx > 0 ? `$${Number(livePx).toFixed(2)}` : null;
+
           return (
             <div key={order._id} className="grid grid-cols-9 gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700">
               <div className="truncate text-purple-400 font-mono text-xs">{order.userId || user?.userId || '-'}</div>
@@ -3572,10 +3663,14 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
               <div className={order.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{order.side}</div>
               <div className="text-right">{order.quantity}</div>
               <div className="text-right">
-                {displayPx != null ? `${currencySymbol}${displayPx.toFixed(2)}` : '—'}
+                {pendingEntryLabel != null
+                  ? pendingEntryLabel
+                  : displayPx != null
+                    ? `${currencySymbol}${displayPx.toFixed(2)}`
+                    : '—'}
               </div>
               <div className="text-right">
-                {livePxInr > 0 ? `${currencySymbol}${Number(livePxInr).toFixed(2)}` : '—'}
+                {pendingLiveLabel != null ? pendingLiveLabel : livePxInr > 0 ? `${currencySymbol}${Number(livePxInr).toFixed(2)}` : '—'}
               </div>
               <div className="text-right text-yellow-400">{currencySymbol}{(parseFloat(order.commission) || 0).toFixed(2)}</div>
               <div className="text-right text-gray-400">{order.orderType}</div>
@@ -3598,6 +3693,10 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
           const isCryptoRow = trade.isCrypto || trade.segment === 'CRYPTO' || trade.exchange === 'BINANCE';
           const isForexRow = isForexInstrument(trade);
           const currencySymbol = '₹';
+          const histCryptoPx = (inr) => {
+            const n = parseFloat(inr);
+            return Number.isFinite(n) && n !== 0 ? (n / usdRate).toFixed(2) : '0.00';
+          };
           // Calculate trade duration
           const getDuration = () => {
             if (!trade.openedAt || !trade.closedAt) return '-';
@@ -3618,8 +3717,8 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
               <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{trade.symbol}</div>
               <div className={trade.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{trade.side}</div>
               <div className="text-right">{trade.quantity}</div>
-              <div className="text-right">{currencySymbol}{(parseFloat(trade.entryPrice) || 0).toFixed(2)}</div>
-              <div className="text-right">{currencySymbol}{trade.exitPrice ? (parseFloat(trade.exitPrice) || 0).toFixed(2) : '-'}</div>
+              <div className="text-right">{isCryptoRow ? `$${histCryptoPx(parseFloat(trade.entryPrice))}` : `${currencySymbol}${(parseFloat(trade.entryPrice) || 0).toFixed(2)}`}</div>
+              <div className="text-right">{isCryptoRow ? (trade.exitPrice ? `$${histCryptoPx(parseFloat(trade.exitPrice))}` : '-') : `${currencySymbol}${trade.exitPrice ? (parseFloat(trade.exitPrice) || 0).toFixed(2) : '-'}`}</div>
               <div className="text-right text-yellow-400">{currencySymbol}{(parseFloat(trade.commission) || 0).toFixed(2)}</div>
               <div className={`text-right font-medium ${(trade.netPnL || trade.realizedPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {(trade.netPnL || trade.realizedPnL || 0) >= 0 ? '+' : ''}{currencySymbol}{(parseFloat(trade.netPnL || trade.realizedPnL) || 0).toFixed(2)}
@@ -3688,8 +3787,8 @@ const TradingPanel = ({
   const [success, setSuccess] = useState('');
   const [showSettingsInfo, setShowSettingsInfo] = useState(false);
   
-  // Crypto: amount = INR; units = base qty; lots = 0.25-step contract lots (× lotSize from margin preview)
-  const [cryptoAmount, setCryptoAmount] = useState('10000');
+  // Crypto: amount-mode = USD notional (converted to ₹ for wallet/API); units = base qty; lots = stepped lots
+  const [cryptoAmount, setCryptoAmount] = useState('150');
   const [cryptoInputMode, setCryptoInputMode] = useState('amount'); // 'amount' | 'units' | 'lots' (lots = crypto only)
   const [cryptoLotInput, setCryptoLotInput] = useState('1');
   const [intradayOnly, setIntradayOnly] = useState(false);
@@ -3726,14 +3825,14 @@ const TradingPanel = ({
       ? roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0) * baseQtyPerCryptoLot
       : cryptoInputMode === 'amount'
         ? cryptoUnitNotionalInr > 0
-          ? (parseFloat(cryptoAmount) || 0) / cryptoUnitNotionalInr
+          ? ((parseFloat(cryptoAmount) || 0) * (isCryptoOnly ? usdRate : 1)) / cryptoUnitNotionalInr
           : 0
         : parseFloat(cryptoAmount) || 0;
   const cryptoTotalCost =
     isCryptoOnly && cryptoInputMode === 'lots'
     ? (cryptoUnitNotionalInr > 0 ? cryptoUnits * cryptoUnitNotionalInr : 0)
     : cryptoInputMode === 'amount'
-      ? parseFloat(cryptoAmount) || 0
+      ? (isCryptoOnly ? (parseFloat(cryptoAmount) || 0) * usdRate : parseFloat(cryptoAmount) || 0)
       : cryptoUnitNotionalInr > 0
         ? (parseFloat(cryptoAmount) || 0) * cryptoUnitNotionalInr
         : 0;
@@ -3747,18 +3846,17 @@ const TradingPanel = ({
     isUsdSpot && segmentSpreadInr > 0
       ? adjustUsdSpotBidAskForSegmentSpread(liveBid, liveAsk, segmentSpreadInr, usdRate)
       : { bidUsd: liveBid, askUsd: liveAsk };
-  const cryptoBidInr =
-    isUsdSpot && displayBidAsk.bidUsd && instrument
-      ? spotPxToDisplayedInr(instrument, Number(displayBidAsk.bidUsd), usdRate)
-      : null;
-  const cryptoAskInr =
-    isUsdSpot && displayBidAsk.askUsd && instrument
-      ? spotPxToDisplayedInr(instrument, Number(displayBidAsk.askUsd), usdRate)
-      : null;
-  const cryptoRefInr =
-    isUsdSpot && livePrice && instrument ? spotPxToDisplayedInr(instrument, Number(livePrice), usdRate) : null;
+  const stripeBidPx =
+    isUsdSpot && displayBidAsk.bidUsd != null && instrument != null && !isNaN(Number(displayBidAsk.bidUsd))
+      ? spotQuoteDisplayPrice(instrument, Number(displayBidAsk.bidUsd), usdRate)
+      : liveBid;
+  const stripeAskPx =
+    isUsdSpot && displayBidAsk.askUsd != null && instrument != null && !isNaN(Number(displayBidAsk.askUsd))
+      ? spotQuoteDisplayPrice(instrument, Number(displayBidAsk.askUsd), usdRate)
+      : liveAsk;
 
-  const priceSymbol = '₹';
+  const priceSymbol =
+    isCryptoOnly ? '$' : '₹';
 
   // Fetch available leverages and market status
   useEffect(() => {
@@ -3817,23 +3915,34 @@ const TradingPanel = ({
     setCryptoLotInput('1');
   }, [instrument?.token, instrument?.pair, instrument?.symbol]);
 
-  // When instrument changes, seed price + limit from the current quote (crypto → INR)
+  // When instrument changes, seed price + limit (crypto spot = USDT; forex/US₹ spot = ₹)
   useEffect(() => {
     if (!livePrice || !instrument) return;
     if (isUsdSpot) {
-      const p = spotPxToDisplayedInr(instrument, Number(livePrice), usdRate).toString();
+      const p = isCryptoOnly
+        ? String(Number(livePrice))
+        : spotPxToDisplayedInr(instrument, Number(livePrice), usdRate).toString();
       setPrice(p);
       setLimitPrice(p);
     } else {
       setPrice(livePrice.toString());
       setLimitPrice(livePrice.toString());
     }
-  }, [instrument?.token, instrument?.pair, instrument?.symbol, isUsdSpot]);
+  }, [instrument?.token, instrument?.pair, instrument?.symbol, isUsdSpot, isCryptoOnly]);
 
   useEffect(() => {
     if (!isUsdSpot || !livePrice || !instrument) return;
-    setPrice(spotPxToDisplayedInr(instrument, Number(livePrice), usdRate).toString());
-  }, [livePrice, isUsdSpot, usdRate, instrument]);
+    setPrice(
+      isCryptoOnly
+        ? String(Number(livePrice))
+        : spotPxToDisplayedInr(instrument, Number(livePrice), usdRate).toString()
+    );
+    setLimitPrice(
+      isCryptoOnly
+        ? String(Number(livePrice))
+        : spotPxToDisplayedInr(instrument, Number(livePrice), usdRate).toString()
+    );
+  }, [livePrice, isUsdSpot, usdRate, instrument, isCryptoOnly]);
 
   // Determine segment type from database fields
   const isEquity = instrument?.segment === 'EQUITY' && instrument?.instrumentType === 'STOCK';
@@ -4015,8 +4124,20 @@ const TradingPanel = ({
         bidPrice: liveBid,
         askPrice: liveAsk,
         leverage: isCryptoOnly ? 1 : leverage,
-        stopLoss: stopLoss ? (isUsdSpot ? parseFloat(stopLoss) / usdRate : parseFloat(stopLoss)) : null,
-        target: target ? (isUsdSpot ? parseFloat(target) / usdRate : parseFloat(target)) : null,
+        stopLoss: stopLoss
+          ? isUsdSpot
+            ? isCryptoOnly
+              ? parseFloat(stopLoss)
+              : parseFloat(stopLoss) / usdRate
+            : parseFloat(stopLoss)
+          : null,
+        target: target
+          ? isUsdSpot
+            ? isCryptoOnly
+              ? parseFloat(target)
+              : parseFloat(target) / usdRate
+            : parseFloat(target)
+          : null,
         cryptoAmount: isUsdSpot ? cryptoTotalCost : null,
         forexAmount: isForex ? cryptoTotalCost : null,
         intradayOnly: intradayOnly
@@ -4032,11 +4153,15 @@ const TradingPanel = ({
 
       // Add limit price for LIMIT orders
       if (orderMode === 'LIMIT') {
-        orderData.limitPrice = isUsdSpot ? parseFloat(limitPrice) / usdRate : parseFloat(limitPrice);
+        orderData.limitPrice = isUsdSpot
+          ? (isCryptoOnly ? parseFloat(limitPrice) : parseFloat(limitPrice) / usdRate)
+          : parseFloat(limitPrice);
       }
       // Add trigger price for SL orders
       if (orderMode === 'SL' || orderMode === 'SL-M') {
-        orderData.triggerPrice = isUsdSpot ? parseFloat(limitPrice) / usdRate : parseFloat(limitPrice);
+        orderData.triggerPrice = isUsdSpot
+          ? (isCryptoOnly ? parseFloat(limitPrice) : parseFloat(limitPrice) / usdRate)
+          : parseFloat(limitPrice);
       }
 
       const { data } = await axios.post('/api/trading/order', orderData, {
@@ -4235,8 +4360,8 @@ const TradingPanel = ({
             orderType === 'sell' ? 'bg-red-600 text-white' : 'bg-dark-700 text-gray-400'
           }`}
         >
-          <div className="text-xs opacity-70">{isUsdSpot ? 'Bid (₹)' : 'Bid'}</div>
-          <div className="text-lg">{priceSymbol}{(isUsdSpot ? cryptoBidInr : liveBid) != null && !isNaN(isUsdSpot ? cryptoBidInr : liveBid) ? (isUsdSpot ? cryptoBidInr : liveBid).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
+          <div className="text-xs opacity-70">{isUsdSpot ? (isCryptoOnly ? 'Bid ($)' : 'Bid (₹)') : 'Bid'}</div>
+          <div className="text-lg">{priceSymbol}{stripeBidPx != null && !isNaN(stripeBidPx) ? stripeBidPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
           <div className="text-xs">SELL</div>
         </button>
         <button
@@ -4245,8 +4370,8 @@ const TradingPanel = ({
             orderType === 'buy' ? 'bg-green-600 text-white' : 'bg-dark-700 text-gray-400'
           }`}
         >
-          <div className="text-xs opacity-70">{isUsdSpot ? 'Ask (₹)' : 'Ask'}</div>
-          <div className="text-lg">{priceSymbol}{(isUsdSpot ? cryptoAskInr : liveAsk) != null && !isNaN(isUsdSpot ? cryptoAskInr : liveAsk) ? (isUsdSpot ? cryptoAskInr : liveAsk).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
+          <div className="text-xs opacity-70">{isUsdSpot ? (isCryptoOnly ? 'Ask ($)' : 'Ask (₹)') : 'Ask'}</div>
+          <div className="text-lg">{priceSymbol}{stripeAskPx != null && !isNaN(stripeAskPx) ? stripeAskPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}</div>
           <div className="text-xs">BUY</div>
         </button>
       </div>
@@ -4392,7 +4517,7 @@ const TradingPanel = ({
                   cryptoInputMode === 'amount' ? (isForex ? 'bg-cyan-600 text-white' : 'bg-orange-600 text-white') : 'bg-dark-700 text-gray-400'
                 }`}
               >
-                ₹ Amount
+                {isCryptoOnly ? '$ Amount' : '₹ Amount'}
               </button>
               <button
                 type="button"
@@ -4418,7 +4543,9 @@ const TradingPanel = ({
             
             <label className="block text-xs text-gray-400 mb-2">
               {cryptoInputMode === 'amount'
-                ? 'Amount (INR)'
+                ? isCryptoOnly
+                  ? 'Amount (USD)'
+                  : 'Amount (INR)'
                 : cryptoInputMode === 'units'
                   ? `${instrument?.symbol} Units`
                   : `Lots (min ${CRYPTO_LOT_MIN_STEP}, step ${CRYPTO_LOT_MIN_STEP} × ${baseQtyPerCryptoLot} ${instrument?.symbol} / lot)`}
@@ -4461,30 +4588,36 @@ const TradingPanel = ({
             ) : (
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                  {cryptoInputMode === 'amount' ? '₹' : ''}
+                  {cryptoInputMode === 'amount' ? (isCryptoOnly ? '$' : '₹') : ''}
                 </span>
                 <input
                   type="number"
                   value={cryptoAmount}
                   onChange={(e) => setCryptoAmount(e.target.value)}
-                  placeholder={cryptoInputMode === 'amount' ? 'Enter INR amount' : 'Enter units'}
+                  placeholder={cryptoInputMode === 'amount' ? (isCryptoOnly ? 'USD notional' : 'Enter INR amount') : 'Enter units'}
                   className={`w-full bg-dark-700 border border-dark-600 rounded px-3 py-3 text-lg font-bold focus:outline-none focus:border-orange-500 ${cryptoInputMode === 'amount' ? 'pl-8' : ''}`}
                   step="any"
                 />
               </div>
             )}
             
-            {/* Quick INR notional presets */}
+            {/* Quick notional presets: USD for crypto wallet path, ₹ for forex */}
             {!(isCryptoOnly && cryptoInputMode === 'lots') && (
             <div className="flex gap-1 mt-2 flex-wrap">
-              {[5000, 10000, 25000, 50000, 100000].map((amt) => (
+              {(isCryptoOnly ? [100, 250, 500, 1000, 2500, 5000] : [5000, 10000, 25000, 50000, 100000]).map((amt) => (
                 <button
                   type="button"
                   key={amt}
                   onClick={() => { setCryptoInputMode('amount'); setCryptoAmount(amt.toString()); }}
-                  className={`flex-1 min-w-[52px] py-1 text-xs rounded ${cryptoAmount === amt.toString() && cryptoInputMode === 'amount' ? 'bg-orange-600' : 'bg-dark-600 hover:bg-dark-500'}`}
+                  className={`flex-1 min-w-[52px] py-1 text-xs rounded ${
+                    cryptoAmount === amt.toString() && cryptoInputMode === 'amount'
+                      ? isForex
+                        ? 'bg-cyan-600'
+                        : 'bg-orange-600'
+                      : 'bg-dark-600 hover:bg-dark-500'
+                  }`}
                 >
-                  ₹{amt / 1000}k
+                  {isCryptoOnly ? (amt >= 1000 ? `$${amt / 1000}k` : `$${amt}`) : `₹${amt / 1000}k`}
                 </button>
               ))}
             </div>
@@ -4497,8 +4630,12 @@ const TradingPanel = ({
                 <span className="text-orange-400 font-bold">{cryptoUnits.toFixed(6)} {instrument?.symbol}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">@ Price (₹)</span>
-                <span className="text-white">₹{cryptoUnitNotionalInr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span className="text-gray-400">{isCryptoOnly ? '@ Price (USD)' : '@ Price (₹)'}</span>
+                <span className="text-white">
+                  {isCryptoOnly
+                    ? `$${Number(cryptoUnitPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : `₹${cryptoUnitNotionalInr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                </span>
               </div>
               <div className="flex justify-between text-sm border-t border-dark-500 pt-1">
                 <span className="text-gray-400">Total (₹)</span>
@@ -4601,13 +4738,30 @@ const TradingPanel = ({
           <div>
             <label className="block text-xs text-gray-400 mb-2">
               {orderMode === 'LIMIT' ? 'Limit Price' : 'Trigger Price'}
-              {isUsdSpot && <span className="text-orange-400/90"> (₹ per unit)</span>}
+              {isUsdSpot && (
+                <span className="text-orange-400/90">
+                  {' '}
+                  {isCryptoOnly ? '(USDT per unit)' : '(₹ per unit)'}
+                </span>
+              )}
             </label>
             <input
               type="number"
               value={limitPrice}
               onChange={(e) => setLimitPrice(e.target.value)}
-              placeholder={orderMode === 'LIMIT' ? (isUsdSpot ? 'Limit in INR per unit' : 'Enter limit price') : (isUsdSpot ? 'Trigger in INR per unit' : 'Enter trigger price')}
+              placeholder={
+                orderMode === 'LIMIT'
+                  ? isUsdSpot
+                    ? isCryptoOnly
+                      ? 'Limit (USDT per unit)'
+                      : 'Limit in INR per unit'
+                    : 'Enter limit price'
+                  : isUsdSpot
+                    ? isCryptoOnly
+                      ? 'Trigger (USDT per unit)'
+                      : 'Trigger in INR per unit'
+                    : 'Enter trigger price'
+              }
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 focus:outline-none focus:border-green-500"
             />
             <div className="text-xs text-gray-500 mt-1">
@@ -4622,22 +4776,26 @@ const TradingPanel = ({
         {/* Stop Loss & Target */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs text-gray-400 mb-2">Stop Loss (Optional){isUsdSpot && <span className="text-orange-400/90"> ₹</span>}</label>
+            <label className="block text-xs text-gray-400 mb-2">
+              Stop Loss (Optional){isUsdSpot && <span className="text-orange-400/90">{isCryptoOnly ? ' $' : ' ₹'}</span>}
+            </label>
             <input
               type="number"
               value={stopLoss}
               onChange={(e) => setStopLoss(e.target.value)}
-              placeholder={isUsdSpot ? 'SL in INR' : 'SL Price'}
+              placeholder={isUsdSpot ? (isCryptoOnly ? 'SL in USD' : 'SL in INR') : 'SL Price'}
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-red-500"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-2">Target (Optional){isUsdSpot && <span className="text-orange-400/90"> ₹</span>}</label>
+            <label className="block text-xs text-gray-400 mb-2">
+              Target (Optional){isUsdSpot && <span className="text-orange-400/90">{isCryptoOnly ? ' $' : ' ₹'}</span>}
+            </label>
             <input
               type="number"
               value={target}
               onChange={(e) => setTarget(e.target.value)}
-              placeholder={isUsdSpot ? 'Target in INR' : 'Target Price'}
+              placeholder={isUsdSpot ? (isCryptoOnly ? 'Target in USD' : 'Target in INR') : 'Target Price'}
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-green-500"
             />
           </div>
@@ -5414,7 +5572,11 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                     </div>
                     <div className="text-right mr-2">
                       <div className="text-sm font-medium text-gray-300">
-                        ₹{spotPxToDisplayedInr(crypto, priceData.ltp || 0, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {`$${spotQuoteDisplayPrice(
+                          { ...crypto, segment: 'CRYPTO' },
+                          priceData.ltp || 0,
+                          usdRate
+                        ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
@@ -5545,6 +5707,10 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
           ) : (
             getWatchlist().map(inst => {
               const priceData = getPrice(inst.token);
+              const pxNum = Number(priceData.ltp || 0);
+              const priceLine = isUsdSpotInstrument(inst)
+                ? `${isForexInstrument(inst) ? '₹' : '$'}${spotQuoteDisplayPrice(inst, pxNum, usdRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : pxNum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
               return (
                 <div
                   key={inst.token}
@@ -5558,7 +5724,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                       inst.optionType === 'CE' ? 'text-green-400' :
                       inst.optionType === 'PE' ? 'text-red-400' : 'text-white'
                     }`}>{inst.tradingSymbol || inst.symbol?.replace(/"/g, '') || inst.symbol}</div>
-                    <div className="text-sm text-gray-300 ml-2">{parseFloat(priceData.ltp || 0).toFixed(2)}</div>
+                    <div className="text-sm text-gray-300 ml-2">{priceLine}</div>
                   </div>
                   {/* Bottom row: Category, Change %, and Buttons */}
                   <div className="flex items-center justify-between w-full mt-1">
@@ -5731,9 +5897,13 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
         const raw = Number(livePrice.ltp);
         if (!Number.isFinite(raw)) return;
         const tick =
-          selectedInstrument && isUsdSpotInstrument(selectedInstrument)
-            ? spotPxToDisplayedInr(selectedInstrument, raw, usdRate)
-            : raw;
+          selectedInstrument &&
+          isUsdSpotInstrument(selectedInstrument) &&
+          !isForexInstrument(selectedInstrument)
+            ? raw
+            : selectedInstrument && isUsdSpotInstrument(selectedInstrument)
+              ? spotPxToDisplayedInr(selectedInstrument, raw, usdRate)
+              : raw;
         const now = Math.floor(Date.now() / 1000);
         const candleTime = Math.floor(now / 900) * 900; // 15 min candles
         const lastTime = typeof lastCandleRef.current.time === 'number' 
@@ -5787,9 +5957,13 @@ const MobileChartPanel = ({ selectedInstrument, onBuySell, onBack, marketData = 
               {livePrice && (
                 <>
                   <span className={`font-mono font-bold ${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    ₹{selectedInstrument && isUsdSpotInstrument(selectedInstrument)
-                      ? (livePrice.ltp != null && !isNaN(livePrice.ltp) ? spotPxToDisplayedInr(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '--')
-                      : (livePrice.ltp != null && !isNaN(livePrice.ltp) ? livePrice.ltp.toLocaleString() : '--')}
+                    {selectedInstrument && isUsdSpotInstrument(selectedInstrument)
+                      ? livePrice.ltp != null && !isNaN(livePrice.ltp)
+                        ? `${isForexInstrument(selectedInstrument) ? '₹' : '$'}${spotQuoteDisplayPrice(selectedInstrument, livePrice.ltp || 0, usdRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                        : '--'
+                      : livePrice.ltp != null && !isNaN(livePrice.ltp)
+                        ? livePrice.ltp.toLocaleString()
+                        : '--'}
                   </span>
                   <span className={`${livePrice.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                     {livePrice.change >= 0 ? '+' : ''}{(parseFloat(livePrice.changePercent) || 0).toFixed(2)}%
@@ -8150,17 +8324,17 @@ const BuySellModal = ({
     isUsdSpot && segmentSpreadInr > 0
       ? adjustUsdSpotBidAskForSegmentSpread(liveBid, liveAsk, segmentSpreadInr, usdRate)
       : { bidUsd: liveBid, askUsd: liveAsk };
-  const bidInr =
-    isUsdSpot && displayBidAsk.bidUsd && instrument
-      ? spotPxToDisplayedInr(instrument, Number(displayBidAsk.bidUsd), usdRate)
-      : liveBid || 0;
-  const askInr =
-    isUsdSpot && displayBidAsk.askUsd && instrument
-      ? spotPxToDisplayedInr(instrument, Number(displayBidAsk.askUsd), usdRate)
-      : liveAsk || 0;
+  const bidDisp =
+    isUsdSpot && displayBidAsk.bidUsd != null && effectiveInstrument
+      ? spotQuoteDisplayPrice(effectiveInstrument, Number(displayBidAsk.bidUsd), usdRate)
+      : Number(liveBid) || 0;
+  const askDisp =
+    isUsdSpot && displayBidAsk.askUsd != null && effectiveInstrument
+      ? spotQuoteDisplayPrice(effectiveInstrument, Number(displayBidAsk.askUsd), usdRate)
+      : Number(liveAsk) || 0;
   const ltpInr =
-    ltp > 0 && instrument && isUsdSpot
-      ? spotPxToDisplayedInr(instrument, Number(ltp), usdRate)
+    ltp > 0 && effectiveInstrument && isUsdSpot
+      ? spotPxToDisplayedInr(effectiveInstrument, Number(ltp), usdRate)
       : ltp > 0
         ? Number(ltp)
         : 0;
@@ -8213,14 +8387,28 @@ const BuySellModal = ({
         bidPrice: liveBid,
         askPrice: liveAsk,
         leverage: isCryptoOnly ? 1 : (isUsdSpot ? leverage : 1),
-        takeProfit: takeProfit ? (isUsdSpot ? parseFloat(takeProfit) / usdRate : parseFloat(takeProfit)) : null,
-        stopLoss: stopLoss ? (isUsdSpot ? parseFloat(stopLoss) / usdRate : parseFloat(stopLoss)) : null,
+        takeProfit: takeProfit
+          ? isUsdSpot
+            ? isCryptoOnly
+              ? parseFloat(takeProfit)
+              : parseFloat(takeProfit) / usdRate
+            : parseFloat(takeProfit)
+          : null,
+        stopLoss: stopLoss
+          ? isUsdSpot
+            ? isCryptoOnly
+              ? parseFloat(stopLoss)
+              : parseFloat(stopLoss) / usdRate
+            : parseFloat(stopLoss)
+          : null,
         cryptoAmount: isCryptoOnly ? inrNotionalCalc : null,
         forexAmount: isForex ? inrNotionalCalc : null
       };
 
       if (orderPriceType === 'LIMIT') {
-        orderData.limitPrice = isUsdSpot ? parseFloat(limitPrice) / usdRate : parseFloat(limitPrice);
+        orderData.limitPrice = isUsdSpot
+          ? (isCryptoOnly ? parseFloat(limitPrice) : parseFloat(limitPrice) / usdRate)
+          : parseFloat(limitPrice);
       }
 
       const { data } = await axios.post('/api/trading/order', orderData, {
@@ -8301,8 +8489,13 @@ const BuySellModal = ({
                   : 'bg-[#1a1a1a] text-gray-400 hover:bg-[#252525]'
               }`}
             >
-              <div className="text-[10px] uppercase tracking-wide opacity-70">SELL @ Bid (₹)</div>
-              <div className="text-xl font-mono">₹{(bidInr != null && !isNaN(bidInr) ? bidInr : 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              <div className="text-[10px] uppercase tracking-wide opacity-70">
+                SELL @ Bid {isCryptoOnly ? '($)' : '(₹)'}
+              </div>
+              <div className="text-xl font-mono">
+                {isCryptoOnly ? '$' : '₹'}
+                {(bidDisp != null && !isNaN(bidDisp) ? bidDisp : 0).toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
             </button>
             <button
               onClick={() => setOrderType('buy')}
@@ -8312,8 +8505,13 @@ const BuySellModal = ({
                   : 'bg-[#1a1a1a] text-gray-400 hover:bg-[#252525]'
               }`}
             >
-              <div className="text-[10px] uppercase tracking-wide opacity-70">BUY @ Ask (₹)</div>
-              <div className="text-xl font-mono">₹{(askInr != null && !isNaN(askInr) ? askInr : 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              <div className="text-[10px] uppercase tracking-wide opacity-70">
+                BUY @ Ask {isCryptoOnly ? '($)' : '(₹)'}
+              </div>
+              <div className="text-xl font-mono">
+                {isCryptoOnly ? '$' : '₹'}
+                {(askDisp != null && !isNaN(askDisp) ? askDisp : 0).toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
             </button>
           </div>
 

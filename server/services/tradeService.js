@@ -7,7 +7,7 @@ import WalletLedger from '../models/WalletLedger.js';
 import Instrument from '../models/Instrument.js';
 import SystemSettings from '../models/SystemSettings.js';
 import { getUsdInrRate } from '../utils/usdInr.js';
-import { orderIsUsdSpot } from '../utils/tradingUsdSpot.js';
+import { orderIsUsdSpot, orderIsForex } from '../utils/tradingUsdSpot.js';
 import {
   adminReceivesHierarchyBrokerage,
   resolveHierarchyBrokerageRecipient,
@@ -28,6 +28,34 @@ class TradeService {
     if (!segmentMap) return {};
     if (segmentMap instanceof Map) return Object.fromEntries(segmentMap);
     return typeof segmentMap === 'object' ? segmentMap : {};
+  }
+
+  /**
+   * USD spot: if segment `cryptoSpreadInr` is missing/0, apply Super Admin default (adminSegmentDefaults).
+   */
+  static async mergeUsdSpotSpreadFromSuperAdmin(segmentSettings, tradeData) {
+    if (!orderIsUsdSpot(tradeData)) return segmentSettings;
+    const w = Number(segmentSettings?.cryptoSpreadInr);
+    if (Number.isFinite(w) && w > 0) return segmentSettings;
+
+    let key = 'CRYPTO';
+    if (orderIsForex(tradeData)) {
+      const ds = String(tradeData.displaySegment || '').toUpperCase();
+      const seg = String(tradeData.segment || '').toUpperCase();
+      key = ds === 'FOREXOPT' || seg === 'FOREXOPT' ? 'FOREXOPT' : 'FOREXFUT';
+    }
+
+    try {
+      const sys = await SystemSettings.getSettings();
+      const raw = sys?.adminSegmentDefaults;
+      const asd =
+        raw instanceof Map ? Object.fromEntries(raw) : raw && typeof raw === 'object' ? { ...raw } : {};
+      const def = Number(asd[key]?.cryptoSpreadInr);
+      if (!Number.isFinite(def) || def <= 0) return segmentSettings;
+      return { ...segmentSettings, cryptoSpreadInr: def };
+    } catch {
+      return segmentSettings;
+    }
   }
 
   /** Compare current Asia/Kolkata clock to HH:mm or HH:mm:ss (24h). Invalid / empty pattern → treat as allowed. */
@@ -603,7 +631,8 @@ class TradeService {
     }
     
     // 3. Get user's segment and script settings
-    const segmentSettings = this.getUserSegmentSettings(user, tradeData.segment, tradeData.instrumentType);
+    let segmentSettings = this.getUserSegmentSettings(user, tradeData.segment, tradeData.instrumentType);
+    segmentSettings = await this.mergeUsdSpotSpreadFromSuperAdmin(segmentSettings, tradeData);
     const orInst = [];
     if (tradeData.token) orInst.push({ token: tradeData.token.toString() });
     if (tradeData.symbol && tradeData.exchange) {

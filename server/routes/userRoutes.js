@@ -1,6 +1,7 @@
 import express from 'express';
 import User from '../models/User.js';
 import Admin from '../models/Admin.js';
+import SystemSettings from '../models/SystemSettings.js';
 import BankSettings from '../models/BankSettings.js';
 import BankAccount from '../models/BankAccount.js';
 import FundRequest from '../models/FundRequest.js';
@@ -1479,14 +1480,30 @@ router.get('/settings', protectUser, async (req, res) => {
     // Build segment permissions with defaults for missing segments
     const userSegments = user.segmentPermissions || {};
     const segmentPermissions = {};
+
+    let adminSegmentDefaultsPlain = {};
+    try {
+      const sys = await SystemSettings.getSettings().catch(() => null);
+      const asd = sys?.adminSegmentDefaults;
+      adminSegmentDefaultsPlain =
+        asd && (asd instanceof Map ? Object.fromEntries(asd) : typeof asd === 'object' ? { ...asd } : {});
+    } catch {
+      adminSegmentDefaultsPlain = {};
+    }
+
     const legacyForex = userSegments.FOREX || userSegments.forex;
-    
-    allSegments.forEach(segment => {
+
+    allSegments.forEach((segment) => {
       let perm = userSegments[segment];
       if (!perm && legacyForex && (segment === 'FOREXFUT' || segment === 'FOREXOPT')) {
         perm = legacyForex;
       }
-      segmentPermissions[segment] = perm || { ...defaultSegment };
+      const fromAdminDefaults = adminSegmentDefaultsPlain[segment] || {};
+      const base = {
+        ...defaultSegment,
+        ...fromAdminDefaults,
+      };
+      segmentPermissions[segment] = perm ? { ...base, ...perm } : base;
     });
     
     res.json({
