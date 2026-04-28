@@ -4020,13 +4020,26 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         if (!time && gameResult) {
           time = niftyWindowEndClock(winNum);
         }
-        
+
+        const clock = niftyWindowEndClock(winNum);
+        const displayTime = time || clock;
+
+        /** Always show last 4 legs (e.g. W18 @ 13:45 close) — if Kite/DB has not written GameResult yet, show row + "pending" instead of hiding the window. */
         if (ltp && ltp > 0) {
           history.push({
             windowNumber: winNum,
-            ltp: ltp,
-            time: time,
-            source: source
+            ltp,
+            time: displayTime,
+            source,
+            missing: false,
+          });
+        } else {
+          history.push({
+            windowNumber: winNum,
+            ltp: null,
+            time: displayTime,
+            source,
+            missing: true,
           });
         }
       }
@@ -4128,13 +4141,31 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                   </span>
                 )}
               </div>
-              <div className="text-right">
-                <div className="text-sm font-bold text-cyan-400 font-mono">
-                  {isBTC ? '$' : '₹'}{item.ltp.toLocaleString(undefined, { 
-                    minimumFractionDigits: 2, 
-                    maximumFractionDigits: 2 
-                  })}
+              <div className="text-right min-w-0">
+                <div
+                  className={`text-sm font-bold font-mono ${
+                    item.missing ? 'text-gray-400' : 'text-cyan-400'
+                  }`}
+                >
+                  {item.ltp != null && Number(item.ltp) > 0 ? (
+                    <>
+                      {isBTC ? '$' : '₹'}
+                      {Number(item.ltp).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </>
+                  ) : (
+                    <span title="Official 15m close not loaded — Zerodha bar may still be syncing">
+                      —
+                    </span>
+                  )}
                 </div>
+                {item.missing && (
+                  <div className="text-[9px] text-amber-400/90 mt-0.5 leading-tight max-w-[200px] ml-auto">
+                    Awaiting 15m candle close — price appears when GameResult saves (Kite).
+                  </div>
+                )}
                 {item.time && (
                   <div className="text-[10px] text-gray-500">
                     {(() => {
