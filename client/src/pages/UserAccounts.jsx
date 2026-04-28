@@ -9,6 +9,8 @@ import {
   Bitcoin,
   ClipboardList,
   Landmark,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { GAMES_LEDGER_FILTER_OPTIONS } from '../components/games/GamesWalletGameLedgerPanel.jsx';
 import { formatGamesLedgerWhen } from '../lib/gamesLedgerWhen.js';
@@ -43,6 +45,13 @@ const UserAccounts = () => {
   const [showMcxOrders, setShowMcxOrders] = useState(false);
   const [mcxOrders, setMcxOrders] = useState([]);
   const [mcxOrdersLoading, setMcxOrdersLoading] = useState(false);
+
+  const [showCryptoTransferLedger, setShowCryptoTransferLedger] = useState(false);
+  const [cryptoTransferLedger, setCryptoTransferLedger] = useState([]);
+  const [cryptoTransferLedgerLoading, setCryptoTransferLedgerLoading] = useState(false);
+  const [showForexTransferLedger, setShowForexTransferLedger] = useState(false);
+  const [forexTransferLedger, setForexTransferLedger] = useState([]);
+  const [forexTransferLedgerLoading, setForexTransferLedgerLoading] = useState(false);
   
   // Wallet transfer dropdown state
   const [showWalletTransferDropdown, setShowWalletTransferDropdown] = useState(null); // null, 'trading', 'mcx', 'games', 'crypto', 'forex'
@@ -166,6 +175,60 @@ const UserAccounts = () => {
   const toggleMcxOrders = () => {
     setShowMcxOrders((prev) => !prev);
   };
+
+  const formatIstLedgerTime = (iso) => {
+    if (!iso) return '—';
+    try {
+      const d = typeof iso === 'string' ? new Date(iso) : new Date(iso);
+      if (Number.isNaN(d.getTime())) return '—';
+      return d.toLocaleString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+        timeZone: 'Asia/Kolkata',
+      });
+    } catch {
+      return '—';
+    }
+  };
+
+  const fetchCryptoTransferLedger = useCallback(async () => {
+    if (!user?.token) return;
+    setCryptoTransferLedgerLoading(true);
+    try {
+      const { data } = await axios.get('/api/user/funds/subwallet-transfer-ledger', {
+        params: { wallet: 'crypto', limit: 50 },
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setCryptoTransferLedger(Array.isArray(data?.entries) ? data.entries : []);
+    } catch (e) {
+      console.error('Crypto transfer ledger:', e);
+      setCryptoTransferLedger([]);
+    } finally {
+      setCryptoTransferLedgerLoading(false);
+    }
+  }, [user?.token]);
+
+  const fetchForexTransferLedger = useCallback(async () => {
+    if (!user?.token) return;
+    setForexTransferLedgerLoading(true);
+    try {
+      const { data } = await axios.get('/api/user/funds/subwallet-transfer-ledger', {
+        params: { wallet: 'forex', limit: 50 },
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setForexTransferLedger(Array.isArray(data?.entries) ? data.entries : []);
+    } catch (e) {
+      console.error('Forex transfer ledger:', e);
+      setForexTransferLedger([]);
+    } finally {
+      setForexTransferLedgerLoading(false);
+    }
+  }, [user?.token]);
 
   const openGamesTransfer = (direction) => {
     setGamesTransferDirection(direction);
@@ -873,6 +936,63 @@ const UserAccounts = () => {
               View crypto orders
             </button>
 
+            <button
+              type="button"
+              onClick={() => {
+                setShowCryptoTransferLedger((prev) => {
+                  const next = !prev;
+                  if (next) fetchCryptoTransferLedger();
+                  return next;
+                });
+              }}
+              className="mt-2 w-full py-2 text-sm font-medium text-orange-300/90 border border-orange-500/25 rounded-lg hover:bg-orange-500/10 flex items-center justify-center gap-2 transition"
+            >
+              <History size={16} />
+              Transfer ledger
+              {showCryptoTransferLedger ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+
+            {showCryptoTransferLedger && (
+              <div className="mt-2 rounded-lg border border-orange-500/20 bg-dark-900/50 max-h-56 overflow-y-auto">
+                {cryptoTransferLedgerLoading ? (
+                  <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
+                ) : cryptoTransferLedger.length === 0 ? (
+                  <p className="text-center text-xs text-gray-500 py-4 px-2 leading-snug">
+                    No transfers yet. Deposits/withdrawals between Main and this account, and transfers through Transfer, appear here with time and amount.
+                  </p>
+                ) : (
+                  <table className="w-full text-[11px]">
+                    <thead className="sticky top-0 bg-dark-800/95 text-gray-400 border-b border-dark-600">
+                      <tr>
+                        <th className="text-left p-2 font-medium">When (IST)</th>
+                        <th className="text-right p-2 font-medium">Amount</th>
+                        <th className="text-left p-2 font-medium">From → To</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cryptoTransferLedger.map((row) => (
+                        <tr key={row.id} className="border-t border-dark-700/80">
+                          <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
+                          <td className="p-2 align-top text-right font-mono tabular-nums text-cyan-300/95">
+                            ₹
+                            {Number(row.amount || 0).toLocaleString('en-IN', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                          <td className="p-2 align-top text-gray-300 leading-snug">
+                            <span className="text-orange-300/90">{row.sourceLabel}</span>
+                            <span className="text-gray-600 mx-1">→</span>
+                            <span className="text-emerald-300/90">{row.targetLabel}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
             <div className="mt-3 text-[11px] text-gray-500 leading-snug">
               Deposit moves Indian Rupees (₹) from your Main Wallet into this crypto trading wallet (also ₹). Use Trade for Binance spot pairs in the terminal.
             </div>
@@ -991,6 +1111,63 @@ const UserAccounts = () => {
                 <ClipboardList size={16} />
                 View forex orders
               </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForexTransferLedger((prev) => {
+                    const next = !prev;
+                    if (next) fetchForexTransferLedger();
+                    return next;
+                  });
+                }}
+                className="mt-2 w-full py-2 text-sm font-medium text-cyan-300/90 border border-cyan-500/25 rounded-lg hover:bg-cyan-500/10 flex items-center justify-center gap-2 transition"
+              >
+                <History size={16} />
+                Transfer ledger
+                {showForexTransferLedger ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+
+              {showForexTransferLedger && (
+                <div className="mt-2 rounded-lg border border-cyan-500/20 bg-dark-900/50 max-h-56 overflow-y-auto">
+                  {forexTransferLedgerLoading ? (
+                    <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
+                  ) : forexTransferLedger.length === 0 ? (
+                    <p className="text-center text-xs text-gray-500 py-4 px-2 leading-snug">
+                      No transfers yet. Deposits/withdrawals between Main and this account, and transfers through Transfer, appear here with time and amount.
+                    </p>
+                  ) : (
+                    <table className="w-full text-[11px]">
+                      <thead className="sticky top-0 bg-dark-800/95 text-gray-400 border-b border-dark-600">
+                        <tr>
+                          <th className="text-left p-2 font-medium">When (IST)</th>
+                          <th className="text-right p-2 font-medium">Amount</th>
+                          <th className="text-left p-2 font-medium">From → To</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {forexTransferLedger.map((row) => (
+                          <tr key={row.id} className="border-t border-dark-700/80">
+                            <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
+                            <td className="p-2 align-top text-right font-mono tabular-nums text-cyan-300/95">
+                              ₹
+                              {Number(row.amount || 0).toLocaleString('en-IN', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td className="p-2 align-top text-gray-300 leading-snug">
+                              <span className="text-cyan-300/90">{row.sourceLabel}</span>
+                              <span className="text-gray-600 mx-1">→</span>
+                              <span className="text-teal-300/90">{row.targetLabel}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
 
               <div className="mt-3 text-[11px] text-gray-500 leading-snug">
                 Move Indian Rupees (₹) from your Main Wallet into this forex wallet. Trade major FX pairs in the terminal (USD quotes, INR wallet).
@@ -1169,7 +1346,11 @@ const UserAccounts = () => {
           cryptoBalance={cryptoBalance}
           direction={cryptoTransferDirection}
           onClose={() => setShowCryptoTransferModal(false)}
-          onSuccess={() => { fetchWallet(); setShowCryptoTransferModal(false); }}
+          onSuccess={() => {
+            fetchWallet();
+            setShowCryptoTransferModal(false);
+            fetchCryptoTransferLedger();
+          }}
         />
       )}
 
@@ -1180,7 +1361,11 @@ const UserAccounts = () => {
           forexBalance={forexBalance}
           direction={forexTransferDirection}
           onClose={() => setShowForexTransferModal(false)}
-          onSuccess={() => { fetchWallet(); setShowForexTransferModal(false); }}
+          onSuccess={() => {
+            fetchWallet();
+            setShowForexTransferModal(false);
+            fetchForexTransferLedger();
+          }}
         />
       )}
 
@@ -1191,7 +1376,16 @@ const UserAccounts = () => {
           sourceWallet={walletTransferSource}
           targetWallet={walletTransferTarget}
           onClose={() => setShowWalletTransferModal(false)}
-          onSuccess={() => { fetchWallet(); setShowWalletTransferModal(false); }}
+          onSuccess={() => {
+            fetchWallet();
+            setShowWalletTransferModal(false);
+            if (walletTransferSource === 'cryptoWallet' || walletTransferTarget === 'cryptoWallet') {
+              fetchCryptoTransferLedger();
+            }
+            if (walletTransferSource === 'forexWallet' || walletTransferTarget === 'forexWallet') {
+              fetchForexTransferLedger();
+            }
+          }}
         />
       )}
     </div>

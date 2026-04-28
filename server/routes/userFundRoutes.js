@@ -10,6 +10,115 @@ import FundRequest from '../models/FundRequest.js';
 import WalletLedger from '../models/WalletLedger.js';
 import { protectUser } from '../middleware/auth.js';
 import { recordGamesWalletLedger } from '../utils/gamesWalletLedger.js';
+import WalletTransferService from '../services/walletTransferService.js';
+
+/** Short labels matching user Accounts UI (cash vs Trading naming). */
+function subwalletLedgerLabel(walletType) {
+  switch (walletType) {
+    case 'wallet':
+      return 'Main Wallet (cash)';
+    case 'cryptoWallet':
+      return 'Crypto account (₹)';
+    case 'forexWallet':
+      return 'Forex account (₹)';
+    case 'mcxWallet':
+      return 'MCX account';
+    case 'gamesWallet':
+      return 'Games account';
+    default:
+      return walletType || '—';
+  }
+}
+
+function enrichCashBridgeRow(row, segmentKey) {
+  const desc = row.description || '';
+  const cash = 'Main Wallet (cash)';
+  const sub =
+    segmentKey === 'forex'
+      ? 'Forex account (₹)'
+      : 'Crypto account (₹)';
+  let fromLabel = cash;
+  let toLabel = sub;
+  if (segmentKey === 'forex') {
+    if (desc.includes('Forex → Main')) {
+      fromLabel = sub;
+      toLabel = cash;
+    }
+  } else if (desc.includes('Crypto → Main')) {
+    fromLabel = sub;
+    toLabel = cash;
+  }
+  return {
+    id: String(row._id),
+    at: row.createdAt,
+    amount: Number(row.amount),
+    kind: 'main_cash_bridge',
+    description: row.description,
+    sourceLabel: fromLabel,
+    targetLabel: toLabel,
+  };
+}
+
+// GET …/subwallet-transfer-ledger?wallet=crypto|forex — Main↔sub transfers + cross-wallet moves touching this subwallet
+router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
+  try {
+    const w = String(req.query.wallet || '').toLowerCase();
+    if (!['crypto', 'forex'].includes(w)) {
+      return res.status(400).json({ message: 'Query wallet must be crypto or forex' });
+    }
+    const segmentKey = w;
+    const walletKey = w === 'forex' ? 'forexWallet' : 'cryptoWallet';
+    const directReason = w === 'forex' ? 'FOREX_TRANSFER' : 'CRYPTO_TRANSFER';
+    const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 1), 100);
+
+    const [meshRows, directRows] = await Promise.all([
+      WalletTransferService.getTransferHistory(req.user._id),
+      WalletLedger.find({
+        ownerType: 'USER',
+        ownerId: req.user._id,
+        reason: directReason,
+      })
+        .sort({ createdAt: -1 })
+        .limit(lim)
+        .lean(),
+    ]);
+
+    const mesh = (meshRows || [])
+      .filter(
+        (row) =>
+          row.sourceWallet === walletKey || row.targetWallet === walletKey
+      )
+      .map((row) => ({
+        id: row.transferId,
+        at: row.createdAt,
+        amount: Number(row.amount),
+        kind: 'between_wallets',
+        sourceWallet: row.sourceWallet,
+        targetWallet: row.targetWallet,
+        sourceLabel: subwalletLedgerLabel(row.sourceWallet),
+        targetLabel: subwalletLedgerLabel(row.targetWallet),
+        description: row.description || null,
+      }));
+
+    const bridge = (directRows || []).map((row) => enrichCashBridgeRow(row, segmentKey));
+
+    const seen = new Set();
+    const combined = [...mesh, ...bridge]
+      .filter((e) => {
+        const k = `${e.id}-${new Date(e.at).getTime()}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .sort((a, b) => new Date(b.at) - new Date(a.at))
+      .slice(0, lim);
+
+    res.json({ entries: combined });
+  } catch (error) {
+    console.error('subwallet-transfer-ledger:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
