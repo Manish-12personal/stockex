@@ -78,7 +78,11 @@ const LiveChart = ({
   const formatPx = useCallback(
     (n) => {
       if (!Number.isFinite(n)) return '—';
-      const s = n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      /** Fixed locale — `undefined` follows browser (e.g. de-DE swaps . and ,) and Nifty OHLC looked wrong vs chart. */
+      const s = n.toLocaleString(isBTC ? 'en-US' : 'en-IN', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
       return isBTC ? `$${s}` : `₹${s}`;
     },
     [isBTC],

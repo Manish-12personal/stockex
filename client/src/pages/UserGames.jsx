@@ -2497,7 +2497,10 @@ const GameLivePricePanel = ({
 
   const priceLine =
     displayPrice != null
-      ? `${isBTC ? '$' : '₹'}${displayPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      ? `${isBTC ? '$' : '₹'}${displayPrice.toLocaleString(isBTC ? 'en-US' : 'en-IN', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`
       : '—';
 
   /** INR only — integer in `className` colour, paise (.xx) in red */
@@ -3967,7 +3970,10 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
   const fmtPx = (n) =>
     n != null && Number.isFinite(n)
-      ? `${currSymbol}${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      ? `${currSymbol}${n.toLocaleString(isBTC ? 'en-US' : 'en-IN', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`
       : '—';
 
   // LTP History component to show last 1 hour (4 windows) of LTP values
@@ -4150,7 +4156,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                   {item.ltp != null && Number(item.ltp) > 0 ? (
                     <>
                       {isBTC ? '$' : '₹'}
-                      {Number(item.ltp).toLocaleString(undefined, {
+                      {Number(item.ltp).toLocaleString('en-IN', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
@@ -4648,7 +4654,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
                               prevInList ? relCls : 'text-cyan-300'
                             }`}
                           >
-                            ${row.ltp.toLocaleString(undefined, {
+                            ${row.ltp.toLocaleString('en-US', {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2,
                             })}
