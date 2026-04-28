@@ -2810,9 +2810,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   const hasWindowResultPublished = useCallback((winNum) => {
     if (!Number.isFinite(Number(winNum))) return false;
     if (isBTC) return true;
-    const resultSec = niftyResultSecForWindowNum(winNum, gameStartTime, niftyRoundSec);
-    // Keep it pending until the official result second fully passes.
-    return getTotalSecondsIST() >= resultSec + 1;
+    // Align with niftyLtpEndSecForWindowNum / "Result @ HH:MM:SS" cards — NOT niftyResultSecForWindowNum
+    // (which is one round later). Otherwise window N shows Pending from LTP-close until next slot (e.g. 12:00–12:15)
+    // while GameResult + LTP tape already have the official 15m close.
+    const publishSec = niftyLtpEndSecForWindowNum(winNum, gameStartTime, niftyRoundSec);
+    return getTotalSecondsIST() >= publishSec + 1;
   }, [isBTC, gameStartTime, niftyRoundSec]);
 
   const computeUpDownSettlement = useCallback(
@@ -3755,7 +3757,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         return {
           ltp: serverClose,
           ltpWhen: niftyLtpClock(),
-          resolved: !!resultPublished,
+          // Official row with closePrice → show UP/DOWN + price immediately (don't wait on mismatched timers).
+          resolved: true,
           resultPrice: serverClose,
           marketDirection,
           resultWhen: niftyLtpClock(),
