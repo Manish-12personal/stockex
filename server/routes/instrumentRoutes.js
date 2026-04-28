@@ -325,7 +325,7 @@ function buildUserInstrumentListQuery(adminCode, { segment, category, search, di
       query.$and.push({
         $or: [
           { displaySegment: 'MCXFUT' },
-          { instrumentType: { $in: ['FUTURES', 'COMMODITY'] } },
+          { instrumentType: { $in: ['FUTURES', 'COMMODITY', 'FUT'] } },
         ],
       });
     } else if (segment === 'MCXOPT') {
@@ -495,10 +495,22 @@ router.get('/user', protectUser, async (req, res) => {
 
     await ensureInstrumentTabsForUserSegment(segment, displaySegment);
     const query = buildUserInstrumentListQuery(adminCode, { segment, category, search, displaySegment });
-    query.isEnabled = true;
+    // Match admin Market Watch: include Super Admin "forced close" rows (LIST TRADING off) so users still see the contract, not only enabled rows.
+    if (!query.$and) query.$and = [];
+    query.$and.push({
+      $or: [
+        { isEnabled: true },
+        {
+          adminLockedClosed: true,
+          isEnabled: false,
+        },
+      ],
+    });
 
     const instruments = await Instrument.find(query)
-      .select('token symbol name exchange segment displaySegment instrumentType lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured tradingSymbol expiry strike optionType lastBid lastAsk')
+      .select(
+        'token symbol name exchange segment displaySegment instrumentType lotSize ltp open high low close change changePercent volume lastUpdated category isFeatured tradingSymbol expiry strike optionType lastBid lastAsk isEnabled adminLockedClosed clientTemporaryOpenUntil'
+      )
       .sort({ isFeatured: -1, exchange: 1, symbol: 1 });
 
     res.json(instruments);

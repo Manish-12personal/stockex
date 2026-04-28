@@ -2047,7 +2047,10 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
               </div>
             ) : (
               <>
-                {searchResults.map(inst => (
+                {searchResults.map((inst) => {
+                  // GET /instruments/user includes broker-forced-close rows (isEnabled false + adminLockedClosed); no trade until Super Admin "List trading" on
+                  const cannotTradeSearchRow = inst.isEnabled !== true;
+                  return (
                   <div
                     key={inst._id || inst.token}
                     className="flex items-center justify-between px-3 py-2.5 border-b border-dark-700 hover:bg-dark-750"
@@ -2055,18 +2058,32 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                     <div className="flex-1 min-w-0 mr-2">
                       <div className="font-bold text-sm text-white uppercase">{inst.tradingSymbol || inst.symbol}</div>
                       <div className="text-xs text-gray-500 truncate">{inst.category || inst.name} • {inst.exchange}</div>
+                      {cannotTradeSearchRow && (
+                        <div className="text-[10px] text-amber-300/95 mt-0.5">
+                          Closed by broker — Super Admin must turn &quot;List trading&quot; on for clients to trade
+                        </div>
+                      )}
                     </div>
                     
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => isInFavorites(inst) ? removeFromFavorites(inst) : addToFavorites(inst)}
-                        className={`w-7 h-7 rounded-full flex items-center justify-center ${isInFavorites(inst) ? 'bg-yellow-400 text-black' : 'bg-dark-600 text-gray-300 hover:bg-yellow-500 hover:text-black'}`}
-                        title={isInFavorites(inst) ? 'Remove from Favorites' : 'Add to Favorites'}
+                        disabled={cannotTradeSearchRow}
+                        className={`w-7 h-7 rounded-full flex items-center justify-center disabled:opacity-40 disabled:pointer-events-none ${isInFavorites(inst) ? 'bg-yellow-400 text-black' : 'bg-dark-600 text-gray-300 hover:bg-yellow-500 hover:text-black'}`}
+                        title={
+                          cannotTradeSearchRow
+                            ? 'Not available — closed by administrator'
+                            : isInFavorites(inst)
+                              ? 'Remove from Favorites'
+                              : 'Add to Favorites'
+                        }
                       >
                         <Star size={14} />
                       </button>
                       {/* Add to Watchlist Button - Auto adds to correct segment */}
-                      {isInWatchlist(inst) ? (
+                      {cannotTradeSearchRow ? (
+                        <span className="text-xs text-amber-200/85 px-2 py-1">—</span>
+                      ) : isInWatchlist(inst) ? (
                         <span className="text-xs text-green-400 px-2 py-1">✓ Added</span>
                       ) : (
                         <button
@@ -2078,7 +2095,8 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
                 {closedSearchResults.length > 0 && (
                   <div className="border-t border-amber-600/40">
                     <div className="px-3 py-2 text-xs text-amber-200/90 bg-dark-750">
@@ -5467,13 +5485,22 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
             <div className="p-4 text-center text-gray-500 text-sm">No results for "{searchTerm}"</div>
           ) : (
             <>
-              {searchResults.map(inst => (
+              {searchResults.map((inst) => {
+                const cannotTradeSearchRow = inst.isEnabled !== true;
+                return (
                 <div key={inst._id || inst.token} className="flex items-center justify-between px-3 py-2.5 border-b border-dark-700">
                   <div className="flex-1 min-w-0 mr-2">
                     <div className="font-bold text-sm text-white">{inst.tradingSymbol || inst.symbol}</div>
                     <div className="text-xs text-gray-500 truncate">{inst.category || inst.name} • {inst.exchange}</div>
+                    {cannotTradeSearchRow && (
+                      <div className="text-[10px] text-amber-300/95 mt-0.5 leading-tight">
+                        Closed by broker — enable &quot;List trading&quot; in Super Admin Market Watch to allow trading
+                      </div>
+                    )}
                   </div>
-                  {isInWatchlist(inst) ? (
+                  {cannotTradeSearchRow ? (
+                    <span className="text-xs text-amber-200/85 shrink-0">—</span>
+                  ) : isInWatchlist(inst) ? (
                     <span className="text-xs text-green-400">✓ Added</span>
                   ) : (
                     <button
@@ -5484,7 +5511,8 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                     </button>
                   )}
                 </div>
-              ))}
+                );
+              })}
               {closedSearchResults.length > 0 && (
                 <div className="border-t border-amber-600/40">
                   <div className="px-3 py-2 text-xs text-amber-200/90 bg-dark-750">
