@@ -58,6 +58,43 @@ const ESSENTIAL_TOKENS = [
   288009,   // NIFTY MID SELECT
 ];
 
+/** Kite: one WebSocket may stream at most ~3000 instruments; higher caused OOM + 502 in prod. */
+const KITE_HARD_CAP_WS = 3000;
+function getMaxZerodhaWsSubscriptions() {
+  const n = parseInt(process.env.ZERODHA_MAX_WS_TOKENS || String(KITE_HARD_CAP_WS), 10);
+  return Number.isFinite(n) ? Math.min(Math.max(256, n), KITE_HARD_CAP_WS) : KITE_HARD_CAP_WS;
+}
+
+/**
+ * Dedupe & cap token list — essentials kept first when truncating (rest after sync may be dropped).
+ */
+function capSubscriptionsTokenList(rawTokens, context = '') {
+  const max = getMaxZerodhaWsSubscriptions();
+  const seen = new Map();
+  for (const t of ESSENTIAL_TOKENS) {
+    const n = normalizeKiteInstrumentToken(t);
+    if (Number.isFinite(n) && n > 0) seen.set(n, true);
+  }
+  for (const t of rawTokens) {
+    const n = normalizeKiteInstrumentToken(t);
+    if (Number.isFinite(n) && n > 0) seen.set(n, true);
+  }
+  const merged = [...seen.keys()];
+  if (merged.length <= max) return merged;
+
+  console.warn(
+    `[Zerodha] Subscription list truncated to ${max} (had ${merged.length})${context ? `: ${context}` : ''}; ` +
+      `hard cap=${KITE_HARD_CAP_WS}. Tune ZERODHA_MAX_WS_TOKENS ≤ ${KITE_HARD_CAP_WS}.`,
+  );
+
+  /* Essentials first — re-order merged so ESSENTIAL_* then others */
+  const essSet = new Set(ESSENTIAL_TOKENS.map((e) => normalizeKiteInstrumentToken(e)));
+  const essentials = merged.filter((t) => essSet.has(t));
+  const rest = merged.filter((t) => !essSet.has(t));
+  const ordered = [...essentials, ...rest];
+  return ordered.slice(0, max);
+}
+
 // Connect to Zerodha WebSocket
 export const connectTicker = (apiKey, accessToken, tokens = []) => {
   if (ticker) {
@@ -117,9 +154,11 @@ export const connectTicker = (apiKey, accessToken, tokens = []) => {
     setTimeout(() => {
       if (!ticker || !ticker.connected()) return;
       if (subscribedTokens.length > 0) {
-        console.log(`Resubscribing to ${subscribedTokens.length} tokens after reconnection`);
-        ticker.subscribe(subscribedTokens);
-        ticker.setMode(ticker.modeFull, subscribedTokens);
+        const toResub = capSubscriptionsTokenList(subscribedTokens, 'after-reconnect');
+        subscribedTokens = [...toResub];
+        console.log(`Resubscribing to ${toResub.length} tokens after reconnection`);
+        ticker.subscribe(toResub);
+        ticker.setMode(ticker.modeFull, toResub);
       }
       const queued = [...pendingUserSubscribe];
       if (queued.length > 0) {
@@ -148,13 +187,19 @@ export const connectTicker = (apiKey, accessToken, tokens = []) => {
 };
 
 // Subscribe to instrument tokens in batches
-// Zerodha has limits: ~3000 tokens total, and batching helps avoid issues
+// Zerodha has limits: ~3000 tokens per connection; batching helps avoid bursts
 const BATCH_SIZE = 100; // Subscribe in batches of 100 tokens
 const BATCH_DELAY = 100; // 100ms delay between batches
 
+/** Full order-book depth is huge — keep only if explicitly enabled (OOM risk when many ticks/sec). */
+const streamTickDepth = () =>
+  String(process.env.ZERODHA_TICK_DEPTH_STREAM || '').toLowerCase() === 'true' ||
+  String(process.env.ZERODHA_TICK_DEPTH_STREAM || '') === '1';
+
 export const subscribeTokens = async (tokens) => {
   // Map legacy DB tokens → official Kite tokens so Zerodha streams match Kite / TradingView
-  const numericTokens = tokens
+  const capped = Array.isArray(tokens) ? capSubscriptionsTokenList(tokens, 'subscribeTokens') : [];
+  const numericTokens = capped
     .map((t) => normalizeKiteInstrumentToken(t))
     .filter((t) => !isNaN(t) && t > 0);
 
@@ -259,7 +304,7 @@ const processTicks = (ticks) => {
       oi: tick.oi,
       oiDayHigh: tick.oi_day_high,
       oiDayLow: tick.oi_day_low,
-      depth: tick.depth,
+      ...(streamTickDepth() ? { depth: tick.depth } : {}),
       lastUpdated: new Date(),
       serverTimestamp, // Add server timestamp for latency tracking
     };

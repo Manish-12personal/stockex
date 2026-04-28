@@ -10,7 +10,9 @@ module.exports = {
       instances: 1,
       autorestart: true,
       watch: false,
-      max_memory_restart: '1G',
+      /** Tune for VPS RAM — with ZERODHA_MAX_WS_TOKENS capped, 2–3GB heap is usually enough. */
+      node_args: '--max-old-space-size=2560',
+      max_memory_restart: '2800M',
       env: {
         NODE_ENV: 'production',
         PORT: 5001
