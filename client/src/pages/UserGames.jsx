@@ -2411,21 +2411,38 @@ const GameLivePricePanel = ({
       : '—';
 
   const { formingOhlc, closedOhlc } = useMemo(() => {
-    const ltp = displayPrice != null && Number.isFinite(Number(displayPrice)) ? Number(displayPrice) : null;
     const rows = historicalData;
-    if (!rows?.length || ltp == null) {
+    if (!rows?.length) {
+      return { formingOhlc: null, closedOhlc: null };
+    }
+    const live =
+      displayPrice != null && Number.isFinite(Number(displayPrice)) ? Number(displayPrice) : null;
+    const lastBarClose = Number(rows[rows.length - 1]?.close);
+    const ltp =
+      live != null && live > 0
+        ? live
+        : Number.isFinite(lastBarClose) && lastBarClose > 0
+          ? lastBarClose
+          : null;
+    if (ltp == null) {
       return { formingOhlc: null, closedOhlc: null };
     }
     const last = rows[rows.length - 1];
     const o = Number(last.open);
     const hi = Number(last.high);
     const lo = Number(last.low);
-    if (![o, hi, lo].every((x) => Number.isFinite(x))) {
-      return { formingOhlc: null, closedOhlc: null };
+    const lc = Number(last.close);
+    let baseOpen = Number.isFinite(o) ? o : Number.isFinite(lc) ? lc : ltp;
+    let baseHi = Number.isFinite(hi) ? hi : baseOpen;
+    let baseLo = Number.isFinite(lo) ? lo : baseOpen;
+    if (!Number.isFinite(baseOpen)) {
+      baseOpen = ltp;
+      baseHi = ltp;
+      baseLo = ltp;
     }
-    const high = Math.max(hi, ltp);
-    const low = Math.min(lo, ltp);
-    const forming = { open: o, high, low, close: ltp };
+    const high = Math.max(baseHi, ltp);
+    const low = Math.min(baseLo, ltp);
+    const forming = { open: baseOpen, high, low, close: ltp };
     let closed = null;
     if (rows.length >= 2) {
       const p = rows[rows.length - 2];
@@ -3988,6 +4005,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           ltp = lockedWindowLtps[winNum] ?? pendingWindow.windowEndLTP;
           time = niftyWindowEndClock(winNum);
           source = 'pending';
+        } else if (
+          lockedWindowLtps[winNum] != null &&
+          Number.isFinite(Number(lockedWindowLtps[winNum])) &&
+          Number(lockedWindowLtps[winNum]) > 0
+        ) {
+          /* Boundary LTP saved when pending row is gone / GameResult not fetched yet — e.g. 13:00 row was missing. */
+          ltp = Number(lockedWindowLtps[winNum]);
+          time = niftyWindowEndClock(winNum);
+          source = 'locked';
         }
         
         // If no time available, use a default format
