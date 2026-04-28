@@ -3713,8 +3713,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
 
     const niftyLtpClock = () =>
       formatIstClockFromSec(niftyLtpEndSecForWindowNum(winNum, gameStartTime, niftyRoundSec));
-    const niftyResultClock = () =>
-      formatIstClockFromSec(niftyResultSecForWindowNum(winNum, gameStartTime, niftyRoundSec));
 
     /** Official 15m close — same GameResult row as server settlement / Zerodha 15m C. */
     const serverClose =
@@ -3731,14 +3729,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         const r = server.result;
         const marketDirection =
           r === 'UP' ? 'UP' : r === 'DOWN' ? 'DOWN' : r === 'TIE' ? 'TIE' : null;
+        // Same IST clock as "Last 1h LTPs" for this window (15m candle close / Zerodha C), not declare time.
         return {
           ltp: serverClose,
           ltpWhen: niftyLtpClock(),
           resolved: !!(resultPublished && marketDirection != null),
           resultPrice: serverClose,
           marketDirection,
-          resultWhen: niftyResultClock(),
-          resultAt: niftyResultClock(),
+          resultWhen: niftyLtpClock(),
+          resultAt: niftyLtpClock(),
         };
       }
 
@@ -3751,8 +3750,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           resolved: resolvedNow,
           resultPrice: resolvedNow ? pw.resultPrice : null,
           marketDirection: resolvedNow ? pw.marketDirection : null,
-          resultWhen: pw.resultTime || niftyResultClock(),
-          resultAt: pw.resultTime || niftyResultClock(),
+          resultWhen: niftyLtpClock(),
+          resultAt: niftyLtpClock(),
         };
       }
       if (completed) {
@@ -3764,8 +3763,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           resolved: resolvedNow,
           resultPrice: resolvedNow ? completed.resultPrice : null,
           marketDirection: resolvedNow ? completed.marketDirection : null,
-          resultWhen: completed.resultTime || niftyResultClock(),
-          resultAt: completed.resultTime || niftyResultClock(),
+          resultWhen: niftyLtpClock(),
+          resultAt: niftyLtpClock(),
         };
       }
       return null;
