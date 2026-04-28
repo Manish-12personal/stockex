@@ -59,6 +59,41 @@ function enrichCashBridgeRow(row, segmentKey) {
   };
 }
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Configure multer for payment proof uploads
+const proofUploadDir = path.join(__dirname, '..', 'uploads', 'proofs');
+if (!fs.existsSync(proofUploadDir)) {
+  fs.mkdirSync(proofUploadDir, { recursive: true });
+}
+
+const proofStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, proofUploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'proof-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const uploadProof = multer({
+  storage: proofStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|webp/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (extname && mimetype) {
+      return cb(null, true);
+    }
+    cb(new Error('Only image files are allowed'));
+  }
+});
+
+const router = express.Router();
+
 // GET …/subwallet-transfer-ledger?wallet=crypto|forex — Main↔sub transfers + cross-wallet moves touching this subwallet
 router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
   try {
@@ -119,41 +154,6 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Configure multer for payment proof uploads
-const proofUploadDir = path.join(__dirname, '..', 'uploads', 'proofs');
-if (!fs.existsSync(proofUploadDir)) {
-  fs.mkdirSync(proofUploadDir, { recursive: true });
-}
-
-const proofStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, proofUploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'proof-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-const uploadProof = multer({
-  storage: proofStorage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|webp/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    if (extname && mimetype) {
-      return cb(null, true);
-    }
-    cb(new Error('Only image files are allowed'));
-  }
-});
-
-const router = express.Router();
 
 // Get admin's bank accounts (for deposit)
 router.get('/admin-bank-accounts', protectUser, async (req, res) => {
