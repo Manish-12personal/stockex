@@ -1549,6 +1549,32 @@ async function fetchKite15mCloseForCompletedWindow(prevWinNum, gameStartTime, ro
   return null;
 }
 
+/**
+ * Matches LiveChart `candleSeries.update`: merge live LTP into the last OHLC row (same forming bar as chart strip C).
+ * Used so "Last 1 Hour LTPs" resolves the same `.close` as the visible chart — not a stale REST-only snapshot.
+ */
+function mergeNiftyLiveIntoLastCandle(rows, livePx) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const p = Number(livePx);
+  if (!Number.isFinite(p) || p <= 0) return rows;
+  const out = rows.map((r) => ({ ...r }));
+  const last = out[out.length - 1];
+  const o = Number(last.open);
+  const hi = Number(last.high);
+  const lo = Number(last.low);
+  const open = Number.isFinite(o) ? o : p;
+  const high = Math.max(Number.isFinite(hi) ? hi : open, p);
+  const low = Math.min(Number.isFinite(lo) ? lo : open, p);
+  out[out.length - 1] = {
+    ...last,
+    open,
+    high,
+    low,
+    close: p,
+  };
+  return out;
+}
+
 /** Last second of betting window `winNum` (1-based) — LTP clock. */
 const niftyLtpEndSecForWindowNum = (winNum, openTime, roundDurationSec) => {
   const m = niftyMarketOpenSnappedSecForGame(openTime);
@@ -2014,6 +2040,8 @@ const GameLivePricePanel = ({
   onDemoPriceActive,
   onSessionClearingUpdate,
   onPriceDataUpdate,
+  /** Nifty Up/Down: emits chart-identical OHLC rows (last bar merged from live ticks) for LTP list resolution. */
+  onSyncedNiftyCandlesForLtp,
   /** Nifty only: show scrollable LTP + IST time log under the chart (e.g. Nifty Bracket). */
   niftyLtpTape = false,
   /** Callback for bid/ask price updates (for Nifty Bracket) */
@@ -2032,6 +2060,8 @@ const GameLivePricePanel = ({
   onPriceDataUpdateRef.current = onPriceDataUpdate;
   const onBidAskUpdateRef = useRef(onBidAskUpdate);
   onBidAskUpdateRef.current = onBidAskUpdate;
+  const onSyncedNiftyCandlesForLtpRef = useRef(onSyncedNiftyCandlesForLtp);
+  onSyncedNiftyCandlesForLtpRef.current = onSyncedNiftyCandlesForLtp;
   onDemoPriceActiveRef.current = onDemoPriceActive;
   const livePriceRef = useRef(null);
   const historicalDataRef = useRef([]);
@@ -2048,6 +2078,8 @@ const GameLivePricePanel = ({
   const [candleData, setCandleData] = useState([]);
   const [zerodhaConnected, setZerodhaConnected] = useState(false);
   const [historicalData, setHistoricalData] = useState([]);
+  /** Only when chart interval ≠ 15m but Nifty Up/Down needs game 15m bars for LTP list. */
+  const [parallel15mRowsForLtp, setParallel15mRowsForLtp] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [usingDummyPrice, setUsingDummyPrice] = useState(false);
   /** Kite: last 15m bar close today (IST) — same family as Kite 15m chart final C */
@@ -2219,6 +2251,51 @@ const GameLivePricePanel = ({
 
     fetchHistoricalData();
   }, [isBTC, niftyChartInterval, btcChartInterval]);
+
+  // Nifty Up/Down: when chart interval ≠ 15m, fetch 15m in parallel so window↔bar resolution still uses 15m OHLC.
+  useEffect(() => {
+    if (isBTC || gameId !== 'updown' || niftyChartInterval === '15minute') {
+      setParallel15mRowsForLtp([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const fetch15parallel = async () => {
+      try {
+        const response = await axios.get('/api/market/nifty-history', {
+          params: { interval: '15minute' },
+        });
+        const rawRows = Array.isArray(response.data)
+          ? response.data
+          : response.data?.data;
+        if (!rawRows?.length || cancelled) return;
+        const formatted = rawRows.map((candle) => {
+          let t;
+          if (candle.time != null && typeof candle.time === 'number' && Number.isFinite(candle.time)) {
+            t = candle.time > 1e12 ? Math.floor(candle.time / 1000) : Math.floor(candle.time);
+          } else {
+            t = Math.floor(new Date(candle.time || candle.timestamp).getTime() / 1000);
+          }
+          return {
+            time: t,
+            timestamp: candle.timestamp || candle.time,
+            open: Number(candle.open),
+            high: Number(candle.high),
+            low: Number(candle.low),
+            close: Number(candle.close),
+          };
+        });
+        setParallel15mRowsForLtp(formatted);
+      } catch {
+        /* ignore */
+      }
+    };
+    void fetch15parallel();
+    const pid = setInterval(fetch15parallel, 45_000);
+    return () => {
+      cancelled = true;
+      clearInterval(pid);
+    };
+  }, [isBTC, gameId, niftyChartInterval]);
 
   useEffect(() => {
     const id = setInterval(() => setSessionClock((c) => c + 1), 20000);
@@ -2456,6 +2533,22 @@ const GameLivePricePanel = ({
     }
     return { formingOhlc: forming, closedOhlc: closed };
   }, [historicalData, displayPrice]);
+
+  /** Same last-bar merge as LiveChart tick path — parent LTP list resolves identical chart `C`. */
+  const niftyRowsSyncedForGameLtp = useMemo(() => {
+    if (isBTC || gameId !== 'updown') return null;
+    const baseRows =
+      niftyChartInterval === '15minute' ? historicalData : parallel15mRowsForLtp;
+    if (!baseRows?.length) return null;
+    return mergeNiftyLiveIntoLastCandle(baseRows, displayPrice);
+  }, [isBTC, gameId, niftyChartInterval, historicalData, parallel15mRowsForLtp, displayPrice]);
+
+  useEffect(() => {
+    if (isBTC || gameId !== 'updown') return;
+    const cb = onSyncedNiftyCandlesForLtpRef.current;
+    if (!cb) return;
+    cb(niftyRowsSyncedForGameLtp ?? []);
+  }, [isBTC, gameId, niftyRowsSyncedForGameLtp]);
 
   // Notify parent of price data updates
   useEffect(() => {
@@ -2819,6 +2912,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   // Always keep the last completed window for display
   const [lastCompletedWindow, setLastCompletedWindow] = useState(null);
   // { windowNumber, windowEndLTP, ltpTime, resultTime, resultPrice, marketDirection, resolved? }
+  /** Live-merged 15m OHLC from GameLivePricePanel (same last bar as chart `C` when market open). */
+  const [nifty15CandlesForLtp, setNifty15CandlesForLtp] = useState([]);
+  const handleSyncedNiftyCandlesForLtp = useCallback((rows) => {
+    setNifty15CandlesForLtp(Array.isArray(rows) ? rows : []);
+  }, []);
 
   // Admin-configured settings with fallbacks
   const winMultiplier = settings?.winMultiplier || 1.95;
@@ -2877,6 +2975,10 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
   useEffect(() => {
     gameResultsRef.current = gameResults;
   }, [gameResults]);
+
+  useEffect(() => {
+    if (game.id !== 'updown') setNifty15CandlesForLtp([]);
+  }, [game.id]);
 
   /** Up/Down "Previous Results" strip (BTC: server DB only) */
   const previousResultsStrip = useMemo(() => {
@@ -4001,9 +4103,28 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         let ltp = null;
         let time = null;
         let source = 'unknown';
-        
-        // Official DB close first — matches chart OHLC & tracker (panel is Nifty-only; BTC hidden above).
-        if (gameResult && gameResult.closePrice) {
+
+        const ymd = getIstCalendarYmd();
+        const bar15 = resolveNiftyUpDownWindow15mOhlcFromCandles(
+          {
+            ymd,
+            marketOpenSec: niftyMarketOpenSnappedSecForGame(gameStartTime),
+            roundDurationSec: niftyRoundSec,
+            windowNumber: winNum,
+          },
+          nifty15CandlesForLtp
+        );
+        const kiteClose =
+          bar15?.close != null && Number.isFinite(Number(bar15.close)) && Number(bar15.close) > 0
+            ? Number(bar15.close)
+            : null;
+
+        // Kite 15m bar close first — same series as LiveChart OHLC `C` (panel is Nifty-only; BTC hidden above).
+        if (kiteClose != null) {
+          ltp = kiteClose;
+          time = niftyWindowEndClock(winNum);
+          source = 'kite15m_close';
+        } else if (gameResult && gameResult.closePrice) {
           ltp = Number(gameResult.closePrice);
           time = niftyWindowEndClock(winNum);
           source = 'result';
@@ -4111,7 +4232,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       }
       
       return history;
-    }, [windowInfo.windowNumber, pendingWindows, gameResults, gameStartTime, niftyRoundSec, lockedWindowLtps]);
+    }, [
+      windowInfo.windowNumber,
+      pendingWindows,
+      gameResults,
+      gameStartTime,
+      niftyRoundSec,
+      lockedWindowLtps,
+      nifty15CandlesForLtp,
+    ]);
 
     if (ltpHistory.length === 0) {
       return (
@@ -4727,7 +4856,8 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             <GameLivePricePanel 
               gameId={game.id} 
               fullHeight 
-              onPriceUpdate={handlePriceUpdate} 
+              onPriceUpdate={handlePriceUpdate}
+              onSyncedNiftyCandlesForLtp={game.id === 'updown' ? handleSyncedNiftyCandlesForLtp : undefined}
               priceLines={openUpDownTrades
                 .filter((trade, index, self) => 
                   index === self.findIndex(t => t.entryPrice === trade.entryPrice) && 
