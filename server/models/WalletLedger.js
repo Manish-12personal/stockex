@@ -49,6 +49,8 @@ const walletLedgerSchema = new mongoose.Schema({
       'MCX_TRANSFER',       // Transfer between main wallet and MCX wallet
       'INTERNAL_TRANSFER',  // Internal transfer between wallets
       'GAMES_TRANSFER',     // Transfer between main wallet and games wallet
+      'WALLET_TRANSFER_DEBIT',  // Inter-wallet mesh transfer (debit leg) — see meta.transferId
+      'WALLET_TRANSFER_CREDIT', // Inter-wallet mesh transfer (credit leg)
       'GAME_PROFIT',        // Game profit share distributed through hierarchy
       'REFERRAL_COMMISSION', // Credit to referrer from Super Admin's share of referred user's profit distribution
       'REFERRAL_COMMISSION_TRANSFER' // Debit from Super Admin pool for referral transfer out
@@ -122,6 +124,10 @@ const walletLedgerSchema = new mongoose.Schema({
     ticketPrice: { type: Number },
     referredUsername: { type: String },
     rank: { type: Number },
+    /** Inter-wallet mesh transfers (WalletTransferService) — must persist or Mongoose strips them and history breaks */
+    transferId: { type: String },
+    sourceWallet: { type: String },
+    targetWallet: { type: String },
   },
 }, { timestamps: true });
 

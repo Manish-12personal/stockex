@@ -107,6 +107,19 @@ class WalletTransferService {
     }
   }
 
+  /** Reverse of getWalletDisplayName — used to repair ledger rows missing meta.sourceWallet/targetWallet (legacy stripped meta). */
+  static displayNameToWalletKey(displayName) {
+    const k = String(displayName || '').trim();
+    const map = {
+      'Trading Wallet': 'wallet',
+      'Crypto Wallet': 'cryptoWallet',
+      'Forex Wallet': 'forexWallet',
+      'MCX Wallet': 'mcxWallet',
+      'Games Wallet': 'gamesWallet',
+    };
+    return map[k] || null;
+  }
+
   /**
    * Execute wallet transfer (atomic operation)
    * @param {String} userId - User ID
@@ -442,13 +455,29 @@ class WalletTransferService {
    */
   static async getTransferHistory(userId) {
     const transfers = await WalletLedger.find({
+      ownerType: 'USER',
       ownerId: userId,
-      reason: { $in: ['WALLET_TRANSFER_DEBIT', 'WALLET_TRANSFER_CREDIT'] }
-    }).sort({ createdAt: -1 });
+      reason: { $in: ['WALLET_TRANSFER_DEBIT', 'WALLET_TRANSFER_CREDIT'] },
+    })
+      .sort({ createdAt: -1 })
+      .lean();
 
-    // Group by transferId
+    const parseTransferTo = (desc) => {
+      const m = String(desc || '').match(/^Transfer to (.+)$/);
+      if (!m) return null;
+      return this.displayNameToWalletKey(m[1].trim());
+    };
+    const parseTransferFrom = (desc) => {
+      const m = String(desc || '').match(/^Transfer from (.+)$/);
+      if (!m) return null;
+      return this.displayNameToWalletKey(m[1].trim());
+    };
+
+    // Group by meta.transferId (works when meta fields are persisted in schema)
     const grouped = {};
-    transfers.forEach(t => {
+    const consumedIds = new Set();
+
+    transfers.forEach((t) => {
       const transferId = t.meta?.transferId;
       if (transferId) {
         if (!grouped[transferId]) {
@@ -459,13 +488,63 @@ class WalletTransferService {
             sourceWallet: t.meta?.sourceWallet,
             targetWallet: t.meta?.targetWallet,
             description: t.description,
-            performedBy: t.performedBy
+            performedBy: t.performedBy,
           };
         }
+        if (t._id) consumedIds.add(String(t._id));
       }
     });
 
-    return Object.values(grouped);
+    // Legacy: meta.transferId/sourceWallet/targetWallet were stripped by Mongoose strict schema —
+    // pair DEBIT ("Transfer to Target") + CREDIT ("Transfer from Source") by amount & time window.
+    const TIME_PAIR_MS = 15_000;
+    const orphans = transfers.filter((t) => !consumedIds.has(String(t._id)));
+
+    const amtEq = (a, b) => Math.abs(Number(a) - Number(b)) < 0.005;
+
+    const debits = orphans.filter((t) => t.type === 'DEBIT');
+    const credits = orphans.filter((t) => t.type === 'CREDIT');
+
+    for (const d of debits) {
+      const idStr = String(d._id);
+      if (consumedIds.has(idStr)) continue;
+      const targetKey = parseTransferTo.call(this, d.description);
+      if (!targetKey) continue;
+
+      let best = null;
+      let bestDt = Infinity;
+      for (const cred of credits) {
+        if (consumedIds.has(String(cred._id))) continue;
+        if (!amtEq(cred.amount, d.amount)) continue;
+        const srcKey = parseTransferFrom.call(this, cred.description);
+        if (!srcKey || srcKey === targetKey) continue;
+        const dt = Math.abs(new Date(cred.createdAt).getTime() - new Date(d.createdAt).getTime());
+        if (dt > TIME_PAIR_MS) continue;
+        if (dt < bestDt) {
+          bestDt = dt;
+          best = cred;
+        }
+      }
+
+      const c = best;
+      if (!c) continue;
+
+      const sourceKey = parseTransferFrom.call(this, c.description);
+      const syntheticId = `WT-fallback-${idStr}-${c._id}`;
+      grouped[syntheticId] = {
+        transferId: syntheticId,
+        createdAt: d.createdAt > c.createdAt ? d.createdAt : c.createdAt,
+        amount: Number(d.amount),
+        sourceWallet: sourceKey,
+        targetWallet: targetKey,
+        description: `${this.getWalletDisplayName(sourceKey)} → ${this.getWalletDisplayName(targetKey)}`,
+        performedBy: d.performedBy || c.performedBy,
+      };
+      consumedIds.add(idStr);
+      consumedIds.add(String(c._id));
+    }
+
+    return Object.values(grouped).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 }
 
