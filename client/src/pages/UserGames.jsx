@@ -3722,18 +3722,40 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         ? Number(server.closePrice)
         : null;
 
+    /** Match server settleUpDown: direction from stored result, else priceChange, else close vs prev close / open */
+    const niftyDirectionFromGameResult = (sr) => {
+      if (!sr) return null;
+      const raw = String(sr.result ?? '')
+        .trim()
+        .toUpperCase();
+      if (raw === 'UP' || raw === 'DOWN' || raw === 'TIE') return raw;
+      const pc = Number(sr.priceChange);
+      if (Number.isFinite(pc)) return pc > 0 ? 'UP' : pc < 0 ? 'DOWN' : 'TIE';
+      const prevGr = Number(winNum) > 1 ? pickLatestGameResultForWindow(resultsForPick, winNum - 1) : null;
+      const prevClose =
+        prevGr != null && Number.isFinite(Number(prevGr.closePrice)) && Number(prevGr.closePrice) > 0
+          ? Number(prevGr.closePrice)
+          : null;
+      const openPx = Number(sr.openPrice);
+      const closePx = Number(sr.closePrice);
+      const cmp = prevClose != null ? prevClose : openPx;
+      if (Number.isFinite(closePx) && Number.isFinite(cmp)) {
+        const d = closePx - cmp;
+        return d > 0 ? 'UP' : d < 0 ? 'DOWN' : 'TIE';
+      }
+      return null;
+    };
+
     // Nifty: DB GameResult beats client snapshots so tracker matches chart OHLC & API.
     if (!isBTC) {
       const resultPublished = hasWindowResultPublished(winNum);
       if (serverClose != null) {
-        const r = server.result;
-        const marketDirection =
-          r === 'UP' ? 'UP' : r === 'DOWN' ? 'DOWN' : r === 'TIE' ? 'TIE' : null;
+        const marketDirection = niftyDirectionFromGameResult(server) ?? 'TIE';
         // Same IST clock as "Last 1h LTPs" for this window (15m candle close / Zerodha C), not declare time.
         return {
           ltp: serverClose,
           ltpWhen: niftyLtpClock(),
-          resolved: !!(resultPublished && marketDirection != null),
+          resolved: !!resultPublished,
           resultPrice: serverClose,
           marketDirection,
           resultWhen: niftyLtpClock(),
