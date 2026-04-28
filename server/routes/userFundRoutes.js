@@ -25,6 +25,8 @@ function subwalletLedgerLabel(walletType) {
       return 'MCX account';
     case 'gamesWallet':
       return 'Games account';
+    case 'tradingAccount':
+      return 'Trading account (IND)';
     default:
       return walletType || '—';
   }
@@ -173,20 +175,53 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
     const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 1), 100);
 
     if (w === 'trading') {
-      const directRows = await WalletLedger.find({
-        ownerType: 'USER',
-        ownerId: req.user._id,
-        reason: 'ADJUSTMENT',
-        $or: [
-          { description: /^Internal Transfer: Wallet → Trading Account/ },
-          { description: /^Internal Transfer: Trading Account → Wallet/ },
-        ],
-      })
-        .sort({ createdAt: -1 })
-        .limit(lim)
-        .lean();
-      const entries = directRows.map((row) => enrichTradingInternalRow(row));
-      return res.json({ entries });
+      const [meshRows, directRows] = await Promise.all([
+        WalletTransferService.getTransferHistory(req.user._id),
+        WalletLedger.find({
+          ownerType: 'USER',
+          ownerId: req.user._id,
+          reason: 'ADJUSTMENT',
+          $or: [
+            { description: /^Internal Transfer: Wallet → Trading Account/ },
+            { description: /^Internal Transfer: Trading Account → Wallet/ },
+          ],
+        })
+          .sort({ createdAt: -1 })
+          .limit(lim)
+          .lean(),
+      ]);
+
+      const mesh = (meshRows || [])
+        .filter(
+          (row) =>
+            row.sourceWallet === 'tradingAccount' || row.targetWallet === 'tradingAccount'
+        )
+        .map((row) => ({
+          id: row.transferId,
+          at: row.createdAt,
+          amount: Number(row.amount),
+          kind: 'between_wallets',
+          sourceWallet: row.sourceWallet,
+          targetWallet: row.targetWallet,
+          sourceLabel: subwalletLedgerLabel(row.sourceWallet),
+          targetLabel: subwalletLedgerLabel(row.targetWallet),
+          description: row.description || null,
+        }));
+
+      const bridge = (directRows || []).map((row) => enrichTradingInternalRow(row));
+
+      const seen = new Set();
+      const combined = [...mesh, ...bridge]
+        .filter((e) => {
+          const k = `${e.id}-${new Date(e.at).getTime()}`;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        })
+        .sort((a, b) => new Date(b.at) - new Date(a.at))
+        .slice(0, lim);
+
+      return res.json({ entries: combined });
     }
 
     const segmentKey = w;

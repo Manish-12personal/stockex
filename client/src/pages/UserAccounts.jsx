@@ -810,10 +810,10 @@ const UserAccounts = () => {
                 <div className="p-2">
                   <div className="text-xs text-gray-400 px-2 py-1 mb-1">Transfer to:</div>
                   <button
-                    onClick={() => { setWalletTransferSource('mcxWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    onClick={() => {                     setWalletTransferSource('mcxWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                   >
-                    Trading Wallet
+                    Main Wallet (cash)
                   </button>
                   <button
                     onClick={() => { setWalletTransferSource('mcxWallet'); setWalletTransferTarget('gamesWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
@@ -1093,10 +1093,16 @@ const UserAccounts = () => {
                 <div className="p-2">
                   <div className="text-xs text-gray-400 px-2 py-1 mb-1">Transfer to:</div>
                   <button
+                    onClick={() => { setWalletTransferSource('gamesWallet'); setWalletTransferTarget('tradingAccount'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
+                  >
+                    Trading Account (IND)
+                  </button>
+                  <button
                     onClick={() => { setWalletTransferSource('gamesWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                   >
-                    Trading Wallet
+                    Main Wallet (cash)
                   </button>
                   <button
                     onClick={() => { setWalletTransferSource('gamesWallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
@@ -1274,7 +1280,7 @@ const UserAccounts = () => {
                     onClick={() => { setWalletTransferSource('cryptoWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                     className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                   >
-                    Trading Wallet
+                    Main Wallet (cash)
                   </button>
                   <button
                     onClick={() => { setWalletTransferSource('cryptoWallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
@@ -1450,7 +1456,7 @@ const UserAccounts = () => {
                       onClick={() => { setWalletTransferSource('forexWallet'); setWalletTransferTarget('wallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
                       className="w-full text-left px-3 py-2 text-sm hover:bg-dark-600 rounded transition"
                     >
-                      Trading Wallet
+                      Main Wallet (cash)
                     </button>
                     <button
                       onClick={() => { setWalletTransferSource('forexWallet'); setWalletTransferTarget('mcxWallet'); setShowWalletTransferDropdown(null); setShowWalletTransferModal(true); }}
@@ -1633,6 +1639,9 @@ const UserAccounts = () => {
             }
             if (walletTransferSource === 'gamesWallet' || walletTransferTarget === 'gamesWallet') {
               fetchGamesTransferLedger();
+            }
+            if (walletTransferSource === 'tradingAccount' || walletTransferTarget === 'tradingAccount') {
+              fetchTradingTransferLedger();
             }
           }}
         />
@@ -2391,7 +2400,8 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
 
   const getWalletDisplayName = (walletType) => {
     switch(walletType) {
-      case 'wallet': return 'Trading Wallet';
+      case 'wallet': return 'Main Wallet (cash)';
+      case 'tradingAccount': return 'Trading Account (IND)';
       case 'cryptoWallet': return 'Crypto Wallet';
       case 'forexWallet': return 'Forex Wallet';
       case 'mcxWallet': return 'MCX Wallet';
@@ -2421,7 +2431,8 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
               onChange={e => setSource(e.target.value)}
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
             >
-              <option value="wallet">Trading Wallet</option>
+              <option value="wallet">Main Wallet (cash)</option>
+              <option value="tradingAccount">Trading Account (IND)</option>
               <option value="cryptoWallet">Crypto Wallet</option>
               <option value="forexWallet">Forex Wallet</option>
               <option value="mcxWallet">MCX Wallet</option>
@@ -2437,7 +2448,8 @@ const WalletTransferModal = ({ token, sourceWallet, targetWallet, onClose, onSuc
               className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
             >
               <option value="">-- Select Target --</option>
-              <option value="wallet" disabled={source === 'wallet'}>Trading Wallet</option>
+              <option value="wallet" disabled={source === 'wallet'}>Main Wallet (cash)</option>
+              <option value="tradingAccount" disabled={source === 'tradingAccount'}>Trading Account (IND)</option>
               <option value="cryptoWallet" disabled={source === 'cryptoWallet'}>Crypto Wallet</option>
               <option value="forexWallet" disabled={source === 'forexWallet'}>Forex Wallet</option>
               <option value="mcxWallet" disabled={source === 'mcxWallet'}>MCX Wallet</option>

@@ -5,7 +5,8 @@ import { atomicGamesWalletUpdate, atomicGamesWalletDebit } from '../utils/gamesW
 /**
  * Wallet Transfer Service
  * Handles interconnected wallet-to-wallet transfers for users
- * Supported wallets: wallet, cryptoWallet, forexWallet, mcxWallet, gamesWallet
+ * Supported wallets: wallet (main cash), tradingAccount (wallet.tradingBalance — IND card),
+ * cryptoWallet, forexWallet, mcxWallet, gamesWallet
  */
 class WalletTransferService {
   
@@ -19,6 +20,11 @@ class WalletTransferService {
     switch(walletType) {
       case 'wallet':
         return user.wallet?.cashBalance || 0;
+      case 'tradingAccount': {
+        const tb = user.wallet?.tradingBalance || 0;
+        const um = user.wallet?.usedMargin || 0;
+        return Math.max(0, tb - um);
+      }
       case 'cryptoWallet':
         return (user.cryptoWallet?.balance || 0) - (user.cryptoWallet?.usedMargin || 0);
       case 'forexWallet':
@@ -41,6 +47,8 @@ class WalletTransferService {
     switch(walletType) {
       case 'wallet':
         return 'wallet.cashBalance';
+      case 'tradingAccount':
+        return 'wallet.tradingBalance';
       case 'cryptoWallet':
         return 'cryptoWallet.balance';
       case 'forexWallet':
@@ -69,7 +77,7 @@ class WalletTransferService {
     }
 
     // Check if wallet types are valid
-    const validWallets = ['wallet', 'cryptoWallet', 'forexWallet', 'mcxWallet', 'gamesWallet'];
+    const validWallets = ['wallet', 'tradingAccount', 'cryptoWallet', 'forexWallet', 'mcxWallet', 'gamesWallet'];
     if (!validWallets.includes(sourceWallet)) {
       return { valid: false, error: 'Invalid source wallet type' };
     }
@@ -98,7 +106,8 @@ class WalletTransferService {
    */
   static getWalletDisplayName(walletType) {
     switch(walletType) {
-      case 'wallet': return 'Trading Wallet';
+      case 'wallet': return 'Main Wallet (cash)';
+      case 'tradingAccount': return 'Trading Account';
       case 'cryptoWallet': return 'Crypto Wallet';
       case 'forexWallet': return 'Forex Wallet';
       case 'mcxWallet': return 'MCX Wallet';
@@ -112,12 +121,30 @@ class WalletTransferService {
     const k = String(displayName || '').trim();
     const map = {
       'Trading Wallet': 'wallet',
+      'Main Wallet (cash)': 'wallet',
+      'Trading Account': 'tradingAccount',
       'Crypto Wallet': 'cryptoWallet',
       'Forex Wallet': 'forexWallet',
       'MCX Wallet': 'mcxWallet',
       'Games Wallet': 'gamesWallet',
     };
     return map[k] || null;
+  }
+
+  static _balanceAfterSourceDebit(finalUser, sourceWallet) {
+    if (sourceWallet === 'wallet') return finalUser?.wallet?.cashBalance ?? 0;
+    if (sourceWallet === 'tradingAccount') return finalUser?.wallet?.tradingBalance ?? 0;
+    return finalUser?.[sourceWallet]?.balance ?? 0;
+  }
+
+  static _balanceAfterTargetCredit(finalUser, targetWallet) {
+    if (targetWallet === 'wallet') return finalUser?.wallet?.cashBalance ?? 0;
+    if (targetWallet === 'tradingAccount') return finalUser?.wallet?.tradingBalance ?? 0;
+    return finalUser?.[targetWallet]?.balance ?? 0;
+  }
+
+  static _shouldIncDepositTotal(targetWallet) {
+    return targetWallet !== 'wallet' && targetWallet !== 'tradingAccount';
   }
 
   /**
@@ -157,28 +184,20 @@ class WalletTransferService {
    */
   static async executeStandardWalletTransfer(user, sourceWallet, targetWallet, amount, transferId, remarks, performedBy) {
     try {
-      // Get current balances
       const freshUser = await User.findById(user._id);
       const sourceBalanceField = this.getBalanceFieldName(sourceWallet);
       const targetBalanceField = this.getBalanceFieldName(targetWallet);
-      
-      // Get actual balance values
-      const currentSourceBalance = sourceBalanceField === 'wallet.cashBalance' 
-        ? (freshUser.wallet?.cashBalance || 0)
-        : (freshUser[sourceWallet]?.balance || 0);
-      
-      // Verify sufficient balance before transfer
+
+      const currentSourceBalance = this.getWalletBalance(freshUser, sourceWallet);
       if (currentSourceBalance < amount) {
         throw new Error(`Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Available: ₹${currentSourceBalance.toLocaleString()}`);
       }
 
-      // Debit from source wallet and credit to target wallet in a single atomic operation
       const updates = {};
       updates[sourceBalanceField] = -amount;
       updates[targetBalanceField] = amount;
-      
-      // Only add depositTotal for non-main wallets
-      if (targetWallet !== 'wallet') {
+
+      if (this._shouldIncDepositTotal(targetWallet)) {
         updates[`${targetWallet}.depositTotal`] = amount;
       }
 
@@ -192,24 +211,32 @@ class WalletTransferService {
         throw new Error('Failed to update wallet balances');
       }
 
-      // Verify source wallet balance didn't go negative
-      const newSourceBalance = sourceBalanceField === 'wallet.cashBalance'
-        ? (finalUser.wallet?.cashBalance || 0)
-        : (finalUser[sourceWallet]?.balance || 0);
-      
-      if (newSourceBalance < 0) {
-        // Rollback by reversing the transaction
+      const afterSource = this._balanceAfterSourceDebit(finalUser, sourceWallet);
+      const usedMargin = finalUser.wallet?.usedMargin || 0;
+
+      const rollbackMirror = async () => {
         const rollbackUpdates = {};
         rollbackUpdates[sourceBalanceField] = amount;
         rollbackUpdates[targetBalanceField] = -amount;
-        if (targetWallet !== 'wallet') {
+        if (this._shouldIncDepositTotal(targetWallet)) {
           rollbackUpdates[`${targetWallet}.depositTotal`] = -amount;
         }
         await User.findByIdAndUpdate(user._id, { $inc: rollbackUpdates });
+      };
+
+      if (sourceWallet === 'tradingAccount') {
+        if (afterSource < usedMargin) {
+          await rollbackMirror();
+          throw new Error('Insufficient free margin in Trading Account for this transfer');
+        }
+      } else if (afterSource < 0) {
+        await rollbackMirror();
         throw new Error('Insufficient balance after transfer');
       }
 
-      // Create ledger entries (non-critical, can be retried if failed)
+      const ledgerSourceAfter = this._balanceAfterSourceDebit(finalUser, sourceWallet);
+      const ledgerTargetAfter = this._balanceAfterTargetCredit(finalUser, targetWallet);
+
       try {
         await WalletLedger.create([
           {
@@ -219,14 +246,14 @@ class WalletTransferService {
             type: 'DEBIT',
             reason: 'WALLET_TRANSFER_DEBIT',
             amount: amount,
-            balanceAfter: newSourceBalance,
+            balanceAfter: ledgerSourceAfter,
             description: `Transfer to ${this.getWalletDisplayName(targetWallet)}`,
             performedBy: performedBy,
             meta: {
               transferId,
               sourceWallet,
-              targetWallet
-            }
+              targetWallet,
+            },
           },
           {
             ownerType: 'USER',
@@ -235,31 +262,26 @@ class WalletTransferService {
             type: 'CREDIT',
             reason: 'WALLET_TRANSFER_CREDIT',
             amount: amount,
-            balanceAfter: targetBalanceField === 'wallet.cashBalance'
-              ? (finalUser.wallet?.cashBalance || 0)
-              : (finalUser[targetWallet]?.balance || 0),
+            balanceAfter: ledgerTargetAfter,
             description: `Transfer from ${this.getWalletDisplayName(sourceWallet)}`,
             performedBy: performedBy,
             meta: {
               transferId,
               sourceWallet,
-              targetWallet
-            }
-          }
+              targetWallet,
+            },
+          },
         ]);
       } catch (ledgerError) {
         console.error('Failed to create ledger entries for wallet transfer:', ledgerError);
-        // Don't throw error - ledger creation is non-critical
       }
 
       return {
         success: true,
         transferId,
         message: `Successfully transferred ₹${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
-        sourceBalance: newSourceBalance,
-        targetBalance: targetBalanceField === 'wallet.cashBalance'
-          ? (finalUser.wallet?.cashBalance || 0)
-          : (finalUser[targetWallet]?.balance || 0)
+        sourceBalance: ledgerSourceAfter,
+        targetBalance: ledgerTargetAfter,
       };
     } catch (error) {
       throw error;
@@ -278,14 +300,15 @@ class WalletTransferService {
           throw new Error('Insufficient balance in games wallet');
         }
 
-        // Credit to target wallet
-        const targetBalanceField = this.getBalanceFieldName(targetWallet);
         const targetUpdate = {};
-        targetUpdate[targetBalanceField] = amount;
-        
-        // Only add depositTotal for non-main wallets
-        if (targetWallet !== 'wallet') {
-          targetUpdate[`${targetWallet}.depositTotal`] = amount;
+        if (targetWallet === 'tradingAccount') {
+          targetUpdate['wallet.tradingBalance'] = amount;
+        } else {
+          const targetBalanceField = this.getBalanceFieldName(targetWallet);
+          targetUpdate[targetBalanceField] = amount;
+          if (this._shouldIncDepositTotal(targetWallet)) {
+            targetUpdate[`${targetWallet}.depositTotal`] = amount;
+          }
         }
 
         const finalUser = await User.findByIdAndUpdate(
@@ -298,7 +321,8 @@ class WalletTransferService {
           throw new Error('Failed to credit target wallet');
         }
 
-        // Create ledger entries (non-critical)
+        const ledgerTargetAfter = this._balanceAfterTargetCredit(finalUser, targetWallet);
+
         try {
           await WalletLedger.create([
             {
@@ -324,9 +348,7 @@ class WalletTransferService {
               type: 'CREDIT',
               reason: 'WALLET_TRANSFER_CREDIT',
               amount: amount,
-              balanceAfter: targetBalanceField === 'wallet.cashBalance'
-                ? (finalUser.wallet?.cashBalance || 0)
-                : (finalUser[targetWallet]?.balance || 0),
+              balanceAfter: ledgerTargetAfter,
               description: `Transfer from ${this.getWalletDisplayName(sourceWallet)}`,
               performedBy: performedBy,
               meta: {
@@ -345,25 +367,19 @@ class WalletTransferService {
           transferId,
           message: `Successfully transferred ₹${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
           sourceBalance: gamesWalletDebit.balance,
-          targetBalance: targetBalanceField === 'wallet.cashBalance'
-            ? (finalUser.wallet?.cashBalance || 0)
-            : (finalUser[targetWallet]?.balance || 0)
+          targetBalance: ledgerTargetAfter
         };
       } else {
         // Get current source balance
         const freshUser = await User.findById(user._id);
         const sourceBalanceField = this.getBalanceFieldName(sourceWallet);
-        
-        const currentSourceBalance = sourceBalanceField === 'wallet.cashBalance'
-          ? (freshUser.wallet?.cashBalance || 0)
-          : (freshUser[sourceWallet]?.balance || 0);
-        
-        // Verify sufficient balance
+
+        const currentSourceBalance = this.getWalletBalance(freshUser, sourceWallet);
+
         if (currentSourceBalance < amount) {
           throw new Error(`Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Available: ₹${currentSourceBalance.toLocaleString()}`);
         }
 
-        // Debit from source wallet
         const sourceUpdate = {};
         sourceUpdate[sourceBalanceField] = -amount;
 
@@ -377,18 +393,22 @@ class WalletTransferService {
           throw new Error('Failed to debit source wallet');
         }
 
-        // Verify source wallet balance didn't go negative
-        const newSourceBalance = sourceBalanceField === 'wallet.cashBalance'
-          ? (updatedUser.wallet?.cashBalance || 0)
-          : (updatedUser[sourceWallet]?.balance || 0);
-          
-        if (newSourceBalance < 0) {
-          // Rollback
+        const afterSource = this._balanceAfterSourceDebit(updatedUser, sourceWallet);
+        const um = updatedUser.wallet?.usedMargin || 0;
+
+        if (sourceWallet === 'tradingAccount') {
+          if (afterSource < um) {
+            await User.findByIdAndUpdate(user._id, { $inc: { [sourceBalanceField]: amount } });
+            throw new Error('Insufficient free margin in Trading Account for this transfer');
+          }
+        } else if (afterSource < 0) {
           const rollbackUpdates = {};
           rollbackUpdates[sourceBalanceField] = amount;
           await User.findByIdAndUpdate(user._id, { $inc: rollbackUpdates });
           throw new Error('Insufficient balance after transfer');
         }
+
+        const newSourceBalance = this._balanceAfterSourceDebit(updatedUser, sourceWallet);
 
         // Credit to games wallet
         await atomicGamesWalletUpdate(User, user._id, { balance: amount });
@@ -439,7 +459,7 @@ class WalletTransferService {
           success: true,
           transferId,
           message: `Successfully transferred ₹${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
-          sourceBalance: newSourceBalance,
+          sourceBalance: this.getWalletBalance(updatedUser, sourceWallet),
           targetBalance: finalUser?.gamesWallet?.balance || 0
         };
       }
