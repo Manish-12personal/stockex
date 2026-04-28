@@ -52,7 +52,16 @@ const UserAccounts = () => {
   const [showForexTransferLedger, setShowForexTransferLedger] = useState(false);
   const [forexTransferLedger, setForexTransferLedger] = useState([]);
   const [forexTransferLedgerLoading, setForexTransferLedgerLoading] = useState(false);
-  
+  const [showTradingTransferLedger, setShowTradingTransferLedger] = useState(false);
+  const [tradingTransferLedger, setTradingTransferLedger] = useState([]);
+  const [tradingTransferLedgerLoading, setTradingTransferLedgerLoading] = useState(false);
+  const [showMcxTransferLedger, setShowMcxTransferLedger] = useState(false);
+  const [mcxTransferLedger, setMcxTransferLedger] = useState([]);
+  const [mcxTransferLedgerLoading, setMcxTransferLedgerLoading] = useState(false);
+  const [showGamesTransferLedger, setShowGamesTransferLedger] = useState(false);
+  const [gamesTransferLedger, setGamesTransferLedger] = useState([]);
+  const [gamesTransferLedgerLoading, setGamesTransferLedgerLoading] = useState(false);
+
   // Wallet transfer dropdown state
   const [showWalletTransferDropdown, setShowWalletTransferDropdown] = useState(null); // null, 'trading', 'mcx', 'games', 'crypto', 'forex'
   const [showWalletTransferModal, setShowWalletTransferModal] = useState(false);
@@ -230,6 +239,57 @@ const UserAccounts = () => {
     }
   }, [user?.token]);
 
+  const fetchTradingTransferLedger = useCallback(async () => {
+    if (!user?.token) return;
+    setTradingTransferLedgerLoading(true);
+    try {
+      const { data } = await axios.get('/api/user/funds/subwallet-transfer-ledger', {
+        params: { wallet: 'trading', limit: 50 },
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setTradingTransferLedger(Array.isArray(data?.entries) ? data.entries : []);
+    } catch (e) {
+      console.error('Trading transfer ledger:', e);
+      setTradingTransferLedger([]);
+    } finally {
+      setTradingTransferLedgerLoading(false);
+    }
+  }, [user?.token]);
+
+  const fetchMcxTransferLedger = useCallback(async () => {
+    if (!user?.token) return;
+    setMcxTransferLedgerLoading(true);
+    try {
+      const { data } = await axios.get('/api/user/funds/subwallet-transfer-ledger', {
+        params: { wallet: 'mcx', limit: 50 },
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setMcxTransferLedger(Array.isArray(data?.entries) ? data.entries : []);
+    } catch (e) {
+      console.error('MCX transfer ledger:', e);
+      setMcxTransferLedger([]);
+    } finally {
+      setMcxTransferLedgerLoading(false);
+    }
+  }, [user?.token]);
+
+  const fetchGamesTransferLedger = useCallback(async () => {
+    if (!user?.token) return;
+    setGamesTransferLedgerLoading(true);
+    try {
+      const { data } = await axios.get('/api/user/funds/subwallet-transfer-ledger', {
+        params: { wallet: 'games', limit: 50 },
+        headers: { Authorization: `Bearer ${user.token}` },
+      });
+      setGamesTransferLedger(Array.isArray(data?.entries) ? data.entries : []);
+    } catch (e) {
+      console.error('Games transfer ledger:', e);
+      setGamesTransferLedger([]);
+    } finally {
+      setGamesTransferLedgerLoading(false);
+    }
+  }, [user?.token]);
+
   const openGamesTransfer = (direction) => {
     setGamesTransferDirection(direction);
     setShowGamesTransferModal(true);
@@ -353,6 +413,63 @@ const UserAccounts = () => {
             {usedMargin > 0 && (
               <div className="text-xs text-yellow-400 mt-1">
                 Margin Used: ₹{usedMargin.toLocaleString()} | Available: ₹{availableTradingBalance.toLocaleString()}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowTradingTransferLedger((prev) => {
+                  const next = !prev;
+                  if (next) fetchTradingTransferLedger();
+                  return next;
+                });
+              }}
+              className="mt-4 w-full py-2 text-sm font-medium text-green-300/90 border border-green-500/25 rounded-lg hover:bg-green-500/10 flex items-center justify-center gap-2 transition"
+            >
+              <History size={16} />
+              Transfer ledger
+              {showTradingTransferLedger ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+
+            {showTradingTransferLedger && (
+              <div className="mt-2 rounded-lg border border-green-500/20 bg-dark-900/50 max-h-56 overflow-y-auto">
+                {tradingTransferLedgerLoading ? (
+                  <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
+                ) : tradingTransferLedger.length === 0 ? (
+                  <p className="text-center text-xs text-gray-500 py-4 px-2 leading-snug">
+                    No transfers yet. Moves between Main Wallet and this Trading account (Deposit/Withdraw above) appear here.
+                  </p>
+                ) : (
+                  <table className="w-full text-[11px]">
+                    <thead className="sticky top-0 bg-dark-800/95 text-gray-400 border-b border-dark-600">
+                      <tr>
+                        <th className="text-left p-2 font-medium">When (IST)</th>
+                        <th className="text-right p-2 font-medium">Amount</th>
+                        <th className="text-left p-2 font-medium">From → To</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tradingTransferLedger.map((row) => (
+                        <tr key={row.id} className="border-t border-dark-700/80">
+                          <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
+                          <td className="p-2 align-top text-right font-mono tabular-nums text-cyan-300/95">
+                            ₹
+                            {Number(row.amount || 0).toLocaleString('en-IN', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                          <td className="p-2 align-top text-gray-300 leading-snug">
+                            <span className="text-green-300/90">{row.sourceLabel}</span>
+                            <span className="text-gray-600 mx-1">→</span>
+                            <span className="text-emerald-300/90">{row.targetLabel}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             )}
           </div>
@@ -594,6 +711,63 @@ const UserAccounts = () => {
                 </div>
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowMcxTransferLedger((prev) => {
+                  const next = !prev;
+                  if (next) fetchMcxTransferLedger();
+                  return next;
+                });
+              }}
+              className="mt-2 w-full py-2 text-sm font-medium text-yellow-300/90 border border-yellow-500/25 rounded-lg hover:bg-yellow-500/10 flex items-center justify-center gap-2 transition"
+            >
+              <History size={16} />
+              Transfer ledger
+              {showMcxTransferLedger ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+
+            {showMcxTransferLedger && (
+              <div className="mt-2 rounded-lg border border-yellow-500/20 bg-dark-900/50 max-h-56 overflow-y-auto">
+                {mcxTransferLedgerLoading ? (
+                  <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
+                ) : mcxTransferLedger.length === 0 ? (
+                  <p className="text-center text-xs text-gray-500 py-4 px-2 leading-snug">
+                    No transfers yet. Main ↔ MCX moves and wallet-to-wallet transfers involving MCX appear here.
+                  </p>
+                ) : (
+                  <table className="w-full text-[11px]">
+                    <thead className="sticky top-0 bg-dark-800/95 text-gray-400 border-b border-dark-600">
+                      <tr>
+                        <th className="text-left p-2 font-medium">When (IST)</th>
+                        <th className="text-right p-2 font-medium">Amount</th>
+                        <th className="text-left p-2 font-medium">From → To</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mcxTransferLedger.map((row) => (
+                        <tr key={row.id} className="border-t border-dark-700/80">
+                          <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
+                          <td className="p-2 align-top text-right font-mono tabular-nums text-cyan-300/95">
+                            ₹
+                            {Number(row.amount || 0).toLocaleString('en-IN', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                          <td className="p-2 align-top text-gray-300 leading-snug">
+                            <span className="text-yellow-300/90">{row.sourceLabel}</span>
+                            <span className="text-gray-600 mx-1">→</span>
+                            <span className="text-amber-300/90">{row.targetLabel}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Account Actions */}
@@ -818,6 +992,63 @@ const UserAccounts = () => {
                     </table>
                   )}
                 </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowGamesTransferLedger((prev) => {
+                  const next = !prev;
+                  if (next) fetchGamesTransferLedger();
+                  return next;
+                });
+              }}
+              className="mt-2 w-full py-2 text-sm font-medium text-purple-300/90 border border-purple-500/25 rounded-lg hover:bg-purple-500/10 flex items-center justify-center gap-2 transition"
+            >
+              <History size={16} />
+              Transfer ledger
+              {showGamesTransferLedger ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+
+            {showGamesTransferLedger && (
+              <div className="mt-2 rounded-lg border border-purple-500/20 bg-dark-900/50 max-h-56 overflow-y-auto">
+                {gamesTransferLedgerLoading ? (
+                  <p className="text-center text-xs text-gray-500 py-4">Loading…</p>
+                ) : gamesTransferLedger.length === 0 ? (
+                  <p className="text-center text-xs text-gray-500 py-4 px-2 leading-snug">
+                    No transfers yet. Main ↔ Games moves and transfers involving Games wallet appear here.
+                  </p>
+                ) : (
+                  <table className="w-full text-[11px]">
+                    <thead className="sticky top-0 bg-dark-800/95 text-gray-400 border-b border-dark-600">
+                      <tr>
+                        <th className="text-left p-2 font-medium">When (IST)</th>
+                        <th className="text-right p-2 font-medium">Amount</th>
+                        <th className="text-left p-2 font-medium">From → To</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {gamesTransferLedger.map((row) => (
+                        <tr key={row.id} className="border-t border-dark-700/80">
+                          <td className="p-2 align-top text-gray-400 whitespace-nowrap">{formatIstLedgerTime(row.at)}</td>
+                          <td className="p-2 align-top text-right font-mono tabular-nums text-cyan-300/95">
+                            ₹
+                            {Number(row.amount || 0).toLocaleString('en-IN', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                          <td className="p-2 align-top text-gray-300 leading-snug">
+                            <span className="text-purple-300/90">{row.sourceLabel}</span>
+                            <span className="text-gray-600 mx-1">→</span>
+                            <span className="text-fuchsia-300/90">{row.targetLabel}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             )}
           </div>
@@ -1311,7 +1542,11 @@ const UserAccounts = () => {
           tradingBalance={availableTradingBalance}
           direction={transferDirection}
           onClose={() => setShowTransferModal(false)}
-          onSuccess={() => { fetchWallet(); setShowTransferModal(false); }}
+          onSuccess={() => {
+            fetchWallet();
+            setShowTransferModal(false);
+            fetchTradingTransferLedger();
+          }}
         />
       )}
 
@@ -1323,7 +1558,11 @@ const UserAccounts = () => {
           mcxBalance={mcxAvailableBalance}
           direction={mcxTransferDirection}
           onClose={() => setShowMcxTransferModal(false)}
-          onSuccess={() => { fetchWallet(); setShowMcxTransferModal(false); }}
+          onSuccess={() => {
+            fetchWallet();
+            setShowMcxTransferModal(false);
+            fetchMcxTransferLedger();
+          }}
         />
       )}
 
@@ -1335,7 +1574,11 @@ const UserAccounts = () => {
           gamesBalance={gamesAvailableBalance}
           direction={gamesTransferDirection}
           onClose={() => setShowGamesTransferModal(false)}
-          onSuccess={() => { fetchWallet(); setShowGamesTransferModal(false); }}
+          onSuccess={() => {
+            fetchWallet();
+            setShowGamesTransferModal(false);
+            fetchGamesTransferLedger();
+          }}
         />
       )}
 
@@ -1384,6 +1627,12 @@ const UserAccounts = () => {
             }
             if (walletTransferSource === 'forexWallet' || walletTransferTarget === 'forexWallet') {
               fetchForexTransferLedger();
+            }
+            if (walletTransferSource === 'mcxWallet' || walletTransferTarget === 'mcxWallet') {
+              fetchMcxTransferLedger();
+            }
+            if (walletTransferSource === 'gamesWallet' || walletTransferTarget === 'gamesWallet') {
+              fetchGamesTransferLedger();
             }
           }}
         />

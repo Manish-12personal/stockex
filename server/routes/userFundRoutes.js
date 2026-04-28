@@ -59,6 +59,72 @@ function enrichCashBridgeRow(row, segmentKey) {
   };
 }
 
+/** Main wallet cash ↔ MCX subwallet bridge rows (`MCX_TRANSFER`). */
+function enrichMcxCashBridgeRow(row) {
+  const desc = row.description || '';
+  const cash = 'Main Wallet (cash)';
+  const sub = 'MCX account';
+  let fromLabel = cash;
+  let toLabel = sub;
+  if (desc.includes('MCX Account → Wallet')) {
+    fromLabel = sub;
+    toLabel = cash;
+  }
+  return {
+    id: String(row._id),
+    at: row.createdAt,
+    amount: Number(row.amount),
+    kind: 'main_cash_bridge',
+    description: row.description,
+    sourceLabel: fromLabel,
+    targetLabel: toLabel,
+  };
+}
+
+/** Main wallet cash ↔ Games subwallet bridge rows (`GAMES_TRANSFER`). */
+function enrichGamesCashBridgeRow(row) {
+  const desc = row.description || '';
+  const cash = 'Main Wallet (cash)';
+  const sub = 'Games account';
+  let fromLabel = cash;
+  let toLabel = sub;
+  if (desc.includes('Games Account → Wallet')) {
+    fromLabel = sub;
+    toLabel = cash;
+  }
+  return {
+    id: String(row._id),
+    at: row.createdAt,
+    amount: Number(row.amount),
+    kind: 'main_cash_bridge',
+    description: row.description,
+    sourceLabel: fromLabel,
+    targetLabel: toLabel,
+  };
+}
+
+/** Main cash ↔ Trading balance (`ADJUSTMENT` internal-transfer rows only). */
+function enrichTradingInternalRow(row) {
+  const desc = row.description || '';
+  const cash = 'Main Wallet (cash)';
+  const tr = 'Trading account';
+  let sourceLabel = cash;
+  let targetLabel = tr;
+  if (desc.includes('Trading Account → Wallet')) {
+    sourceLabel = tr;
+    targetLabel = cash;
+  }
+  return {
+    id: String(row._id),
+    at: row.createdAt,
+    amount: Number(row.amount),
+    kind: 'main_trading_bridge',
+    description: row.description,
+    sourceLabel,
+    targetLabel,
+  };
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -94,17 +160,52 @@ const uploadProof = multer({
 
 const router = express.Router();
 
-// GET …/subwallet-transfer-ledger?wallet=crypto|forex — Main↔sub transfers + cross-wallet moves touching this subwallet
+// GET …/subwallet-transfer-ledger?wallet=crypto|forex|mcx|games|trading — Main↔sub + cross-wallet (where applicable)
 router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
   try {
     const w = String(req.query.wallet || '').toLowerCase();
-    if (!['crypto', 'forex'].includes(w)) {
-      return res.status(400).json({ message: 'Query wallet must be crypto or forex' });
+    const allowed = ['crypto', 'forex', 'mcx', 'games', 'trading'];
+    if (!allowed.includes(w)) {
+      return res.status(400).json({
+        message: 'Query wallet must be one of: crypto, forex, mcx, games, trading',
+      });
     }
-    const segmentKey = w;
-    const walletKey = w === 'forex' ? 'forexWallet' : 'cryptoWallet';
-    const directReason = w === 'forex' ? 'FOREX_TRANSFER' : 'CRYPTO_TRANSFER';
     const lim = Math.min(Math.max(parseInt(req.query.limit, 10) || 40, 1), 100);
+
+    if (w === 'trading') {
+      const directRows = await WalletLedger.find({
+        ownerType: 'USER',
+        ownerId: req.user._id,
+        reason: 'ADJUSTMENT',
+        $or: [
+          { description: /^Internal Transfer: Wallet → Trading Account/ },
+          { description: /^Internal Transfer: Trading Account → Wallet/ },
+        ],
+      })
+        .sort({ createdAt: -1 })
+        .limit(lim)
+        .lean();
+      const entries = directRows.map((row) => enrichTradingInternalRow(row));
+      return res.json({ entries });
+    }
+
+    const segmentKey = w;
+    const walletKey =
+      w === 'forex'
+        ? 'forexWallet'
+        : w === 'mcx'
+          ? 'mcxWallet'
+          : w === 'games'
+            ? 'gamesWallet'
+            : 'cryptoWallet';
+    const directReason =
+      w === 'forex'
+        ? 'FOREX_TRANSFER'
+        : w === 'mcx'
+          ? 'MCX_TRANSFER'
+          : w === 'games'
+            ? 'GAMES_TRANSFER'
+            : 'CRYPTO_TRANSFER';
 
     const [meshRows, directRows] = await Promise.all([
       WalletTransferService.getTransferHistory(req.user._id),
@@ -135,7 +236,14 @@ router.get('/subwallet-transfer-ledger', protectUser, async (req, res) => {
         description: row.description || null,
       }));
 
-    const bridge = (directRows || []).map((row) => enrichCashBridgeRow(row, segmentKey));
+    let bridge;
+    if (w === 'crypto' || w === 'forex') {
+      bridge = (directRows || []).map((row) => enrichCashBridgeRow(row, segmentKey));
+    } else if (w === 'mcx') {
+      bridge = (directRows || []).map((row) => enrichMcxCashBridgeRow(row));
+    } else {
+      bridge = (directRows || []).map((row) => enrichGamesCashBridgeRow(row));
+    }
 
     const seen = new Set();
     const combined = [...mesh, ...bridge]
