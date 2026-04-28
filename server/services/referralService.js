@@ -3,16 +3,17 @@ import Referral from '../models/Referral.js';
 import { creditReferralPercentOfTotalStake } from './referralGameStakeCredit.js';
 
 /**
- * Jackpot referral: winPercent × referred user's total stake for that declare day (all their bids in the pool).
+ * Jackpot referral: winPercent × total prize pool (bank) that session — matches admin "% of bank".
+ * `meta.referredUserStake`: optional audit field (referred user's summed stakes that day).
  * @param {string} referredUserId
- * @param {number} totalStakeInSession - Sum of that user's bid amounts for the declare date
+ * @param {number} jackpotPoolBank - Total pool stakes for declare day (bank basis)
  * @param {'niftyJackpot'|'btcJackpot'} gameType
  * @param {number|null} rank - For top-rank referral settings
- * @param {{ settlementDay: string, sessionScope?: string }} meta - IST date YYYY-MM-DD; scope defaults to `declare`
+ * @param {{ settlementDay: string, sessionScope?: string, referredUserStake?: number }} meta
  */
 export async function creditReferralGameReward(
   referredUserId,
-  totalStakeInSession,
+  jackpotPoolBank,
   gameType,
   rank = null,
   meta = {}
@@ -25,10 +26,11 @@ export async function creditReferralGameReward(
   return creditReferralPercentOfTotalStake({
     referredUserId,
     gameType,
-    totalStake: totalStakeInSession,
+    totalStake: jackpotPoolBank,
     settlementDay: String(settlementDay).trim(),
     sessionScope,
     rank,
+    referredUserStake: meta.referredUserStake,
   });
 }
 

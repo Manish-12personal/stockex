@@ -397,11 +397,12 @@ export async function declareBtcJackpotForDate(date) {
           predictedBtc: bid.predictedBtc,
         });
 
-        // 3. Referral: winPercent × this user's total BTC Jackpot stake for the declare day (once per user per day)
+        // 3. Referral: winPercent × pool (bank); first credited win per referred user × btcJackpot in referralGameStakeCredit
         try {
           const userTotalStake = stakeByUser.get(bid.user.toString()) || 0;
-          await creditReferralGameReward(bid.user, userTotalStake, 'btcJackpot', rankDisplay, {
+          await creditReferralGameReward(bid.user, totalPool, 'btcJackpot', rankDisplay, {
             settlementDay: date,
+            referredUserStake: userTotalStake,
           });
         } catch (e) {
           console.warn('[BTC Jackpot] referral credit error:', e?.message || e);

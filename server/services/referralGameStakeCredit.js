@@ -1,7 +1,8 @@
 /**
  * Shared games referral: winPercent from GameSettings.
  * - BTC/Nifty Up/Down: % × one ticket price (game ticketPrice or global tokenValue).
- * - Other games: % × total stake for the session (declare / bracket / jackpot day).
+ * - Other games: % × total stake for the session (bracket / declare day).
+ * - Nifty/BTC Jackpot: % × total pool (bank) for that declare session.
  * First win only per (referred user, gameKey). Session idempotency: (referred user, gameKey, day, sessionScope).
  */
 import mongoose from 'mongoose';
@@ -44,10 +45,11 @@ function metaRelatedUserIdMatch(referredOid, referredUserIdRaw) {
  * @param {object} params
  * @param {import('mongoose').Types.ObjectId|string} params.referredUserId
  * @param {string} params.gameType - GameSettings games.* key
- * @param {number} params.totalStake - Session total stake (Up/Down: full window stake for validation/meta; reward uses one ticket)
+ * @param {number} params.totalStake - Session total stake OR jackpot pool bank (jackpot referral "% of bank")
  * @param {string} params.settlementDay - YYYY-MM-DD (IST calendar anchor)
  * @param {string} params.sessionScope - Unique within day+game: e.g. `w42`, `declare`, or trade id
  * @param {number|null} [params.rank] - Optional rank for jackpot top-N settings
+ * @param {number|undefined} [params.referredUserStake] - Referred user stake sum (audit; jackpot basis is totalStake pool)
  * @returns {Promise<{ credited: boolean, amount?: number, reason?: string, error?: string }>}
  */
 export async function creditReferralPercentOfTotalStake({
@@ -57,6 +59,7 @@ export async function creditReferralPercentOfTotalStake({
   settlementDay,
   sessionScope,
   rank = null,
+  referredUserStake = undefined,
 }) {
   try {
     const stake = Number(totalStake);
@@ -158,6 +161,7 @@ export async function creditReferralPercentOfTotalStake({
     }
 
     const isUpDown = gameType === 'btcUpDown' || gameType === 'niftyUpDown';
+    const isJackpotPool = gameType === 'niftyJackpot' || gameType === 'btcJackpot';
     let referralBaseAmount;
     let referralBaseKind;
     if (isUpDown) {
@@ -169,6 +173,9 @@ export async function creditReferralPercentOfTotalStake({
             : 300;
       referralBaseAmount = ticket;
       referralBaseKind = 'single_ticket';
+    } else if (isJackpotPool) {
+      referralBaseAmount = stake;
+      referralBaseKind = 'jackpot_pool_bank';
     } else {
       referralBaseAmount = stake;
       referralBaseKind = 'total_session_stake';
@@ -183,7 +190,9 @@ export async function creditReferralPercentOfTotalStake({
     const rankBit = rank != null ? ` (rank ${rank})` : '';
     const baseDesc = isUpDown
       ? `${rewardPercent}% of one ticket (₹${referralBaseAmount.toFixed(2)})`
-      : `${rewardPercent}% of total stake (₹${stake.toFixed(2)})`;
+      : isJackpotPool
+        ? `${rewardPercent}% of prize pool/bank (₹${referralBaseAmount.toFixed(2)})`
+        : `${rewardPercent}% of total stake (₹${stake.toFixed(2)})`;
     const description = `Referral bonus: ${baseDesc} — ${referredUser.username} in ${gl}${rankBit} · ${day} · ${scope}`;
 
     referrer.wallet = referrer.wallet || {};
@@ -217,7 +226,13 @@ export async function creditReferralPercentOfTotalStake({
         settlementDay: day,
         sessionScope: scope,
         referralBase: referralBaseKind,
-        totalStakeInSession: stake,
+        totalStakeInSession:
+          referredUserStake != null && Number.isFinite(Number(referredUserStake))
+            ? Number(referredUserStake)
+            : isJackpotPool
+              ? undefined
+              : stake,
+        ...(isJackpotPool ? { jackpotPoolBank: referralBaseAmount } : {}),
         ...(isUpDown ? { ticketPrice: referralBaseAmount } : {}),
         referredUsername: referredUser.username,
         ...(rank != null ? { rank } : {}),

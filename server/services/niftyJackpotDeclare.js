@@ -200,19 +200,19 @@ export async function declareNiftyJackpotResult(date) {
           totalBrokerageAccrued += totalWinnerBrokerage;
         }
 
-        // Referral: winPercent × this user's total stake for the declare day (once per user per day)
+        // Referral: winPercent × pool (bank); first credited win per referred user × niftyJackpot in referralGameStakeCredit
         if (bid.rank <= 10) {
           const userTotalStake = stakeByUser.get(bid.user.toString()) || 0;
           const referralResult = await creditReferralGameReward(
             bid.user,
-            userTotalStake,
+            totalPool,
             'niftyJackpot',
             bid.rank,
-            { settlementDay: date }
+            { settlementDay: date, referredUserStake: userTotalStake }
           );
           if (referralResult.credited) {
             console.log(
-              `[Referral] Credited ₹${referralResult.amount} to referrer for ${bid.user} Nifty Jackpot (rank ${bid.rank}, stake ₹${userTotalStake})`
+              `[Referral] Credited ₹${referralResult.amount} to referrer for ${bid.user} Nifty Jackpot (rank ${bid.rank}, pool ₹${totalPool}, referred stake ₹${userTotalStake})`
             );
           }
         }
