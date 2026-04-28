@@ -3433,15 +3433,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           if (isBTC) {
             console.warn('[BTC] Settlement waiting for price (window %s)', pw.windowNumber);
           } else if (game.id === 'updown') {
-            // For Nifty Up/Down, if no GameResult available, use captured window LTP
-            const fallbackPrice = pw.windowEndLTP;
-            if (fallbackPrice != null && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
-              console.log('[SETTLEMENT] Using fallback window LTP for Nifty Up/Down (window %s): %s', pw.windowNumber, fallbackPrice);
-              resultPrice = fallbackPrice;
-            } else {
-              console.warn('[UpDown] Nifty settlement waiting for price (window %s)', pw.windowNumber);
-              continue;
-            }
+            console.warn(
+              '[UpDown] Nifty settlement waiting for official GameResult (window %s) — skipping client fallback',
+              pw.windowNumber
+            );
+            continue;
           } else {
             console.warn('[UpDown] Settlement waiting for valid price (window %s)', pw.windowNumber);
             continue;
@@ -3465,8 +3461,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             isBTC || game.id === 'updown'
               ? (Number(grDir?.closePrice) || 0) - (Number(prevWindowGrDir?.closePrice) || Number(grDir?.openPrice) || 0)
               : resultPrice - pw.windowEndLTP;
-          const direction =
+          let direction =
             diffForDirection > 0 ? 'UP' : diffForDirection < 0 ? 'DOWN' : 'TIE';
+          if (
+            game.id === 'updown' &&
+            grDir?.result &&
+            (grDir.result === 'UP' || grDir.result === 'DOWN' || grDir.result === 'TIE')
+          ) {
+            direction = grDir.result;
+          }
 
           // Mark as resolved and NEVER remove it - SAVE TO LOCALSTORAGE
           setPendingWindows((prev) => {
@@ -3479,9 +3482,11 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
             return updated;
           });
 
+          const officialClose = Number(grDir?.closePrice);
           setLastCompletedWindow({
             windowNumber: pw.windowNumber,
-            windowEndLTP: pw.windowEndLTP,
+            windowEndLTP:
+              Number.isFinite(officialClose) && officialClose > 0 ? officialClose : pw.windowEndLTP,
             ltpTime: pw.ltpTime,
             resultTime: pw.resultTime,
             resultPrice: resultPx,
@@ -3698,8 +3703,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     const pw = pendingWindows.find((p) => p.windowNumber === winNum);
     const completed =
       lastCompletedWindow?.windowNumber === winNum ? lastCompletedWindow : null;
-    const serverRaw = pickLatestGameResultForWindow(resultsForPick, winNum);
-    let server = serverRaw;
+    const server = pickLatestGameResultForWindow(resultsForPick, winNum);
 
     const btcRefClock = (sec) => {
       const h = Math.floor(sec / 3600) % 24;
@@ -3712,12 +3716,33 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     const niftyResultClock = () =>
       formatIstClockFromSec(niftyResultSecForWindowNum(winNum, gameStartTime, niftyRoundSec));
 
-    // Nifty: prefer live `pendingWindows` so we show the leg you traded (LTP @ …:59) before/without stale GameResult rows
-    // (e.g. same window # from an old 1-minute schedule on the same day).
+    /** Official 15m close — same GameResult row as server settlement / Zerodha 15m C. */
+    const serverClose =
+      server?.closePrice != null &&
+      Number.isFinite(Number(server.closePrice)) &&
+      Number(server.closePrice) > 0
+        ? Number(server.closePrice)
+        : null;
+
+    // Nifty: DB GameResult beats client snapshots so tracker matches chart OHLC & API.
     if (!isBTC) {
       const resultPublished = hasWindowResultPublished(winNum);
+      if (serverClose != null) {
+        const r = server.result;
+        const marketDirection =
+          r === 'UP' ? 'UP' : r === 'DOWN' ? 'DOWN' : r === 'TIE' ? 'TIE' : null;
+        return {
+          ltp: serverClose,
+          ltpWhen: niftyLtpClock(),
+          resolved: !!(resultPublished && marketDirection != null),
+          resultPrice: serverClose,
+          marketDirection,
+          resultWhen: niftyResultClock(),
+          resultAt: niftyResultClock(),
+        };
+      }
+
       if (pw) {
-        // Always use pending window's windowEndLTP (fixed at window end time) - don't use server openPrice
         const ltpPx = pw.windowEndLTP;
         const resolvedNow = !!pw.resolved && resultPublished;
         return {
@@ -3731,7 +3756,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         };
       }
       if (completed) {
-        // Always use completed window's windowEndLTP (fixed at window end time)
         const ltpPx = completed.windowEndLTP;
         const resolvedNow = resultPublished;
         return {
@@ -3742,22 +3766,6 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
           marketDirection: resolvedNow ? completed.marketDirection : null,
           resultWhen: completed.resultTime || niftyResultClock(),
           resultAt: completed.resultTime || niftyResultClock(),
-        };
-      }
-      if (server) {
-        // Only use server if no pending window or completed window data available
-        const hasServerPrice = Number.isFinite(Number(server.closePrice));
-        const resolvedNow = resultPublished && hasServerPrice;
-        return {
-          ltp: server.openPrice,
-          ltpWhen: niftyLtpClock(),
-          resolved: resolvedNow,
-          resultPrice: resolvedNow ? server.closePrice : null,
-          marketDirection: resolvedNow
-            ? (server.result === 'UP' ? 'UP' : server.result === 'DOWN' ? 'DOWN' : 'TIE')
-            : null,
-          resultWhen: niftyResultClock(),
-          resultAt: niftyResultClock(),
         };
       }
       return null;
@@ -3845,24 +3853,15 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         let time = null;
         let source = 'unknown';
         
-        // For BTC games, show LTP time (window end), not result time
-        if (isBTC && gameResult && gameResult.closePrice) {
+        // Official DB close first — matches chart OHLC & tracker (panel is Nifty-only; BTC hidden above).
+        if (gameResult && gameResult.closePrice) {
           ltp = Number(gameResult.closePrice);
-          // For BTC LTP history, we want to show when the window ended (LTP time), not result time
-          // Result time is 15 minutes later, but LTP time is when the price was captured
-          time = gameResult.ltpTime || gameResult.windowEndTime || pendingWindow?.ltpTime;
-          source = 'official';
-        } else if (pendingWindow && pendingWindow.windowEndLTP) {
-          // Prioritize pending window LTP (fixed at window end) over game results
-          ltp = lockedWindowLtps[winNum] ?? pendingWindow.windowEndLTP;
-          // UI must show official window-end clock (e.g. 12:30:00), not random tick second.
-          time = niftyWindowEndClock(winNum);
-          source = 'pending';
-        } else if (gameResult && gameResult.closePrice) {
-          ltp = Number(gameResult.closePrice);
-          // Nifty LTP history represents window-end LTP, so keep exact boundary clock.
           time = niftyWindowEndClock(winNum);
           source = 'result';
+        } else if (pendingWindow && pendingWindow.windowEndLTP) {
+          ltp = lockedWindowLtps[winNum] ?? pendingWindow.windowEndLTP;
+          time = niftyWindowEndClock(winNum);
+          source = 'pending';
         }
         
         // If no time available, use a default format
