@@ -516,7 +516,15 @@ const UserHome = () => {
           </div>
           <div className="flex items-center gap-2 text-sm">
             <Timer size={16} className="text-gray-400" />
-            <span className="font-mono">{currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+            <span className="font-mono">
+              {currentTime.toLocaleTimeString('en-IN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+                timeZone: 'Asia/Kolkata',
+              })}
+            </span>
           </div>
         </div>
       </div>
