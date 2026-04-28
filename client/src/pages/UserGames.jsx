@@ -14,6 +14,7 @@ import {
   currentTotalSecondsIST as currentTotalSecondsISTLib,
   btcResultRefSecForUiWindow,
 } from '../../../lib/btcUpDownWindows.js';
+import { resolveNiftyUpDownWindow15mOhlcFromCandles } from '../../../lib/niftyUpDownKitePrice.js';
 import {
   ArrowLeft, TrendingUp, TrendingDown, Hash, Trophy, Target,
   Timer, Users, Coins, Gamepad2, Zap, Star, Gift, ChevronRight,
@@ -1522,24 +1523,8 @@ const niftyMarketOpenSnappedSecForGame = (openTime) => {
   return Math.floor(s / 60) * 60;
 };
 
-/** Unix seconds for today (IST) at `istSecSinceMidnight` — matches Kite 15m bar open. */
-function istSecSinceMidnightToUnixToday(istSecSinceMidnight) {
-  const total = Number(istSecSinceMidnight);
-  if (!Number.isFinite(total) || total < 0) return null;
-  const ymd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-  const h = Math.floor(total / 3600) % 24;
-  const mi = Math.floor((total % 3600) / 60);
-  const s = Math.floor(total % 60);
-  const ms = Date.parse(
-    `${ymd}T${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}:${String(s).padStart(2, '0')}+05:30`
-  );
-  if (!Number.isFinite(ms)) return null;
-  return Math.floor(ms / 1000);
-}
-
 /**
- * Kite 15m candle **close** for the bar that completes when Nifty Up/Down window `prevWinNum` ends
- * (Zerodha 15m chart C for that bar). Returns null if history unavailable.
+ * Kite 15m candle **close** for the bar when window `prevWinNum` completes (same as server settlement).
  */
 async function fetchKite15mCloseForCompletedWindow(prevWinNum, gameStartTime, roundDurationSec) {
   const m = niftyMarketOpenSnappedSecForGame(gameStartTime);
@@ -1547,28 +1532,17 @@ async function fetchKite15mCloseForCompletedWindow(prevWinNum, gameStartTime, ro
     NIFTY_UP_DOWN_MIN_ROUND_SEC,
     Number(roundDurationSec) || DEFAULT_NIFTY_ROUND_DURATION_SEC
   );
-  const barOpenIstSec = m + (prevWinNum - 1) * D;
-  const targetUnix = istSecSinceMidnightToUnixToday(barOpenIstSec);
-  if (targetUnix == null) return null;
+  const ymd = getIstCalendarYmd();
   try {
     const { data } = await axios.get('/api/market/nifty-history', { params: { interval: '15minute' } });
     const rows = Array.isArray(data) ? data : data?.data;
     if (!rows || rows.length === 0) return null;
-    let bestClose = null;
-    let bestDist = Infinity;
-    for (const c of rows) {
-      let t;
-      if (c.time != null && typeof c.time === 'number' && Number.isFinite(c.time)) {
-        t = c.time > 1e12 ? Math.floor(c.time / 1000) : Math.floor(c.time);
-      } else continue;
-      const dist = Math.abs(t - targetUnix);
-      if (dist < bestDist) {
-        bestDist = dist;
-        const cl = Number(c.close);
-        if (Number.isFinite(cl) && cl > 0) bestClose = cl;
-      }
-    }
-    if (bestClose != null && bestDist < 300) return bestClose;
+    const bar = resolveNiftyUpDownWindow15mOhlcFromCandles(
+      { ymd, marketOpenSec: m, roundDurationSec: D, windowNumber: prevWinNum },
+      rows
+    );
+    const cl = bar?.close;
+    if (cl != null && Number.isFinite(cl) && cl > 0) return cl;
   } catch (e) {
     console.warn('[NiftyUpDown] Kite 15m close lookup failed', e);
   }

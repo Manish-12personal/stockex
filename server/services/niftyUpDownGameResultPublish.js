@@ -3,9 +3,9 @@ import { getTodayISTString, startOfISTDayFromKey, endOfISTDayFromKey } from '../
 import {
   getEffectiveNiftySessionBounds,
   getNiftyRoundDurationSec,
-  niftyOpenFixSecForWindow,
   niftyResultSecForWindow,
 } from '../../lib/niftyUpDownWindows.js';
+import { resolveNiftyUpDownWindow15mOhlcFromCandles } from '../../lib/niftyUpDownKitePrice.js';
 import { fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
 
 function istSecondsFromMs(ms = Date.now()) {
@@ -20,32 +20,6 @@ function isIstWeekend(ms = Date.now()) {
     weekday: 'short',
   });
   return wd === 'Sat' || wd === 'Sun';
-}
-
-function istInstantMs(istDayKey, secSinceMidnight) {
-  const [y, m, d] = istDayKey.split('-').map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  const sec = Number(secSinceMidnight);
-  if (!Number.isFinite(sec) || sec < 0) return null;
-  return date.getTime() + sec * 1000 - 19800000;
-}
-
-function pickMinuteCloseNearTarget(candles, targetMs) {
-  if (!Array.isArray(candles) || candles.length === 0 || !Number.isFinite(targetMs)) return null;
-  let best = null;
-  let bestDist = Infinity;
-  for (const c of candles) {
-    const openMs = Number(c.time) * 1000;
-    if (!Number.isFinite(openMs)) continue;
-    const mid = openMs + 30000;
-    const dist = Math.abs(mid - targetMs);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = Number(c.close);
-    }
-  }
-  if (best != null && Number.isFinite(best) && best > 0) return best;
-  return null;
 }
 
 /**
@@ -81,6 +55,12 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
   };
 
+  const candles15m = await fetchNifty50HistoricalFromKite({
+    interval: '15minute',
+    daysBack: 15,
+    maxCandles: 120,
+  });
+
   for (let W = 1; W < 500; W++) {
     const resultSec = niftyResultSecForWindow(W, gc);
     if (resultSec > nowSec) break;
@@ -96,60 +76,19 @@ export async function publishNiftyUpDownGameResults(settings, nowMs = Date.now()
     const betStartSec = marketOpenSec + (W - 1) * D;
     const betEndSec = marketOpenSec + W * D - 1;
 
-    let openPx = null;
-    if (W > 1) {
-      const prev = await GameResult.findOne({
-        gameId: 'updown',
-        windowNumber: W - 1,
-        windowDate: { $gte: dayStart, $lt: dayEnd },
-      }).select({ closePrice: 1 }).lean();
-      openPx = Number(prev?.closePrice);
-      if (openPx == null || !Number.isFinite(openPx) || openPx <= 0) {
-        const openCandleTargetSec = niftyOpenFixSecForWindow(W, gc);
-        const targetOpenMs = istInstantMs(today, openCandleTargetSec);
-        if (targetOpenMs != null) {
-          const candles = await fetchNifty50HistoricalFromKite({
-            interval: 'minute',
-            daysBack: 3,
-            maxCandles: 1200,
-          });
-          openPx = pickMinuteCloseNearTarget(candles, targetOpenMs);
-        }
-      }
-    } else {
-      const openCandleTargetSec = niftyOpenFixSecForWindow(W, gc);
-      const targetOpenMs = istInstantMs(today, openCandleTargetSec);
-      if (targetOpenMs != null) {
-        const candles = await fetchNifty50HistoricalFromKite({
-          interval: 'minute',
-          daysBack: 3,
-          maxCandles: 1200,
-        });
-        openPx = pickMinuteCloseNearTarget(candles, targetOpenMs);
-      }
-    }
-
-    // Skip if open price is not available from historical candles (no LTP fallback)
-    if (!Number.isFinite(openPx) || openPx <= 0) {
-      console.warn(`[niftyUpDownPublish] skip window ${W} day=${today}: missing open price from historical candles`);
+    const bar = resolveNiftyUpDownWindow15mOhlcFromCandles(
+      { ymd: today, marketOpenSec, roundDurationSec: D, windowNumber: W },
+      candles15m || []
+    );
+    if (!bar) {
+      console.warn(`[niftyUpDownPublish] skip window ${W} day=${today}: no 15m Kite bar`);
       continue;
     }
+    const openPx = bar.open;
+    const closePx = bar.close;
 
-    const targetCloseMs = istInstantMs(today, resultSec);
-
-    let closePx = null;
-    if (targetCloseMs != null) {
-      const candles = await fetchNifty50HistoricalFromKite({
-        interval: 'minute',
-        daysBack: 3,
-        maxCandles: 1200,
-      });
-      closePx = pickMinuteCloseNearTarget(candles, targetCloseMs);
-    }
-
-    // Skip if close price is not available from historical candles (no LTP fallback)
-    if (!Number.isFinite(closePx) || closePx <= 0) {
-      console.warn(`[niftyUpDownPublish] skip window ${W} day=${today}: missing close price from historical candles`);
+    if (!Number.isFinite(openPx) || openPx <= 0 || !Number.isFinite(closePx) || closePx <= 0) {
+      console.warn(`[niftyUpDownPublish] skip window ${W} day=${today}: invalid 15m OHLC`);
       continue;
     }
 

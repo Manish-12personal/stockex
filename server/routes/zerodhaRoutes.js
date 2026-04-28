@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { protectAdmin, protectUser, superAdminOnly } from '../middleware/auth.js';
 import { connectTicker, subscribeTokens, getMarketData, getTickerStatus, disconnectTicker } from '../services/zerodhaWebSocket.js';
 import { fetchNifty50SessionClearing15mCached } from '../utils/kiteNiftyQuote.js';
+import { kolkataCalendarDateString } from '../utils/derivativeExpiry.js';
 
 const router = express.Router();
 
@@ -41,6 +42,39 @@ const parseCSVLine = (line) => {
   values.push(current.trim());
   return values;
 };
+
+/** Kite MCX FUT: longest base match (CRUDEOILM before CRUDEOIL). Do not use `name` (e.g. "CRUDE OIL") as key. */
+const MCX_FUT_BASES_DESC = [
+  'CRUDEOILM',
+  'CRUDEOIL',
+  'GOLDGUINEA',
+  'GOLDPETAL',
+  'GOLDM',
+  'GOLD',
+  'SILVERM',
+  'SILVERMIC',
+  'SILVER',
+  'NATURALGAS',
+  'ALUMINIUM',
+  'ALUMINUM',
+  'MENTHAOIL',
+  'COTTON',
+  'COPPER',
+  'ZINC',
+  'LEAD',
+  'NICKEL',
+  'CPO'
+];
+
+function mcxFuturesBaseFromKite(tradingsymbol) {
+  const t = String(tradingsymbol || '').toUpperCase();
+  for (const base of MCX_FUT_BASES_DESC) {
+    if (t.startsWith(base)) return base;
+  }
+  // e.g. BASE12JAN26FUT → letters before first digit
+  const m = t.match(/^([A-Z]+)\d/);
+  return m ? m[1] : null;
+}
 
 /** CSV / seed row fields — never restored from pre-reset DB doc (token & contract identity stay from Kite). */
 const ZERODHA_SYNC_KITE_FIELD_KEYS = new Set([
@@ -946,15 +980,22 @@ router.post('/seed-mcx', protectAdmin, superAdminOnly, async (req, res) => {
     let added = 0;
     let updated = 0;
     
+    const todayYmdSeed = kolkataCalendarDateString(new Date());
     for (const baseSymbol of mcxSymbols) {
-      // Find the nearest expiry contract for this symbol
-      const contracts = mcxFutures.filter(i => 
-        i.tradingsymbol && i.tradingsymbol.startsWith(baseSymbol) && 
-        !i.tradingsymbol.includes('MINI') // Avoid duplicates
-      ).sort((a, b) => new Date(a.expiry) - new Date(b.expiry));
-      
+      // Nearest **unexpired** contract (IST date) for this base; skip rolled months still in CSV
+      const contracts = mcxFutures
+        .filter(
+          (i) =>
+            i.tradingsymbol &&
+            i.tradingsymbol.startsWith(baseSymbol) &&
+            !i.tradingsymbol.includes('MINI') &&
+            i.expiry &&
+            kolkataCalendarDateString(new Date(i.expiry)) >= todayYmdSeed
+        )
+        .sort((a, b) => new Date(a.expiry) - new Date(b.expiry));
+
       if (contracts.length > 0) {
-        const contract = contracts[0]; // Nearest expiry
+        const contract = contracts[0];
         
         // Check if exists in database by symbol OR by token
         const existingBySymbol = await Instrument.findOne({ symbol: baseSymbol, exchange: 'MCX' });
@@ -966,6 +1007,7 @@ router.post('/seed-mcx', protectAdmin, superAdminOnly, async (req, res) => {
           name: contract.name || baseSymbol,
           exchange: 'MCX',
           segment: 'MCX',
+          displaySegment: 'MCXFUT',
           instrumentType: 'FUTURES',
           category: 'MCX',
           lotSize: parseInt(contract.lot_size) || 1,
@@ -1920,12 +1962,23 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
       }
     }
     
-    // 4. MCX COMMODITIES
+    // 4. MCX COMMODITIES — one row per **tradingSymbol base** (CRUDEOIL, not "CRUDE OIL" name); front month = earliest **active** expiry
     const mcxFutures = allInstruments.filter(i => i.exchange === 'MCX' && i.instrument_type === 'FUT');
+    const todayYmd = kolkataCalendarDateString(new Date());
+    const mcxFuturesActive = mcxFutures.filter((fut) => {
+      if (!fut.expiry) return false;
+      const e = new Date(fut.expiry);
+      if (Number.isNaN(e.getTime())) return false;
+      return kolkataCalendarDateString(e) >= todayYmd;
+    });
     const mcxBySymbol = {};
-    for (const fut of mcxFutures) {
-      const baseSymbol = fut.name || fut.tradingsymbol.replace(/\d+[A-Z]+FUT$/, '');
-      if (!mcxBySymbol[baseSymbol] || new Date(fut.expiry) < new Date(mcxBySymbol[baseSymbol].expiry)) {
+    for (const fut of mcxFuturesActive) {
+      const baseSymbol = mcxFuturesBaseFromKite(fut.tradingsymbol);
+      if (!baseSymbol) continue;
+      if (
+        !mcxBySymbol[baseSymbol] ||
+        new Date(fut.expiry) < new Date(mcxBySymbol[baseSymbol].expiry)
+      ) {
         mcxBySymbol[baseSymbol] = fut;
       }
     }
