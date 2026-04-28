@@ -3822,6 +3822,11 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
 
       const transactionsGames = rows.map((row) => {
         const u = uMap.get(String(row.user));
+        const m = row.meta && typeof row.meta === 'object' ? row.meta : {};
+        const brokerFromMeta =
+          m.brokeragePaidFromPool != null && Number.isFinite(Number(m.brokeragePaidFromPool))
+            ? Number(m.brokeragePaidFromPool)
+            : null;
         return {
           _id: row._id,
           createdAt: row.createdAt,
@@ -3835,13 +3840,15 @@ router.get('/client-wallet-feed', protectAdmin, superAdminOnly, async (req, res)
           ownerUsername: u?.username || '',
           ownerFullName: u?.fullName || '',
           meta: {
-            ...(row.meta && typeof row.meta === 'object' ? row.meta : {}),
+            ...m,
             gameKey: row.gameId,
             gameLabel: row.gameLabel,
           },
           reference: { type: 'Manual', id: null },
           performedBy: null,
           gamesWallet: true,
+          brokerageAmount:
+            brokerFromMeta !== null ? brokerFromMeta : undefined,
         };
       });
 

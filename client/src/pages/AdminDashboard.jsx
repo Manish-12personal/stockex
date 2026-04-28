@@ -15590,9 +15590,23 @@ function SuperAdminClientWallet({ embedded = false }) {
         // If within 5 seconds, same user, same game, and one is pool debit and other is games wallet
         if (timeDiff < 5000 && sameUser && sameGame) {
           if ((tx.saPoolDebit && other.gamesWallet) || (tx.gamesWallet && other.saPoolDebit)) {
-            // Merge the amounts
-            mergedTx.brokerageAmount = tx.saPoolDebit ? tx.amount : other.amount;
-            mergedTx.gamesAmount = tx.gamesWallet ? tx.amount : other.amount;
+            const gamesHalf = tx.gamesWallet ? tx : other;
+            const poolHalf = tx.saPoolDebit ? tx : other;
+            const brokerageFromLedger =
+              gamesHalf?.meta?.brokeragePaidFromPool != null &&
+              Number.isFinite(Number(gamesHalf.meta.brokeragePaidFromPool))
+                ? Number(gamesHalf.meta.brokeragePaidFromPool)
+                : null;
+            // Prefer SA hierarchy total saved on games row (BTC Jackpot prize + splits); fallback to pool-leg amount(s).
+            mergedTx.brokerageAmount =
+              brokerageFromLedger != null && brokerageFromLedger >= 0
+                ? brokerageFromLedger
+                : poolHalf?.amount ?? null;
+            mergedTx.gamesAmount = gamesHalf?.amount ?? null;
+            mergedTx.gamesWallet = !!(tx.gamesWallet || other.gamesWallet);
+            if (gamesHalf?.meta && typeof gamesHalf.meta === 'object') {
+              mergedTx.meta = { ...(mergedTx.meta || {}), ...gamesHalf.meta };
+            }
             mergedTx.isMerged = true;
             processed.add(j);
             break;
@@ -15604,6 +15618,17 @@ function SuperAdminClientWallet({ embedded = false }) {
       if (!mergedTx.isMerged) {
         mergedTx.brokerageAmount = tx.saPoolDebit ? tx.amount : null;
         mergedTx.gamesAmount = tx.gamesWallet ? tx.amount : null;
+        const fromGamesMeta =
+          tx.gamesWallet &&
+          tx.meta?.brokeragePaidFromPool != null &&
+          Number.isFinite(Number(tx.meta.brokeragePaidFromPool))
+            ? Number(tx.meta.brokeragePaidFromPool)
+            : tx.brokerageAmount != null && Number.isFinite(Number(tx.brokerageAmount))
+              ? Number(tx.brokerageAmount)
+              : null;
+        if (tx.gamesWallet && fromGamesMeta != null && fromGamesMeta >= 0) {
+          mergedTx.brokerageAmount = fromGamesMeta;
+        }
       }
       
       merged.push(mergedTx);

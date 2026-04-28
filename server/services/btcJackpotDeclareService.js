@@ -304,26 +304,6 @@ export async function declareBtcJackpotForDate(date) {
           todayRealizedPnL: perBidGross - (Number(bid.amount) || 0),
         });
 
-        await recordGamesWalletLedger(bid.user, {
-          gameId: 'btcJackpot',
-          entryType: 'credit',
-          amount: perBidGross,
-          balanceAfter: Number(gwAfter?.balance) || 0,
-          description: `BTC Jackpot — rank ${rankDisplay} prize${g.tied ? ` (tied ×${g.bids.length})` : ''}`,
-          meta: {
-            won: true,
-            bidId: bid._id,
-            betDate: date,
-            rank: rankDisplay,
-            predictedBtc: bid.predictedBtc,
-            lockedBtcPrice: lockedPrice,
-            grossPrize: perBidGross,
-            poolPercent: perBidPct,
-            tied: g.tied,
-            tiedGroupSize: g.bids.length,
-          },
-        });
-
         // 2. Hierarchy brokerage (from SA pool — not deducted from user; point 11, 13)
         const plan = await resolveHierarchyForUser(userDoc, perBidGross, gc);
         let hierarchyPaidForBid = 0;
@@ -368,6 +348,34 @@ export async function declareBtcJackpotForDate(date) {
           broker: plan.broker,
           admin: plan.admin,
         };
+
+        /** Games-wallet ledger recorded after brokerage so SA admin UI can show total hierarchy brokerage (same sum as tier splits). */
+        await recordGamesWalletLedger(bid.user, {
+          gameId: 'btcJackpot',
+          entryType: 'credit',
+          amount: perBidGross,
+          balanceAfter: Number(gwAfter?.balance) || 0,
+          description: `BTC Jackpot — rank ${rankDisplay} prize${g.tied ? ` (tied ×${g.bids.length})` : ''}`,
+          meta: {
+            won: true,
+            bidId: bid._id,
+            betDate: date,
+            rank: rankDisplay,
+            predictedBtc: bid.predictedBtc,
+            lockedBtcPrice: lockedPrice,
+            grossPrize: perBidGross,
+            poolPercent: perBidPct,
+            tied: g.tied,
+            tiedGroupSize: g.bids.length,
+            brokeragePaidFromPool: round2(hierarchyPaidForBid),
+            brokerageBreakdown: {
+              subBroker: round2(plan.subBroker.amount || 0),
+              broker: round2(plan.broker.amount || 0),
+              admin: round2(plan.admin.amount || 0),
+              superAdmin: round2(plan.superAdmin.amount || 0),
+            },
+          },
+        });
 
         totalPaidOut += perBidGross;
         totalHierarchyPaid += hierarchyPaidForBid;
