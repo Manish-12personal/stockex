@@ -3209,13 +3209,35 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     const fromPending = (pendingWindows || [])
       .flatMap((pw) => {
         const serverResult = pickLatestGameResultForWindow(gameResults, pw.windowNumber);
-        const serverResultUsable = isBTC
-          ? !!serverResult
-          : !!serverResult && hasWindowResultPublished(pw.windowNumber);
-        const isResolved = !!pw.resolved || serverResultUsable;
+        const published = hasWindowResultPublished(pw.windowNumber);
+        const serverClosePx =
+          serverResult?.closePrice != null ? Number(serverResult.closePrice) : NaN;
+        const serverRow =
+          !!serverResult && Number.isFinite(serverClosePx) && serverClosePx > 0;
+        const lockedClose =
+          !isBTC &&
+          lockedWindowLtps[pw.windowNumber] != null &&
+          Number.isFinite(Number(lockedWindowLtps[pw.windowNumber])) &&
+          Number(lockedWindowLtps[pw.windowNumber]) > 0
+            ? Number(lockedWindowLtps[pw.windowNumber])
+            : null;
+        const isResolved =
+          !!pw.resolved ||
+          serverRow ||
+          (!isBTC && lockedClose != null && published);
 
-        // BTC: prices from GameResult; Nifty: window-end vs result.
-        const resultPrice = serverResult?.closePrice ?? (isBTC ? null : pw.resultPrice) ?? null;
+        // BTC: prices from GameResult; Nifty: DB close, else Kite socket lock — same ₹ as tracker / tape.
+        const resultPrice = isBTC
+          ? serverRow
+            ? serverClosePx
+            : null
+          : serverRow && serverClosePx > 0
+            ? serverClosePx
+            : lockedClose != null && published
+              ? lockedClose
+              : pw.resultPrice != null && Number(pw.resultPrice) > 0
+                ? Number(pw.resultPrice)
+                : null;
         const openPrice =
           serverResult?.openPrice ??
           (isBTC
@@ -3255,7 +3277,7 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
       });
 
     return fromPending;
-  }, [pendingWindows, gameResults, winMultiplier, isBTC, hasWindowResultPublished]);
+  }, [pendingWindows, gameResults, winMultiplier, isBTC, hasWindowResultPublished, lockedWindowLtps]);
 
   // Pending rows + API ledger wins/losses (server); dedupe by id
   const upDownMergedHistory = useMemo(() => {
@@ -3751,6 +3773,13 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
     // Nifty: DB GameResult beats client snapshots so tracker matches chart OHLC & API.
     if (!isBTC) {
       const resultPublished = hasWindowResultPublished(winNum);
+      const lockedPx =
+        lockedWindowLtps[winNum] != null &&
+        Number.isFinite(Number(lockedWindowLtps[winNum])) &&
+        Number(lockedWindowLtps[winNum]) > 0
+          ? Number(lockedWindowLtps[winNum])
+          : null;
+
       if (serverClose != null) {
         const marketDirection = niftyDirectionFromGameResult(server) ?? 'TIE';
         // Same IST clock as "Last 1h LTPs" for this window (15m candle close / Zerodha C), not declare time.
@@ -3766,28 +3795,101 @@ const GameScreen = ({ game, balance, onBack, user, refreshBalance, settings, tok
         };
       }
 
+      // Kite/socket boundary lock + chart — show before Mongo `GameResult` row appears (same ₹ as LTP tape).
+      if (lockedPx != null && resultPublished) {
+        const prevGr = Number(winNum) > 1 ? pickLatestGameResultForWindow(resultsForPick, winNum - 1) : null;
+        const prevCloseOfficial =
+          prevGr != null &&
+          Number.isFinite(Number(prevGr?.closePrice)) &&
+          Number(prevGr.closePrice) > 0
+            ? Number(prevGr.closePrice)
+            : null;
+        const prevCloseLock =
+          winNum > 1 &&
+          lockedWindowLtps[winNum - 1] != null &&
+          Number.isFinite(Number(lockedWindowLtps[winNum - 1])) &&
+          Number(lockedWindowLtps[winNum - 1]) > 0
+            ? Number(lockedWindowLtps[winNum - 1])
+            : null;
+        const chainOpen = niftyChainedOpenPriceForWindow(winNum, resultsForPick);
+        const ref = prevCloseOfficial ?? prevCloseLock ?? chainOpen;
+
+        let marketDirection = 'TIE';
+        if (ref != null && Number.isFinite(ref)) {
+          marketDirection = lockedPx > ref ? 'UP' : lockedPx < ref ? 'DOWN' : 'TIE';
+        }
+
+        return {
+          ltp: lockedPx,
+          ltpWhen: niftyLtpClock(),
+          resolved: true,
+          resultPrice: lockedPx,
+          marketDirection,
+          resultWhen: niftyLtpClock(),
+          resultAt: niftyLtpClock(),
+        };
+      }
+
       if (pw) {
-        const ltpPx = pw.windowEndLTP;
-        const resolvedNow = !!pw.resolved && resultPublished;
+        const ltpPx = lockedPx ?? pw.windowEndLTP;
+        const hasPrice = ltpPx != null && Number.isFinite(Number(ltpPx)) && Number(ltpPx) > 0;
+        const resolvedNow = resultPublished && hasPrice;
+
+        let marketDirection = resolvedNow ? pw.marketDirection : null;
+        let resultPrice = resolvedNow ? Number(ltpPx) : null;
+        if (resolvedNow) {
+          if (
+            !marketDirection ||
+            (marketDirection !== 'UP' && marketDirection !== 'DOWN' && marketDirection !== 'TIE')
+          ) {
+            const openRef = niftyChainedOpenPriceForWindow(winNum, resultsForPick);
+            if (openRef != null && Number.isFinite(openRef)) {
+              marketDirection =
+                Number(ltpPx) > openRef ? 'UP' : Number(ltpPx) < openRef ? 'DOWN' : 'TIE';
+            } else {
+              marketDirection = 'TIE';
+            }
+          }
+        }
+
         return {
           ltp: ltpPx,
           ltpWhen: pw.ltpTime || niftyLtpClock(),
           resolved: resolvedNow,
-          resultPrice: resolvedNow ? pw.resultPrice : null,
-          marketDirection: resolvedNow ? pw.marketDirection : null,
+          resultPrice,
+          marketDirection,
           resultWhen: niftyLtpClock(),
           resultAt: niftyLtpClock(),
         };
       }
       if (completed) {
-        const ltpPx = completed.windowEndLTP;
-        const resolvedNow = resultPublished;
+        const ltpPx = lockedPx ?? completed.windowEndLTP;
+        const hasPrice = ltpPx != null && Number.isFinite(Number(ltpPx)) && Number(ltpPx) > 0;
+        const resolvedNow = resultPublished && hasPrice;
+
+        let marketDirection = resolvedNow ? completed.marketDirection : null;
+        let resultPrice = resolvedNow ? Number(ltpPx) : null;
+        if (resolvedNow) {
+          if (
+            !marketDirection ||
+            (marketDirection !== 'UP' && marketDirection !== 'DOWN' && marketDirection !== 'TIE')
+          ) {
+            const openRef = niftyChainedOpenPriceForWindow(winNum, resultsForPick);
+            if (openRef != null && Number.isFinite(openRef)) {
+              marketDirection =
+                Number(ltpPx) > openRef ? 'UP' : Number(ltpPx) < openRef ? 'DOWN' : 'TIE';
+            } else {
+              marketDirection = 'TIE';
+            }
+          }
+        }
+
         return {
           ltp: ltpPx,
           ltpWhen: completed.ltpTime || niftyLtpClock(),
           resolved: resolvedNow,
-          resultPrice: resolvedNow ? completed.resultPrice : null,
-          marketDirection: resolvedNow ? completed.marketDirection : null,
+          resultPrice,
+          marketDirection,
           resultWhen: niftyLtpClock(),
           resultAt: niftyLtpClock(),
         };
