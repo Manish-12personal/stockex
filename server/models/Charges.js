@@ -187,14 +187,16 @@ chargesSchema.statics.calculateCharges = async function(trade, adminCode, userId
   const exitTurnover = (trade.exitPrice || trade.entryPrice) * trade.quantity;
   const totalTurnover = turnover + exitTurnover;
   
-  // Calculate brokerage
+  // Calculate brokerage (entry + exit legs in config). Prepaid-at-open trades: 0 brokerage on close — already withheld in trade.commission.
   let brokerage = 0;
-  if (chargesConfig.brokerage?.type === 'PER_LOT') {
-    brokerage = (chargesConfig.brokerage.value || 0) * (trade.lots || 1) * 2; // Entry + Exit
-  } else if (chargesConfig.brokerage?.type === 'PERCENTAGE') {
-    brokerage = (totalTurnover * (chargesConfig.brokerage.value || 0)) / 100;
-  } else if (chargesConfig.brokerage?.type === 'FLAT') {
-    brokerage = (chargesConfig.brokerage.value || 0) * 2; // Flat per trade
+  if (!trade.brokeragePrepaidRoundTrip) {
+    if (chargesConfig.brokerage?.type === 'PER_LOT') {
+      brokerage = (chargesConfig.brokerage.value || 0) * (trade.lots || 1) * 2; // Entry + Exit
+    } else if (chargesConfig.brokerage?.type === 'PERCENTAGE') {
+      brokerage = (totalTurnover * (chargesConfig.brokerage.value || 0)) / 100;
+    } else if (chargesConfig.brokerage?.type === 'FLAT') {
+      brokerage = (chargesConfig.brokerage.value || 0) * 2; // Flat per trade
+    }
   }
   
   // For crypto - simplified charges (only exchange fee, no Indian taxes)

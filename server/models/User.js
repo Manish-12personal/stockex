@@ -611,6 +611,25 @@ const userSchema = new mongoose.Schema({
       default: false
     }
   },
+
+  /** Per-wallet: when enabled, LIMIT/SL orders only if limit/trigger is in [low, high]; when disabled, no pending orders for that wallet. */
+  walletLimitOrderBand: {
+    mcx: {
+      enabled: { type: Boolean, default: false },
+      low: { type: Number, default: 0 },
+      high: { type: Number, default: 0 },
+    },
+    crypto: {
+      enabled: { type: Boolean, default: false },
+      low: { type: Number, default: 0 },
+      high: { type: Number, default: 0 },
+    },
+    forex: {
+      enabled: { type: Boolean, default: false },
+      low: { type: Number, default: 0 },
+      high: { type: Number, default: 0 },
+    },
+  },
   
   // Segment Permissions - Detailed settings for each segment
   segmentPermissions: {

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import MarketWatch from '../components/MarketWatch';
 import ClosedInstrumentsTicker from '../components/ClosedInstrumentsTicker';
+import { walletLimitBandKeyFromFlags, validateWalletLimitBand } from '../lib/walletLimitOrderBand.js';
 
 // Demo instruments with mock data for testing trading features
 const demoInstrumentsData = {
@@ -457,6 +458,12 @@ const DEFAULT_FOREX_INSTRUMENTS = [
   { symbol: 'USDINR', name: 'US Dollar / Indian Rupee', exchange: 'FOREX', pair: 'USDINR', token: 'USDINR', isForex: true, instrumentType: 'CURRENCY', segment: 'FOREXFUT', displaySegment: 'FOREXFUT' },
 ];
 
+const DEFAULT_WALLET_LIMIT_BANDS = {
+  mcx: { enabled: false, low: 0, high: 0 },
+  crypto: { enabled: false, low: 0, high: 0 },
+  forex: { enabled: false, low: 0, high: 0 },
+};
+
 const UserDashboard = () => {
   const { user, logoutUser } = useAuth();
   const navigate = useNavigate();
@@ -494,6 +501,27 @@ const UserDashboard = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   /** Last bar close from ChartPanel / mobile chart — bid/ask align to this (fixes MCX feed vs Kite chart mismatch). */
   const [chartLtpAnchor, setChartLtpAnchor] = useState({ token: null, ltp: null });
+
+  const [walletLimitBands, setWalletLimitBands] = useState(DEFAULT_WALLET_LIMIT_BANDS);
+
+  useEffect(() => {
+    if (!user?.token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await axios.get('/api/user/settings', {
+          headers: { Authorization: `Bearer ${user.token}` },
+        });
+        if (cancelled || !data?.walletLimitOrderBand) return;
+        setWalletLimitBands({ ...DEFAULT_WALLET_LIMIT_BANDS, ...data.walletLimitOrderBand });
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.token]);
 
   useEffect(() => {
     setChartLtpAnchor({ token: null, ltp: null });
@@ -1158,6 +1186,7 @@ const UserDashboard = () => {
                 usdRate={usdRate}
                 usdSpotClientSpreads={usdSpotClientSpreads}
                 chartAnchorLtp={null}
+                walletLimitBands={walletLimitBands}
               />
             </div>
           )}
@@ -1259,6 +1288,7 @@ const UserDashboard = () => {
           usdRate={usdRate}
           usdSpotClientSpreads={usdSpotClientSpreads}
           chartAnchorLtp={null}
+          walletLimitBands={walletLimitBands}
         />
       )}
 
@@ -3777,6 +3807,7 @@ const TradingPanel = ({
   usdSpotClientSpreads = { crypto: 0, forex: 0 },
   /** Optional chart reference LTP; bid/ask use Kite book from marketData, not LTP. */
   chartAnchorLtp = null,
+  walletLimitBands = DEFAULT_WALLET_LIMIT_BANDS,
 }) => {
   const [lots, setLots] = useState(instrument?.defaultQty?.toString() || '1');
   const [price, setPrice] = useState('');
@@ -4139,6 +4170,23 @@ const TradingPanel = ({
         orderData.triggerPrice = isUsdSpot
           ? (isCryptoOnly ? parseFloat(limitPrice) : parseFloat(limitPrice) / usdRate)
           : parseFloat(limitPrice);
+      }
+
+      const bandKey = walletLimitBandKeyFromFlags({
+        isCryptoOnly,
+        isForex,
+        exchange: orderData.exchange,
+        segment: orderData.segment,
+        displaySegment: orderData.displaySegment,
+      });
+      let apiCheckPx = null;
+      if (orderMode === 'LIMIT') apiCheckPx = orderData.limitPrice;
+      else if (orderMode === 'SL' || orderMode === 'SL-M') apiCheckPx = orderData.triggerPrice;
+      const bandErr = validateWalletLimitBand(walletLimitBands, bandKey, orderMode, apiCheckPx);
+      if (bandErr) {
+        setError(bandErr);
+        setLoading(false);
+        return;
       }
 
       const { data } = await axios.post('/api/trading/order', orderData, {
@@ -8024,6 +8072,7 @@ const BuySellModal = ({
   usdRate = 83.5,
   usdSpotClientSpreads = { crypto: 0, forex: 0 },
   chartAnchorLtp = null,
+  walletLimitBands = DEFAULT_WALLET_LIMIT_BANDS,
 }) => {
   const [quantity, setQuantity] = useState('0.01');
   const [limitPrice, setLimitPrice] = useState('');
@@ -8312,6 +8361,21 @@ const BuySellModal = ({
         orderData.limitPrice = isUsdSpot
           ? (isCryptoOnly ? parseFloat(limitPrice) : parseFloat(limitPrice) / usdRate)
           : parseFloat(limitPrice);
+      }
+
+      const bandKey = walletLimitBandKeyFromFlags({
+        isCryptoOnly,
+        isForex,
+        exchange: orderData.exchange,
+        segment: orderData.segment,
+        displaySegment: orderData.displaySegment,
+      });
+      const apiCheckPxModal = orderPriceType === 'LIMIT' ? orderData.limitPrice : null;
+      const bandErrModal = validateWalletLimitBand(walletLimitBands, bandKey, orderPriceType, apiCheckPxModal);
+      if (bandErrModal) {
+        setError(bandErrModal);
+        setLoading(false);
+        return;
       }
 
       const { data } = await axios.post('/api/trading/order', orderData, {

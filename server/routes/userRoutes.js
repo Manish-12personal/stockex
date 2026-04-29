@@ -1446,7 +1446,7 @@ router.get('/games/recent-winners', protectUser, async (req, res) => {
 router.get('/settings', protectUser, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select('marginSettings rmsSettings settings segmentPermissions')
+      .select('marginSettings rmsSettings settings segmentPermissions walletLimitOrderBand')
       .lean(); // Use lean() to get plain JS object instead of Mongoose document
     
     if (!user) {
@@ -1512,10 +1512,55 @@ router.get('/settings', protectUser, async (req, res) => {
       marginSettings: user.marginSettings || {},
       rmsSettings: user.rmsSettings || {},
       settings: user.settings || {},
-      segmentPermissions
+      segmentPermissions,
+      walletLimitOrderBand: user.walletLimitOrderBand || {
+        mcx: { enabled: false, low: 0, high: 0 },
+        crypto: { enabled: false, low: 0, high: 0 },
+        forex: { enabled: false, low: 0, high: 0 },
+      },
     });
   } catch (error) {
     console.error('Get settings error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update wallet limit band (MCX / crypto / forex) — pending orders only when enabled and price in [low, high]
+router.put('/wallet-limit-band', protectUser, async (req, res) => {
+  try {
+    const { mcx, crypto, forex } = req.body || {};
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    if (!user.walletLimitOrderBand) {
+      user.walletLimitOrderBand = {
+        mcx: { enabled: false, low: 0, high: 0 },
+        crypto: { enabled: false, low: 0, high: 0 },
+        forex: { enabled: false, low: 0, high: 0 },
+      };
+    }
+    const apply = (key, patch) => {
+      if (!patch || typeof patch !== 'object') return;
+      user.walletLimitOrderBand[key] = user.walletLimitOrderBand[key] || {
+        enabled: false,
+        low: 0,
+        high: 0,
+      };
+      const d = user.walletLimitOrderBand[key];
+      if (typeof patch.enabled === 'boolean') d.enabled = patch.enabled;
+      if (patch.low !== undefined && patch.low !== '') d.low = Number(patch.low);
+      if (patch.high !== undefined && patch.high !== '') d.high = Number(patch.high);
+    };
+    apply('mcx', mcx);
+    apply('crypto', crypto);
+    apply('forex', forex);
+    await user.save();
+    res.json({
+      walletLimitOrderBand: user.walletLimitOrderBand,
+    });
+  } catch (error) {
+    console.error('wallet-limit-band error:', error);
     res.status(500).json({ message: error.message });
   }
 });

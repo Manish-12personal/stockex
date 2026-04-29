@@ -216,10 +216,11 @@ router.post('/margin-preview', protect, async (req, res) => {
     }
     
     // Note: divisor in responses is fixed at 1; segment exposure carries effective leverage from hierarchy/rules.
-    
+
     const baseBrokerage = TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, req.body, lots);
     const extraBrokerage = TradeService.instrumentAdditionalCommission(instrumentDoc, effectiveLots, tradeValue);
-    const brokerage = Math.round((baseBrokerage + extraBrokerage) * 100) / 100;
+    const oneWayBrokerage = baseBrokerage + extraBrokerage;
+    const brokerage = Math.round(oneWayBrokerage * 2 * 100) / 100;
     
     // Calculate spread from user settings
     const spread = TradeService.calculateUserSpread(scriptSettings, side);

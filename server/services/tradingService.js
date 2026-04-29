@@ -22,6 +22,45 @@ import {
 } from '../utils/tradingUsdSpot.js';
 import { creditReferralTradingReward } from './referralService.js';
 
+/** @returns {'mcx'|'crypto'|'forex'|null} */
+function walletLimitBandKey(orderData) {
+  if (!orderData) return null;
+  if (orderData.isCrypto === true) return 'crypto';
+  if (orderData.isForex === true) return 'forex';
+  const ex = String(orderData.exchange || '').toUpperCase();
+  const seg = String(orderData.segment || '').toUpperCase();
+  if (ex === 'MCX' || ['MCX', 'MCXFUT', 'MCXOPT', 'COMMODITY'].includes(seg)) return 'mcx';
+  return null;
+}
+
+function assertWalletLimitOrderBand(user, orderData) {
+  const key = walletLimitBandKey(orderData);
+  if (!key) return;
+  const ot = String(orderData.orderType || '').toUpperCase();
+  if (ot === 'MARKET') return;
+  if (ot !== 'LIMIT' && ot !== 'SL' && ot !== 'SL-M') return;
+
+  const band = user.walletLimitOrderBand?.[key];
+  if (band?.enabled !== true) {
+    throw new Error(
+      `${key.toUpperCase()}: Pending/limit orders are disabled. Enable the switch and set High/Low in My Accounts (wallet card).`
+    );
+  }
+  const low = Number(band?.low);
+  const high = Number(band?.high);
+  if (!Number.isFinite(low) || !Number.isFinite(high) || high <= low) {
+    throw new Error(`${key.toUpperCase()}: Set valid High greater than Low in My Accounts.`);
+  }
+  const priceRaw = ot === 'LIMIT' ? orderData.limitPrice : orderData.triggerPrice;
+  const p = Number(priceRaw);
+  if (!Number.isFinite(p)) {
+    throw new Error('Limit or trigger price is required.');
+  }
+  if (p < low || p > high) {
+    throw new Error(`${key.toUpperCase()}: Limit/trigger price must be between ${low} and ${high}.`);
+  }
+}
+
 // Lot sizes for different instruments
 const LOT_SIZES = {
   // NSE F&O
@@ -420,6 +459,8 @@ class TradingService {
       throw new Error('Trading blocked. Contact admin.');
     }
 
+    assertWalletLimitOrderBand(user, orderData);
+
     // ==================== STEP 2: MARKET HOURS CHECK ====================
     const exchange = orderData.exchange || 'NSE';
     const marketStatus = await this.isMarketOpen(exchange);
@@ -776,9 +817,10 @@ class TradingService {
         : 0;
     const tradeValue = isUsdSpot ? price * usdInr * totalQuantity + segmentSpreadMarkupInr : price * totalQuantity;
 
-    let totalCommission = TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, orderData, lots);
-    totalCommission += TradeService.instrumentAdditionalCommission(instrument, lots, tradeValue);
-    totalCommission = Math.round(totalCommission * 100) / 100;
+    const oneWayBrokerage =
+      TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, orderData, lots) +
+      TradeService.instrumentAdditionalCommission(instrument, lots, tradeValue);
+    let totalCommission = Math.round(oneWayBrokerage * 2 * 100) / 100;
     
     // Priority 1: Check for fixed margin in script settings
     if (scriptSettings?.fixedMargin) {
@@ -996,7 +1038,8 @@ class TradingService {
       commission: totalCommission,
       totalCharges: totalCharges,
       status: orderData.orderType === 'MARKET' ? 'OPEN' : 'PENDING',
-      bookType: 'B_BOOK'
+      bookType: 'B_BOOK',
+      brokeragePrepaidRoundTrip: true
     });
 
     if (orderData.orderType === 'MARKET') {
@@ -1223,6 +1266,17 @@ class TradingService {
     
     await trade.save();
 
+    if (trade.status === 'OPEN' && trade.bookType === 'B_BOOK' && admin && !user.isDemo) {
+      const brk = trade.commission || 0;
+      if (brk > 0) {
+        try {
+          await TradeService.distributeBrokerage(trade, brk, admin, user);
+        } catch (distErr) {
+          console.error('[placeOrder] distributeBrokerage at open:', distErr?.message || distErr);
+        }
+      }
+    }
+
     // USD spot pending LIMIT/SL: fill when book satisfies (ticks also fill via processPendingOrdersForUsdSpotTick)
     if ((isCryptoWallet || isForexWallet) && trade.status === 'PENDING') {
       const refPrice =
@@ -1325,6 +1379,23 @@ class TradingService {
       trade.marketPrice = tradeIsUsdSpot(trade) ? ref : currentPrice;
       trade.openedAt = new Date();
       await trade.save();
+      const uid = trade.user;
+      const usr = uid ? await User.findById(uid) : null;
+      const adm = trade.adminCode ? await Admin.findOne({ adminCode: trade.adminCode }) : null;
+      if (
+        usr &&
+        adm &&
+        trade.bookType === 'B_BOOK' &&
+        !usr.isDemo &&
+        trade.brokeragePrepaidRoundTrip &&
+        (trade.commission || 0) > 0
+      ) {
+        try {
+          await TradeService.distributeBrokerage(trade, trade.commission, adm, usr);
+        } catch (e) {
+          console.error('[executePendingOrder] distributeBrokerage at open:', e?.message || e);
+        }
+      }
       return trade;
     }
 
@@ -1639,15 +1710,19 @@ class TradingService {
       admin.stats.totalPnL += trade.adminPnL;
       await admin.save();
 
-      // Distribute brokerage through hierarchy (exclude demo users)
-      if (!user.isDemo) {
+      if (!user.isDemo && (charges.brokerage || 0) > 0) {
         await TradeService.distributeBrokerage(trade, charges.brokerage, admin, user);
       }
     }
 
     // Credit referral reward for first-time trading win (brokerage amount)
     if (netPnL > 0) {
-      const brokerageAmount = charges.brokerage || 0;
+      const brokerageAmount =
+        (charges.brokerage || 0) > 0
+          ? charges.brokerage
+          : trade.brokeragePrepaidRoundTrip
+            ? trade.commission || 0
+            : 0;
       if (brokerageAmount > 0) {
         const referralResult = await creditReferralTradingReward(
           user._id,

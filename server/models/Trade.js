@@ -217,6 +217,11 @@ const tradeSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  /** Client brokerage for entry+exit collected once at open; close path applies 0 brokerage for these trades */
+  brokeragePrepaidRoundTrip: {
+    type: Boolean,
+    default: false
+  },
   totalCharges: {
     type: Number,
     default: 0

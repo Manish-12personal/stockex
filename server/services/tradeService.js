@@ -1061,8 +1061,7 @@ class TradeService {
       admin.stats.totalPnL += trade.adminPnL;
       await admin.save();
 
-      // Distribute brokerage through MLM hierarchy (exclude demo users)
-      if (!user.isDemo) {
+      if (!user.isDemo && (charges.brokerage || 0) > 0) {
         await this.distributeBrokerage(trade, charges.brokerage, admin, user);
       }
     }
