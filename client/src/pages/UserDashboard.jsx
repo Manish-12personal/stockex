@@ -3591,6 +3591,14 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
                 Close Loss
               </button>
               <button
+                onClick={handleCloseAll}
+                disabled={loading}
+                className="px-2 py-1 bg-amber-700 hover:bg-amber-600 disabled:opacity-50 rounded text-xs font-medium"
+                title="Square off all open positions at once"
+              >
+                All Square Off
+              </button>
+              <button
                 onClick={handleCloseProfit}
                 disabled={loading}
                 className="px-2 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded text-xs font-medium"
@@ -3612,13 +3620,19 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
       </div>
 
       {/* Table Header */}
-      <div className={`grid ${activeTab === 'history' ? 'grid-cols-10' : 'grid-cols-9'} gap-2 px-4 py-2 text-xs text-gray-400 border-b border-dark-700`}>
+      <div className={`grid ${activeTab === 'history' ? 'grid-cols-10' : activeTab === 'positions' ? 'grid-cols-11' : 'grid-cols-9'} gap-2 px-4 py-2 text-xs text-gray-400 border-b border-dark-700`}>
         <div>User ID</div>
         <div>Symbol</div>
         <div>Side</div>
         <div className="text-right">Qty</div>
         <div className="text-right">Entry</div>
         <div className="text-right">{activeTab === 'history' ? 'Exit' : 'LTP'}</div>
+        {activeTab === 'positions' && (
+          <>
+            <div className="text-right text-red-400/90">SL</div>
+            <div className="text-right text-emerald-400/90">TP</div>
+          </>
+        )}
         <div className="text-right">Charges</div>
         <div className="text-right">{activeTab === 'pending' ? 'Type' : 'P&L'}</div>
         {activeTab === 'history' && <div className="text-center">Duration</div>}
@@ -3642,14 +3656,23 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
             const n = parseFloat(inr);
             return Number.isFinite(n) && n !== 0 ? (n / usdRate).toFixed(2) : '0.00';
           };
+          const fmtSlTp = (raw) => {
+            if (raw == null || raw === '') return '—';
+            const n = parseFloat(raw);
+            if (!Number.isFinite(n)) return '—';
+            if (isCryptoRow) return `$${cryptoPx(n)}`;
+            return `${currencySymbol}${n.toFixed(2)}`;
+          };
           return (
-            <div key={pos._id} className="grid grid-cols-9 gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700">
+            <div key={pos._id} className="grid grid-cols-11 gap-2 px-4 py-2 text-sm border-b border-dark-700 hover:bg-dark-700">
               <div className="truncate text-purple-400 font-mono text-xs">{pos.userId || user?.userId || '-'}</div>
               <div className={`truncate font-medium ${isForexRow ? 'text-cyan-400' : isCryptoRow ? 'text-orange-400' : ''}`}>{pos.symbol}</div>
               <div className={pos.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{pos.side}</div>
               <div className="text-right">{pos.quantity}</div>
               <div className="text-right">{isCryptoRow ? `$${cryptoPx(parseFloat(pos.entryPrice))}` : `${currencySymbol}${(parseFloat(pos.entryPrice) || 0).toFixed(2)}`}</div>
               <div className="text-right">{isCryptoRow ? `$${cryptoPx(parseFloat(ltp))}` : `${currencySymbol}${(parseFloat(ltp) || 0).toFixed(2)}`}</div>
+              <div className="text-right text-red-300/90">{fmtSlTp(pos.stopLoss)}</div>
+              <div className="text-right text-emerald-300/90">{fmtSlTp(pos.target)}</div>
               <div className="text-right text-yellow-400" title={`Spread: ${pos.spread || 0} pts, Comm: ${currencySymbol}${pos.commission || 0}`}>
                 {currencySymbol}{(parseFloat(pos.commission) || 0).toFixed(2)}
               </div>
@@ -6304,10 +6327,22 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
                 ? (ltp - item.entryPrice) * item.quantity 
                 : (item.entryPrice - ltp) * item.quantity;
               const isCrypto = item.isCrypto || item.segment === 'CRYPTO';
+              const isCryptoRow = item.isCrypto || item.segment === 'CRYPTO' || item.exchange === 'BINANCE';
               const currencySymbol = '₹';
               const displayPnL = tab === 'history' || tab === 'cancelled' 
                 ? (item.realizedPnL || item.netPnL || 0) 
                 : pnl;
+              const cryptoPxMobile = (inr) => {
+                const n = parseFloat(inr);
+                return Number.isFinite(n) && n !== 0 ? (n / usdRate).toFixed(2) : '0.00';
+              };
+              const fmtSlTpMobile = (raw) => {
+                if (raw == null || raw === '') return '—';
+                const n = parseFloat(raw);
+                if (!Number.isFinite(n)) return '—';
+                if (isCryptoRow) return `$${cryptoPxMobile(n)}`;
+                return `${currencySymbol}${n.toFixed(2)}`;
+              };
               
               // Calculate duration for history
               const getDuration = () => {
@@ -6376,6 +6411,17 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
                       Charges: {currencySymbol}{(item.commission || 0).toFixed(2)}
                     </span>
                   </div>
+                  
+                  {tab === 'positions' && (
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mb-2">
+                      <span className="text-gray-400">
+                        SL: <span className="text-red-300">{fmtSlTpMobile(item.stopLoss)}</span>
+                      </span>
+                      <span className="text-gray-400">
+                        TP: <span className="text-emerald-300">{fmtSlTpMobile(item.target)}</span>
+                      </span>
+                    </div>
+                  )}
                   
                   {/* Actions */}
                   <div className="flex justify-between items-center">

@@ -1780,7 +1780,7 @@ class TradingService {
   // Get positions - optimized with lean() for faster response
   static async getPositions(userId, status = 'OPEN') {
     return Trade.find({ user: userId, status })
-      .select('userId symbol token pair isCrypto isForex exchange segment instrumentType optionType strike expiry side productType quantity lotSize lots entryPrice currentPrice marketPrice unrealizedPnL marginUsed leverage spread commission status openedAt')
+      .select('userId symbol token pair isCrypto isForex exchange segment instrumentType optionType strike expiry side productType quantity lotSize lots entryPrice currentPrice marketPrice unrealizedPnL marginUsed leverage spread commission status openedAt stopLoss target')
       .sort({ openedAt: -1 })
       .lean();
   }
