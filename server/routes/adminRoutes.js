@@ -1,5 +1,8 @@
 import express from 'express';
-import { alignSegmentDefaultsMap } from '../utils/commissionTypeUnit.js';
+import {
+  alignSegmentDefaultsMap,
+  preserveAllowLimitPendingOrdersFromExisting,
+} from '../utils/commissionTypeUnit.js';
 import bcrypt from 'bcryptjs';
 import Admin from '../models/Admin.js';
 import User from '../models/User.js';
@@ -766,8 +769,16 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
     
     const updateFields = {};
     if (segmentPermissions) {
-      const plain =
+      let plain =
         segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
+      if (req.admin.role === 'BROKER' || req.admin.role === 'SUB_BROKER') {
+        const current = await Admin.findById(req.admin._id).select('segmentPermissions').lean();
+        const existingSeg =
+          current?.segmentPermissions instanceof Map
+            ? Object.fromEntries(current.segmentPermissions)
+            : (current?.segmentPermissions || {});
+        plain = preserveAllowLimitPendingOrdersFromExisting(plain, existingSeg);
+      }
       updateFields.segmentPermissions = alignSegmentDefaultsMap(plain);
     }
     if (scriptSettings) {
@@ -823,8 +834,15 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
     
     const updateFields = {};
     if (segmentPermissions) {
-      const plain =
+      let plain =
         segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
+      if (req.admin.role === 'BROKER' || req.admin.role === 'SUB_BROKER') {
+        const existingSeg =
+          user.segmentPermissions instanceof Map
+            ? Object.fromEntries(user.segmentPermissions)
+            : (user.segmentPermissions || {});
+        plain = preserveAllowLimitPendingOrdersFromExisting(plain, existingSeg);
+      }
       updateFields.segmentPermissions = alignSegmentDefaultsMap(plain);
     }
     if (scriptSettings) {

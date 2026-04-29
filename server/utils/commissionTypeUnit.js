@@ -63,6 +63,33 @@ export function withAlignedSegmentCommissionUnit(seg) {
   return out;
 }
 
+/**
+ * When Brokers/Sub Brokers save segment maps, preserve `allowLimitPendingOrders` from existing DB rows
+ * so UI-hidden fields cannot overwrite Admin-set values.
+ */
+export function preserveAllowLimitPendingOrdersFromExisting(incomingPlain, existingPlain) {
+  if (!incomingPlain || typeof incomingPlain !== 'object') return incomingPlain;
+  const ex =
+    !existingPlain
+      ? {}
+      : existingPlain instanceof Map
+        ? Object.fromEntries(existingPlain)
+        : typeof existingPlain === 'object' && typeof existingPlain.toObject === 'function'
+          ? existingPlain.toObject()
+          : { ...existingPlain };
+  const out = { ...incomingPlain };
+  for (const seg of Object.keys(out)) {
+    if (!out[seg] || typeof out[seg] !== 'object') continue;
+    out[seg] = { ...out[seg] };
+    if (ex[seg] && Object.prototype.hasOwnProperty.call(ex[seg], 'allowLimitPendingOrders')) {
+      out[seg].allowLimitPendingOrders = ex[seg].allowLimitPendingOrders;
+    } else {
+      delete out[seg].allowLimitPendingOrders;
+    }
+  }
+  return out;
+}
+
 /** Align every segment slice in a defaults map (plain object). */
 export function alignSegmentDefaultsMap(segmentDefaults) {
   if (!segmentDefaults || typeof segmentDefaults !== 'object') return segmentDefaults;

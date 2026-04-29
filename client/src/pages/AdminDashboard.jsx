@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import axios from '../config/axios';
+import { canManageLimitPendingSegmentGate } from '../lib/adminSegmentRoleGates.js';
 import {
   requiredUnitForCommissionType,
   commissionAmountLabel,
@@ -439,11 +440,12 @@ const AdminDashboard = () => {
       ];
     }
     
-    // SUB_BROKER - only users, no subordinates
+    // SUB_BROKER — users + team/hierarchy view when applicable
     return [
       ...baseItems,
       { path: `${basePath}/wallet`, icon: Wallet, label: 'My Wallet' },
       { path: `${basePath}/temporary-wallet`, icon: Timer, label: 'Temporary Wallet' },
+      { path: `${basePath}/admins`, icon: Shield, label: 'Team' },
       { path: `${basePath}/users`, icon: Users, label: 'User Management' },
       { path: `${basePath}/create-user`, icon: UserPlus, label: 'Create User' },
       { path: `${basePath}/brokerage-tracking`, icon: History, label: 'Brokerage Tracking' },
@@ -613,7 +615,7 @@ const AdminDashboard = () => {
           {/* Admin Only Routes */}
           {!isSuperAdmin && <Route path="wallet" element={<AdminWallet />} />}
           {!isSuperAdmin && <Route path="temporary-wallet" element={<TemporaryWallet />} />}
-          {!isSuperAdmin && !isSubBroker && <Route path="admins/*" element={<AdminManagement />} />}
+          {!isSuperAdmin && <Route path="admins/*" element={<AdminManagement />} />}
           {!isSuperAdmin && isAdmin && <Route path="restrictions-on-broker" element={<AdminRestrictionsOnBroker />} />}
           {!isSuperAdmin && isBroker && <Route path="restrictions-on-subbroker" element={<BrokerRestrictionsOnSubBroker />} />}
           {!isSuperAdmin && !isSubBroker && <Route path="subordinate-fund-requests" element={<SubordinateFundRequests />} />}
@@ -2149,6 +2151,7 @@ const AdminManagement = () => {
       {showChargesModal && selectedAdmin && (
         <AdminChargesModal
           admin={selectedAdmin}
+          viewerRole={admin?.role}
           token={admin.token}
           onClose={() => { setShowChargesModal(false); setSelectedAdmin(null); }}
           onSuccess={() => { fetchAdmins(); }}
@@ -4338,7 +4341,7 @@ const AdminPasswordResetModal = ({ admin: targetAdmin, token, onClose }) => {
 
 
 // Admin Settings Modal - All Settings (General, Segment Permissions, Script Settings)
-const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
+const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onSuccess }) => {
   const [activeTab, setActiveTab] = useState('general');
   const segmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
 
@@ -4545,6 +4548,8 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
       setLoading(false);
     }
   };
+
+  const showLimitPendingGate = canManageLimitPendingSegmentGate(viewerRole);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -4783,6 +4788,7 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                           </label>
                         </div>
 
+                        {showLimitPendingGate && (
                         <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
                           <label className="flex cursor-pointer items-start gap-3">
                             <input
@@ -4802,6 +4808,7 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                             </span>
                           </label>
                         </div>
+                        )}
 
                         {/* Lot & Quantity */}
                         {!['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
@@ -22170,6 +22177,8 @@ const MySegmentSettings = () => {
     optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }
   };
 
+  const showLimitPendingGate = canManageLimitPendingSegmentGate(admin?.role);
+
   useEffect(() => {
     fetchSettings();
     fetchSegmentSymbols();
@@ -22376,6 +22385,7 @@ const MySegmentSettings = () => {
                   </label>
                 </div>
 
+                {showLimitPendingGate && (
                 <div className="col-span-2 md:col-span-4 mb-2 rounded-lg border border-dark-600 bg-dark-700/60 p-3">
                   <label className="flex cursor-pointer items-start gap-3">
                     <input
@@ -22395,6 +22405,7 @@ const MySegmentSettings = () => {
                     </span>
                   </label>
                 </div>
+                )}
 
                 <div className="col-span-2 md:col-span-4 mt-2">
                   <h4 className="text-sm font-semibold text-blue-400 mb-2">Lot & Quantity Settings</h4>
@@ -23534,6 +23545,7 @@ const AllAccountsOverview = () => {
 const AllUsersManagement = () => {
   const { admin } = useAuth();
   const isSuperAdmin = admin?.role === 'SUPER_ADMIN';
+  const showLimitPendingGate = canManageLimitPendingSegmentGate(admin?.role);
   const [users, setUsers] = useState([]);
   const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24529,6 +24541,7 @@ const AllUsersManagement = () => {
                     </label>
                   </div>
 
+                  {showLimitPendingGate && (
                   <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
                     <label className="flex cursor-pointer items-start gap-3">
                       <input
@@ -24552,6 +24565,7 @@ const AllUsersManagement = () => {
                       </span>
                     </label>
                   </div>
+                  )}
 
                   {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
                     <>
@@ -26281,6 +26295,7 @@ const CryptoWalletModal = ({ user, onClose, onSuccess, token }) => {
 const UserManagement = () => {
   const { admin } = useAuth();
   const isSuperAdmin = admin?.role === 'SUPER_ADMIN';
+  const showLimitPendingGate = canManageLimitPendingSegmentGate(admin?.role);
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27134,6 +27149,7 @@ const UserManagement = () => {
                     </label>
                   </div>
 
+                  {showLimitPendingGate && (
                   <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
                     <label className="flex cursor-pointer items-start gap-3">
                       <input
@@ -27157,6 +27173,7 @@ const UserManagement = () => {
                       </span>
                     </label>
                   </div>
+                  )}
 
                   {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
                     <>

@@ -47,6 +47,7 @@ import {
   withAlignedSegmentCommissionUnit,
   alignSegmentDefaultsMap,
   normalizeLegacySystemSegmentDefaultsSlice,
+  preserveAllowLimitPendingOrdersFromExisting,
 } from '../utils/commissionTypeUnit.js';
 import { resolveJackpotPrizePercentForRank } from '../utils/niftyJackpotPrize.js';
 import { buildNiftyJackpotIstDayQuery } from '../utils/niftyJackpotDayScope.js';
@@ -969,8 +970,15 @@ router.put('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
     
     const updateFields = {};
     if (segmentPermissions && typeof segmentPermissions === 'object') {
-      const plain =
+      let plain =
         segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
+      if (parentAdmin.role === 'BROKER' || parentAdmin.role === 'SUB_BROKER') {
+        const existingSeg =
+          childAdmin.segmentPermissions instanceof Map
+            ? Object.fromEntries(childAdmin.segmentPermissions)
+            : (childAdmin.segmentPermissions || {});
+        plain = preserveAllowLimitPendingOrdersFromExisting(plain, existingSeg);
+      }
       updateFields.segmentPermissions = alignSegmentDefaultsMap(plain);
     }
     if (scriptSettings && typeof scriptSettings === 'object') {
@@ -2111,7 +2119,16 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
     
     const updateFields = {};
     if (segmentPermissions) {
-      updateFields.segmentPermissions = segmentPermissions;
+      let plain =
+        segmentPermissions instanceof Map ? Object.fromEntries(segmentPermissions) : segmentPermissions;
+      if (req.admin.role === 'BROKER' || req.admin.role === 'SUB_BROKER') {
+        const existingSeg =
+          user.segmentPermissions instanceof Map
+            ? Object.fromEntries(user.segmentPermissions)
+            : (user.segmentPermissions || {});
+        plain = preserveAllowLimitPendingOrdersFromExisting(plain, existingSeg);
+      }
+      updateFields.segmentPermissions = plain;
     }
     if (scriptSettings) {
       // If mergeScriptSettings is true, merge with existing instead of replacing
