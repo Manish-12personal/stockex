@@ -22295,6 +22295,26 @@ const MySegmentSettings = () => {
                   </div>
                 ))}
 
+                <div className="col-span-2 md:col-span-4 mb-2 rounded-lg border border-dark-600 bg-dark-700/60 p-3">
+                  <label className="flex cursor-pointer items-start gap-3">
+                    <input
+                      type="checkbox"
+                      className="mt-1 shrink-0"
+                      checked={segmentPermissions[expandedSegment].defaultIntradayOnly === true}
+                      onChange={(e) =>
+                        handleSegmentChange(expandedSegment, 'defaultIntradayOnly', e.target.checked)}
+                    />
+                    <span>
+                      <span className="text-sm font-medium text-gray-200">
+                        Default intraday-only orders (EOD auto square)
+                      </span>
+                      <span className="mt-1 block text-xs text-gray-500">
+                        Merged with Super Admin defaults → hierarchy → user. Traders have no dashboard toggle for this flag.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
                 <div className="col-span-2 md:col-span-4 mt-2">
                   <h4 className="text-sm font-semibold text-blue-400 mb-2">Lot & Quantity Settings</h4>
                 </div>
@@ -24401,6 +24421,30 @@ const AllUsersManagement = () => {
                         className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
                       />
                     </div>
+                  </div>
+
+                  <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        className="mt-1 shrink-0"
+                        checked={editFormData.segmentPermissions[expandedSegment].defaultIntradayOnly === true}
+                        onChange={(e) =>
+                          handleEditSegmentPermissionChange(
+                            expandedSegment,
+                            'defaultIntradayOnly',
+                            e.target.checked
+                          )}
+                      />
+                      <span>
+                        <span className="text-sm font-medium text-gray-200">
+                          Default intraday-only orders (EOD auto square)
+                        </span>
+                        <span className="mt-1 block text-xs text-gray-500">
+                          Merged with Super Admin defaults → hierarchy → user. No trader toggle on the dashboard.
+                        </span>
+                      </span>
+                    </label>
                   </div>
 
                   {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
@@ -26957,6 +27001,30 @@ const UserManagement = () => {
                         className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
                       />
                     </div>
+                  </div>
+
+                  <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        className="mt-1 shrink-0"
+                        checked={editFormData.segmentPermissions[expandedSegment].defaultIntradayOnly === true}
+                        onChange={(e) =>
+                          handleEditSegmentPermissionChange(
+                            expandedSegment,
+                            'defaultIntradayOnly',
+                            e.target.checked
+                          )}
+                      />
+                      <span>
+                        <span className="text-sm font-medium text-gray-200">
+                          Default intraday-only orders (EOD auto square)
+                        </span>
+                        <span className="mt-1 block text-xs text-gray-500">
+                          Merged with Super Admin defaults → hierarchy → user. No trader toggle on the dashboard.
+                        </span>
+                      </span>
+                    </label>
                   </div>
 
                   {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
