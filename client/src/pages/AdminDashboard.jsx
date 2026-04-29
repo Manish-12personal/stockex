@@ -17088,6 +17088,24 @@ const SystemDefaultSettings = () => {
                           className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                       </div>
                     </div>
+                    <div className="mb-6 rounded-lg border border-dark-600 bg-dark-700/60 p-3">
+                      <label className="flex cursor-pointer items-start gap-3">
+                        <input
+                          type="checkbox"
+                          className="mt-1 shrink-0"
+                          checked={s.allowClientIntradayOnly !== false}
+                          onChange={(e) =>
+                            handleAdminSegDefChange(adminDefExpandedSeg, 'allowClientIntradayOnly', e.target.checked)
+                          }
+                        />
+                        <span>
+                          <span className="text-sm font-medium text-gray-200">Allow users to enable “Intraday only” on the trading panel</span>
+                          <span className="mt-1 block text-xs text-gray-500">
+                            Untick to hide that checkbox for traders (hierarchy admins can override per segment on their Admin settings).
+                          </span>
+                        </span>
+                      </label>
+                    </div>
 
                     {/* Lot & Quantity Settings */}
                     {!['MCXFUT', 'MCXOPT', 'MCX'].includes(adminDefExpandedSeg) && (

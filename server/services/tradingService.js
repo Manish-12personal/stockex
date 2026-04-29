@@ -585,6 +585,10 @@ class TradingService {
       throw new Error(`Trading in ${orderData.segment} segment is not enabled for your account`);
     }
 
+    if (orderData.intradayOnly && segmentSettings.allowClientIntradayOnly === false) {
+      throw new Error('Intraday-only mode is disabled for this segment by your administrator.');
+    }
+
     await TradeService.assertCryptoSegmentTradingWindowOpen(user, segmentSettings, orderData.segment);
     
     // Check if script is blocked

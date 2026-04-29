@@ -588,6 +588,7 @@ const adminSchema = new mongoose.Schema({
       orderLots: { type: Number, default: 10 },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
+      allowClientIntradayOnly: { type: Boolean, default: true },
       // Crypto (USD spot): total client bid–ask width in ₹ per coin (half applied to bid, half to ask vs exchange mid)
       cryptoSpreadInr: { type: Number, default: 0 },
       /** IST (HH:mm or HH:mm:ss) — earliest time this segment allows trading */

@@ -331,6 +331,7 @@ router.post('/margin-preview', protect, async (req, res) => {
       shortfall: totalRequired > availableBalance ? totalRequired - availableBalance : 0,
       exposureIntraday: segmentSettingsForMargin?.exposureIntraday || null,
       exposureCarryForward: segmentSettingsForMargin?.exposureCarryForward || null,
+      allowClientIntradayOnly: segmentSettings?.allowClientIntradayOnly !== false,
       breakupQuantity: breakupQuantity > 0 ? breakupQuantity : null,
       maxBid: maxBid > 0 ? maxBid : null
     });

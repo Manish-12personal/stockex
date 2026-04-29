@@ -3926,6 +3926,12 @@ const TradingPanel = ({
   }, [isCryptoOnly, instrument?.token, instrument?.pair, instrument?.symbol]);
 
   useEffect(() => {
+    if (marginPreview?.allowClientIntradayOnly === false) {
+      setIntradayOnly(false);
+    }
+  }, [marginPreview?.allowClientIntradayOnly]);
+
+  useEffect(() => {
     if (isForex && cryptoInputMode === 'lots') setCryptoInputMode('amount');
   }, [isForex, cryptoInputMode, instrument?.token, instrument?.pair, instrument?.symbol]);
 
@@ -4405,8 +4411,8 @@ const TradingPanel = ({
         <div>
           <label className="block text-xs text-gray-400 mb-2">Product Type</label>
           
-          {/* Intraday Only Toggle */}
-          {!isUsdSpot && (isFutures || isOptions || isMCX) && (
+          {/* Intraday Only Toggle — gated by Super Admin default + hierarchy (allowClientIntradayOnly) */}
+          {!isUsdSpot && (isFutures || isOptions || isMCX) && marginPreview?.allowClientIntradayOnly !== false && (
             <div className="mb-3 p-3 bg-dark-700 rounded border border-dark-600">
               <label className="flex items-center justify-between cursor-pointer">
                 <div className="flex items-center gap-2">
@@ -4491,9 +4497,14 @@ const TradingPanel = ({
           </div>
         </div>
 
-        {/* Leverage: NSE/MCX; USD forex spot (not crypto) uses segment exposure from margin-preview */}
+        {/* Leverage: user multiplier on top of segment exposure from defaults + hierarchy + instrument Rules */}
         {!isCryptoOnly && (!isUsdSpot || isForex) && (
           <div>
+            {!isUsdSpot && marginPreview?.exposureIntraday != null && (
+              <div className="text-xs text-cyan-400/95 mb-1.5">
+                Segment exposure (MIS ×{marginPreview.exposureIntraday ?? '—'} · CF ×{marginPreview.exposureCarryForward ?? '—'}) applies to margin below
+              </div>
+            )}
             <label className="block text-xs text-gray-400 mb-2">
               Leverage
               {isUsdSpot && isForex && marginPreview?.exposureIntraday != null && (

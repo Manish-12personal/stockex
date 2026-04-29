@@ -456,6 +456,8 @@ const systemSettingsSchema = new mongoose.Schema({
       orderLots: { type: Number, default: 10 },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
+      /** If false, users cannot enable “Intraday only” on dashboard; hierarchy/User can override. */
+      allowClientIntradayOnly: { type: Boolean, default: true },
       cryptoSpreadInr: { type: Number, default: 0 },
       /** IST (HH:mm or HH:mm:ss) — earliest time users may trade CRYPTOFUT/CRYPTOOPT; empty = no start gate */
       cryptoStartTime: { type: String, default: '' },

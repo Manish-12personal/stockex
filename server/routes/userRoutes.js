@@ -1464,6 +1464,7 @@ router.get('/settings', protectUser, async (req, res) => {
       orderLots: 10, 
       exposureIntraday: 1, 
       exposureCarryForward: 1,
+      allowClientIntradayOnly: true,
       cryptoSpreadInr: 0,
       cryptoStartTime: '',
       cryptoClosingTime: '',

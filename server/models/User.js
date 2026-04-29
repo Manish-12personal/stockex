@@ -626,6 +626,7 @@ const userSchema = new mongoose.Schema({
       orderLots: { type: Number, default: 10 },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
+      allowClientIntradayOnly: { type: Boolean, default: true },
       cryptoSpreadInr: { type: Number, default: 0 },
       /** IST earliest trading start (HH:mm or HH:mm:ss). Empty = no gate. */
       cryptoStartTime: { type: String, default: '' },
