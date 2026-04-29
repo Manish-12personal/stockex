@@ -4763,6 +4763,26 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                           </div>
                         </div>
 
+                        <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+                          <label className="flex cursor-pointer items-start gap-3">
+                            <input
+                              type="checkbox"
+                              className="mt-1 shrink-0"
+                              checked={s.defaultIntradayOnly === true}
+                              onChange={(e) =>
+                                handleSegDefChange(expandedSeg, 'defaultIntradayOnly', e.target.checked)}
+                            />
+                            <span>
+                              <span className="text-sm font-medium text-gray-200">
+                                Default intraday-only orders (EOD auto square)
+                              </span>
+                              <span className="mt-1 block text-xs text-gray-500">
+                                Merged with Super Admin defaults for this hierarchy. Traders get no dashboard toggle.
+                              </span>
+                            </span>
+                          </label>
+                        </div>
+
                         {/* Lot & Quantity */}
                         {!['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
                           <>
