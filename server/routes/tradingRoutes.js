@@ -110,8 +110,8 @@ router.post('/margin-preview', protect, async (req, res) => {
     // Import TradeService for user settings helpers
     const TradeService = (await import('../services/tradeService.js')).default;
     
-    // Get user's segment and script settings
-    const segmentSettings = TradeService.getUserSegmentSettings(req.user, segment, instrumentType);
+    // Get user's segment and script settings (System defaults + hierarchy + user; merged with instrument Rules in margin calculator)
+    let segmentSettings = await TradeService.getUserSegmentSettings(req.user, segment, instrumentType);
     const orInst = [];
     if (req.body.token) orInst.push({ token: String(req.body.token) });
     if (symbol && req.body.exchange) {
@@ -195,10 +195,13 @@ router.post('/margin-preview', protect, async (req, res) => {
       segmentSettings
     );
     if (!usedFixedMargin && segmentSettingsForMargin) {
-      const exposure = isIntraday 
-        ? (segmentSettingsForMargin.exposureIntraday || 1) 
-        : (segmentSettingsForMargin.exposureCarryForward || 1);
-      
+      const exposureNum = Number(
+        isIntraday
+          ? segmentSettingsForMargin?.exposureIntraday
+          : segmentSettingsForMargin?.exposureCarryForward
+      );
+      const exposure = Number.isFinite(exposureNum) && exposureNum > 0 ? exposureNum : 1;
+
       if (exposure > 0) {
         // Apply both segment exposure AND user-selected leverage
         marginRequired = tradeValue / exposure / leverage;

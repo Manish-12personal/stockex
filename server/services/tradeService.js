@@ -165,52 +165,63 @@ class TradeService {
     return { user, availableMargin, isMcx };
   }
   
-  // Get user's segment settings for a trade
-  // Settings are inherited from parent admin/broker/subbroker
-  // Users under Super Admin get full access to all segments
-  static getUserSegmentSettings(user, segment, instrumentType) {
-    // Default full access settings
-    const fullAccessSettings = {
-      enabled: true,
-      maxExchangeLots: 1000,
-      commissionType: 'PER_LOT',
-      commissionLot: 0,
-      maxLots: 500,
-      minLots: 1,
-      orderLots: 100,
-      exposureIntraday: 10,
-      exposureCarryForward: 5,
-      cryptoSpreadInr: 0,
-      cryptoStartTime: '',
-      cryptoClosingTime: '',
-      cryptoReferenceSymbol: '',
-      cryptoPricePerLotInr: 0,
-      cryptoLotSizeLots: 1,
-      cryptoLotSizeQuantity: 0,
-      optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000 },
-      optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000 }
-    };
-    
-    // Users directly under Super Admin get full access to all segments
-    if (user.creatorRole === 'SUPER_ADMIN') {
-      return fullAccessSettings;
-    }
-    
-    // Map trade segment/displaySegment to Market Watch segment permission key
-    const segmentUpper = segment?.toUpperCase() || '';
+  /** Lowest scaffold when SystemSettings + overlays omit keys. */
+  static _SEGMENT_MERGE_FALLBACK = {
+    enabled: true,
+    maxExchangeLots: 1000,
+    commissionType: 'PER_LOT',
+    commissionLot: 0,
+    maxLots: 500,
+    minLots: 1,
+    orderLots: 100,
+    exposureIntraday: 10,
+    exposureCarryForward: 5,
+    cryptoSpreadInr: 0,
+    cryptoStartTime: '',
+    cryptoClosingTime: '',
+    cryptoReferenceSymbol: '',
+    cryptoPricePerLotInr: 0,
+    cryptoLotSizeLots: 1,
+    cryptoLotSizeQuantity: 0,
+    optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000 },
+    optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 100, maxExchangeLots: 1000 },
+  };
+
+  /** Map trade segment + instrument type → Hierarchy / Default-settings segment key. */
+  static resolveMarketWatchSegmentKey(segment, instrumentType) {
+    const segmentUpper = String(segment || '').toUpperCase();
     const isOptions = instrumentType === 'OPTIONS' || instrumentType === 'OPT';
-    
-    let segmentKey = segment;
-    
-    // Direct matches for Market Watch segments
-    const marketWatchSegments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
+
+    let segmentKey = segmentUpper;
+    const marketWatchSegments = [
+      'NSEFUT',
+      'NSEOPT',
+      'MCXFUT',
+      'MCXOPT',
+      'NSE-EQ',
+      'BSE-FUT',
+      'BSE-OPT',
+      'CRYPTO',
+      'FOREXFUT',
+      'FOREXOPT',
+      'CRYPTOFUT',
+      'CRYPTOOPT',
+    ];
     if (marketWatchSegments.includes(segmentUpper)) {
       segmentKey = segmentUpper;
-    }
-    // Map old segment names to new Market Watch segments
-    else if (segmentUpper === 'EQUITY' || segmentUpper === 'EQ' || segmentUpper === 'NSE' || segmentUpper === 'NSEEQ') {
+    } else if (
+      segmentUpper === 'EQUITY' ||
+      segmentUpper === 'EQ' ||
+      segmentUpper === 'NSE' ||
+      segmentUpper === 'NSEEQ'
+    ) {
       segmentKey = 'NSE-EQ';
-    } else if (segmentUpper === 'FNO' || segmentUpper === 'NFO' || segmentUpper === 'NSEINDEX' || segmentUpper === 'NSESTOCK') {
+    } else if (
+      segmentUpper === 'FNO' ||
+      segmentUpper === 'NFO' ||
+      segmentUpper === 'NSEINDEX' ||
+      segmentUpper === 'NSESTOCK'
+    ) {
       segmentKey = isOptions ? 'NSEOPT' : 'NSEFUT';
     } else if (segmentUpper === 'MCX' || segmentUpper === 'COMMODITY') {
       segmentKey = isOptions ? 'MCXOPT' : 'MCXFUT';
@@ -223,46 +234,116 @@ class TradeService {
     } else if (segmentUpper === 'FOREX') {
       segmentKey = isOptions ? 'FOREXOPT' : 'FOREXFUT';
     }
-    
-    // Check parent admin's segment permissions (stored in user.parentSegmentPermissions populated from admin)
-    // If parent admin has this segment enabled, allow trading
+    return String(segmentKey || segmentUpper || '');
+  }
+
+  static _normalizeSegmentSlice(permsMaybe) {
+    if (permsMaybe == null) return null;
+    let o = permsMaybe;
+    if (typeof o.toObject === 'function') o = o.toObject();
+    if (o instanceof Map) return Object.fromEntries(o);
+    return typeof o === 'object' ? { ...o } : null;
+  }
+
+  static _sliceFromHierarchy(user, segmentKey, segmentOriginal) {
     let parentSegmentPerms = user.parentSegmentPermissions || user.admin?.segmentPermissions;
-    
     if (parentSegmentPerms && typeof parentSegmentPerms.toObject === 'function') {
       parentSegmentPerms = parentSegmentPerms.toObject();
     }
-    
-    let parentSegmentSettings = null;
+    let slice = null;
+    const rawSeg = segmentOriginal !== undefined ? String(segmentOriginal) : '';
     if (parentSegmentPerms instanceof Map) {
-      parentSegmentSettings = parentSegmentPerms.get(segmentKey) || parentSegmentPerms.get(segment?.toUpperCase());
-      if (!parentSegmentSettings && (segmentKey === 'CRYPTOFUT' || segmentKey === 'CRYPTOOPT')) {
-        parentSegmentSettings = parentSegmentPerms.get('CRYPTO');
+      slice =
+        parentSegmentPerms.get(segmentKey) ||
+        parentSegmentPerms.get(String(rawSeg).toUpperCase()) ||
+        null;
+      if (!slice && (segmentKey === 'CRYPTOFUT' || segmentKey === 'CRYPTOOPT')) {
+        slice = parentSegmentPerms.get('CRYPTO');
       }
-      if (!parentSegmentSettings && (segmentKey === 'FOREXFUT' || segmentKey === 'FOREXOPT')) {
-        parentSegmentSettings = parentSegmentPerms.get('FOREX');
+      if (!slice && (segmentKey === 'FOREXFUT' || segmentKey === 'FOREXOPT')) {
+        slice = parentSegmentPerms.get('FOREX');
       }
     } else if (parentSegmentPerms && typeof parentSegmentPerms === 'object') {
-      parentSegmentSettings = parentSegmentPerms[segmentKey] || parentSegmentPerms[segment?.toUpperCase()];
-      if (!parentSegmentSettings && (segmentKey === 'CRYPTOFUT' || segmentKey === 'CRYPTOOPT')) {
-        parentSegmentSettings = parentSegmentPerms.CRYPTO || parentSegmentPerms.crypto;
+      slice =
+        parentSegmentPerms[segmentKey] ||
+        parentSegmentPerms[String(rawSeg).toUpperCase()] ||
+        null;
+      if (!slice && (segmentKey === 'CRYPTOFUT' || segmentKey === 'CRYPTOOPT')) {
+        slice = parentSegmentPerms.CRYPTO || parentSegmentPerms.crypto;
       }
-      if (!parentSegmentSettings && (segmentKey === 'FOREXFUT' || segmentKey === 'FOREXOPT')) {
-        parentSegmentSettings = parentSegmentPerms.FOREX || parentSegmentPerms.forex;
+      if (!slice && (segmentKey === 'FOREXFUT' || segmentKey === 'FOREXOPT')) {
+        slice = parentSegmentPerms.FOREX || parentSegmentPerms.forex;
       }
     }
-    
-    if (parentSegmentSettings && typeof parentSegmentSettings.toObject === 'function') {
-      parentSegmentSettings = parentSegmentSettings.toObject();
-    }
+    return TradeService._normalizeSegmentSlice(slice);
+  }
 
-    // If parent admin has settings for this segment, use them
-    if (parentSegmentSettings) {
-      return parentSegmentSettings;
-    }
-    
-    // If no parent settings found, allow trading with default settings
-    // This ensures users can trade even if parent admin hasn't configured specific segments
-    return fullAccessSettings;
+  static _sliceFromUserPermissions(user, segmentKey) {
+    const sp = user.segmentPermissions;
+    if (!sp) return null;
+    if (sp instanceof Map) return TradeService._normalizeSegmentSlice(sp.get(segmentKey));
+    const plain = sp.toObject ? sp.toObject() : sp;
+    if (!plain || typeof plain !== 'object') return null;
+    return TradeService._normalizeSegmentSlice(
+      plain[segmentKey] || plain[String(segmentKey).toUpperCase()]
+    );
+  }
+
+  /**
+   * Super Admin defaults (adminSegmentDefaults) → Hierarchy (parent Admin) → User.segmentPermissions.
+   * exposureIntraday / exposureCarryForward: explicit `> 0` in a layer overrides; `0` keeps lower layers.
+   */
+  static _mergeSegmentStack(systemSlicePlain, hierPlain, userPlain) {
+    const fb = TradeService._SEGMENT_MERGE_FALLBACK;
+    let m = { ...fb, ...(systemSlicePlain && typeof systemSlicePlain === 'object' ? systemSlicePlain : {}) };
+
+    const applyOverlay = (overlay) => {
+      const o = TradeService._normalizeSegmentSlice(overlay);
+      if (!o) return;
+      for (const k of Object.keys(o)) {
+        const vv = o[k];
+        if (k === 'exposureIntraday' || k === 'exposureCarryForward') {
+          const num = Number(vv);
+          if (Number.isFinite(num) && num > 0) {
+            m[k] = num;
+          }
+          continue;
+        }
+        if ((k === 'optionBuy' || k === 'optionSell') && vv && typeof vv === 'object') {
+          m[k] = { ...(m[k] || {}), ...vv };
+          continue;
+        }
+        if (vv !== undefined) {
+          m[k] = vv;
+        }
+      }
+    };
+
+    applyOverlay(hierPlain);
+    applyOverlay(userPlain);
+
+    const ei = Number(m.exposureIntraday);
+    const ec = Number(m.exposureCarryForward);
+    if (!Number.isFinite(ei) || ei <= 0) m.exposureIntraday = fb.exposureIntraday;
+    if (!Number.isFinite(ec) || ec <= 0) m.exposureCarryForward = fb.exposureCarryForward;
+
+    return m;
+  }
+
+  /**
+   * Precedence: scaffold → SystemSettings.adminSegmentDefaults[segment] → Hierarchy → User.segmentPermissions.
+   * Instrument Rules still merged in margin/order paths via applyInstrumentExposureOverrides().
+   */
+  static async getUserSegmentSettings(user, segment, instrumentType) {
+    const segmentKey = TradeService.resolveMarketWatchSegmentKey(segment, instrumentType);
+    const sysRaw = await SystemSettings.getSettings();
+    const adm = TradeService._segmentMapPlain(sysRaw?.adminSegmentDefaults);
+    const systemSlicePlain = TradeService._normalizeSegmentSlice(adm[segmentKey]);
+
+    const hierSlice = TradeService._sliceFromHierarchy(user, segmentKey, segment);
+    const userSlice = TradeService._sliceFromUserPermissions(user, segmentKey);
+
+    return TradeService._mergeSegmentStack(systemSlicePlain, hierSlice, userSlice);
   }
   
   // Get user's script-specific settings
@@ -631,7 +712,7 @@ class TradeService {
     }
     
     // 3. Get user's segment and script settings
-    let segmentSettings = this.getUserSegmentSettings(user, tradeData.segment, tradeData.instrumentType);
+    let segmentSettings = await this.getUserSegmentSettings(user, tradeData.segment, tradeData.instrumentType);
     segmentSettings = await this.mergeUsdSpotSpreadFromSuperAdmin(segmentSettings, tradeData);
     const orInst = [];
     if (tradeData.token) orInst.push({ token: tradeData.token.toString() });

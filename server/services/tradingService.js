@@ -575,7 +575,7 @@ class TradingService {
     }
 
     // Get user's segment and script settings (crypto/forex spread inherits Super Admin default when unset)
-    let segmentSettings = TradeService.getUserSegmentSettings(user, orderData.segment, orderData.instrumentType);
+    let segmentSettings = await TradeService.getUserSegmentSettings(user, orderData.segment, orderData.instrumentType);
     segmentSettings = await TradeService.mergeUsdSpotSpreadFromSuperAdmin(segmentSettings, orderData);
     const rawScriptSettings = TradeService.getUserScriptSettings(user, orderData.symbol, orderData.category);
     const scriptSettings = TradeService.mergeScriptSettingsWithInstrument(instrument, rawScriptSettings);
@@ -800,10 +800,13 @@ class TradingService {
     // Both exposure and user-selected leverage are applied
     const segmentSettingsForMargin = TradeService.applyInstrumentExposureOverrides(instrument, segmentSettings);
     if (!usedFixedMargin && segmentSettingsForMargin) {
-      const exposure = isIntraday 
-        ? (segmentSettingsForMargin.exposureIntraday || 1) 
-        : (segmentSettingsForMargin.exposureCarryForward || 1);
-      
+      const exposureNum = Number(
+        isIntraday
+          ? segmentSettingsForMargin?.exposureIntraday
+          : segmentSettingsForMargin?.exposureCarryForward
+      );
+      const exposure = Number.isFinite(exposureNum) && exposureNum > 0 ? exposureNum : 1;
+
       if (exposure > 0) {
         // Apply both segment exposure AND user-selected leverage
         marginRequired = tradeValue / exposure / leverage;
@@ -1868,7 +1871,7 @@ class TradingService {
         if (u?.admin?.segmentPermissions) {
           u.parentSegmentPermissions = u.admin.segmentPermissions;
         }
-        const seg = TradeService.getUserSegmentSettings(u, trade.segment, trade.instrumentType);
+        const seg = await TradeService.getUserSegmentSettings(u, trade.segment, trade.instrumentType);
         const halfUsd = TradeService.segmentCryptoSpreadHalfUsd(seg);
         if (halfUsd > 0) {
           if (trade.side === 'BUY' && bidPrice > 0) {
