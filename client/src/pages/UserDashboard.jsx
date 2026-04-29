@@ -3575,7 +3575,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
           <div className="text-sm">
             <span className="text-gray-400">P/L: </span>
             <span className={`font-medium ${totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {totalPnL >= 0 ? '+' : ''}₹{(parseFloat(totalPnL) || 0).toFixed(2)}
+              {totalPnL >= 0 ? '+' : '-'}₹{Math.abs(parseFloat(totalPnL) || 0).toFixed(2)}
             </span>
           </div>
           
@@ -3677,7 +3677,7 @@ const PositionsPanel = ({ activeTab, setActiveTab, walletData, user, marketData,
                 {currencySymbol}{(parseFloat(pos.commission) || 0).toFixed(2)}
               </div>
               <div className={`text-right font-medium ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {pnl >= 0 ? '+' : ''}₹{(parseFloat(pnl) || 0).toFixed(2)}
+                {pnl >= 0 ? '+' : '-'}₹{Math.abs(parseFloat(pnl) || 0).toFixed(2)}
               </div>
               <div className="text-center">
                 <button 
@@ -6385,7 +6385,7 @@ const MobilePositionsPanel = ({ activeTab, user, marketData, cryptoOnly = false,
                     </div>
                     <div className="text-right">
                       <div className={`font-bold text-lg ${displayPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {displayPnL >= 0 ? '+' : ''}{currencySymbol}{Math.abs(displayPnL).toFixed(2)}
+                        {displayPnL >= 0 ? '+' : '-'}{currencySymbol}{Math.abs(displayPnL).toFixed(2)}
                       </div>
                       {tab === 'positions' && (
                         <div className="text-xs text-gray-500">
