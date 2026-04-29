@@ -4179,10 +4179,7 @@ const TradingPanel = ({
         segment: orderData.segment,
         displaySegment: orderData.displaySegment,
       });
-      let apiCheckPx = null;
-      if (orderMode === 'LIMIT') apiCheckPx = orderData.limitPrice;
-      else if (orderMode === 'SL' || orderMode === 'SL-M') apiCheckPx = orderData.triggerPrice;
-      const bandErr = validateWalletLimitBand(walletLimitBands, bandKey, orderMode, apiCheckPx);
+      const bandErr = validateWalletLimitBand(walletLimitBands, bandKey, orderMode);
       if (bandErr) {
         setError(bandErr);
         setLoading(false);
@@ -8370,8 +8367,7 @@ const BuySellModal = ({
         segment: orderData.segment,
         displaySegment: orderData.displaySegment,
       });
-      const apiCheckPxModal = orderPriceType === 'LIMIT' ? orderData.limitPrice : null;
-      const bandErrModal = validateWalletLimitBand(walletLimitBands, bandKey, orderPriceType, apiCheckPxModal);
+      const bandErrModal = validateWalletLimitBand(walletLimitBands, bandKey, orderPriceType);
       if (bandErrModal) {
         setError(bandErrModal);
         setLoading(false);

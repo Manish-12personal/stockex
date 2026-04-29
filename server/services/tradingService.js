@@ -43,21 +43,8 @@ function assertWalletLimitOrderBand(user, orderData) {
   const band = user.walletLimitOrderBand?.[key];
   if (band?.enabled !== true) {
     throw new Error(
-      `${key.toUpperCase()}: Pending/limit orders are disabled. Enable the switch and set High/Low in My Accounts (wallet card).`
+      `${key.toUpperCase()}: Pending/limit orders are disabled. Turn ON the checkbox in My Accounts (wallet card).`
     );
-  }
-  const low = Number(band?.low);
-  const high = Number(band?.high);
-  if (!Number.isFinite(low) || !Number.isFinite(high) || high <= low) {
-    throw new Error(`${key.toUpperCase()}: Set valid High greater than Low in My Accounts.`);
-  }
-  const priceRaw = ot === 'LIMIT' ? orderData.limitPrice : orderData.triggerPrice;
-  const p = Number(priceRaw);
-  if (!Number.isFinite(p)) {
-    throw new Error('Limit or trigger price is required.');
-  }
-  if (p < low || p > high) {
-    throw new Error(`${key.toUpperCase()}: Limit/trigger price must be between ${low} and ${high}.`);
   }
 }
 

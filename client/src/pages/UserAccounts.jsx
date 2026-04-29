@@ -15,55 +15,24 @@ import {
 import { GAMES_LEDGER_FILTER_OPTIONS } from '../components/games/GamesWalletGameLedgerPanel.jsx';
 import { formatGamesLedgerWhen } from '../lib/gamesLedgerWhen.js';
 
-/** MCX / crypto / forex wallet: gated limit SL orders — High/Low (same units as order price API). */
-function WalletBandEditor({ accent, walletKey, label, walletBands, onPatch, onSave, saving }) {
-  const row = walletBands[walletKey] || { enabled: false, low: '', high: '' };
+/** MCX / crypto / forex — one checkbox: OFF = block limit/pending orders; ON = allow them. */
+function WalletLimitToggleRow({ accent, walletKey, label, enabled, saving, onToggle }) {
   return (
-    <div className={`mt-4 rounded-lg border ${accent.border} bg-dark-900/40 p-3 space-y-2 text-left`}>
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-[11px] text-gray-400 leading-snug max-w-[200px]">
-          {label}
-        </span>
-        <label className="flex items-center gap-2 cursor-pointer text-xs shrink-0">
-          <input
-            type="checkbox"
-            checked={!!row.enabled}
-            onChange={(e) => onPatch(walletKey, 'enabled', e.target.checked)}
-            className="rounded border-dark-600"
-          />
-          <span className="text-gray-300">On</span>
-        </label>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label className="text-[10px] text-gray-500 block mb-1">Low</label>
-          <input
-            type="number"
-            value={row.low}
-            onChange={(e) => onPatch(walletKey, 'low', e.target.value)}
-            placeholder="9401"
-            className={`w-full text-sm px-2 py-1.5 rounded bg-dark-800 ${accent.inputBorder} border text-white`}
-          />
-        </div>
-        <div>
-          <label className="text-[10px] text-gray-500 block mb-1">High</label>
-          <input
-            type="number"
-            value={row.high}
-            onChange={(e) => onPatch(walletKey, 'high', e.target.value)}
-            placeholder="9465"
-            className={`w-full text-sm px-2 py-1.5 rounded bg-dark-800 ${accent.inputBorder} border text-white`}
-          />
-        </div>
-      </div>
-      <button
-        type="button"
-        disabled={saving === walletKey}
-        onClick={() => onSave(walletKey)}
-        className={`text-xs px-3 py-1.5 rounded font-medium ${accent.btn}`}
+    <div className={`mt-4 rounded-lg border ${accent.border} bg-dark-900/40 px-3 py-2.5 flex items-center justify-between gap-3 text-left`}>
+      <span className="text-[11px] text-gray-400 leading-snug flex-1 min-w-0">{label}</span>
+      <label
+        className={`flex items-center gap-2 cursor-pointer text-xs shrink-0 text-gray-300 ${
+          saving === walletKey ? 'opacity-60 pointer-events-none' : ''
+        }`}
       >
-        {saving === walletKey ? 'Saving…' : 'Save band'}
-      </button>
+        <input
+          type="checkbox"
+          checked={!!enabled}
+          onChange={(e) => onToggle(walletKey, e.target.checked)}
+          className="rounded border-dark-600"
+        />
+        <span>On</span>
+      </label>
     </div>
   );
 }
@@ -122,9 +91,9 @@ const UserAccounts = () => {
   const [walletTransferTarget, setWalletTransferTarget] = useState('');
 
   const [walletBands, setWalletBands] = useState({
-    mcx: { enabled: false, low: '', high: '' },
-    crypto: { enabled: false, low: '', high: '' },
-    forex: { enabled: false, low: '', high: '' },
+    mcx: { enabled: false },
+    crypto: { enabled: false },
+    forex: { enabled: false },
   });
   const [walletBandSaving, setWalletBandSaving] = useState(null);
 
@@ -138,15 +107,10 @@ const UserAccounts = () => {
         });
         const b = data?.walletLimitOrderBand;
         if (cancelled || !b) return;
-        const seg = (s) => ({
-          enabled: !!s?.enabled,
-          low: s?.low != null && s.low !== '' ? String(s.low) : '',
-          high: s?.high != null && s.high !== '' ? String(s.high) : '',
-        });
         setWalletBands({
-          mcx: seg(b.mcx),
-          crypto: seg(b.crypto),
-          forex: seg(b.forex),
+          mcx: { enabled: !!b.mcx?.enabled },
+          crypto: { enabled: !!b.crypto?.enabled },
+          forex: { enabled: !!b.forex?.enabled },
         });
       } catch {
         /* noop */
@@ -157,35 +121,30 @@ const UserAccounts = () => {
     };
   }, [user?.token]);
 
-  const patchWalletBand = (key, field, raw) => {
-    setWalletBands((prev) => ({
-      ...prev,
-      [key]: { ...prev[key], [field]: raw },
-    }));
-  };
-
-  const saveWalletBand = useCallback(async (key) => {
-    if (!user?.token) return;
-    setWalletBandSaving(key);
-    try {
-      const row = walletBands[key];
-      await axios.put(
-        '/api/user/wallet-limit-band',
-        {
-          [key]: {
-            enabled: !!row.enabled,
-            low: row.low === '' ? 0 : Number(row.low),
-            high: row.high === '' ? 0 : Number(row.high),
-          },
-        },
-        { headers: { Authorization: `Bearer ${user.token}` } },
-      );
-    } catch (e) {
-      console.error('wallet band save', e);
-    } finally {
-      setWalletBandSaving(null);
-    }
-  }, [user?.token, walletBands]);
+  const toggleWalletBand = useCallback(
+    async (key, nextEnabled) => {
+      if (!user?.token) return;
+      let rollbackEnabled = false;
+      setWalletBands((p) => {
+        rollbackEnabled = !!p[key]?.enabled;
+        return { ...p, [key]: { enabled: nextEnabled } };
+      });
+      setWalletBandSaving(key);
+      try {
+        await axios.put(
+          '/api/user/wallet-limit-band',
+          { [key]: { enabled: nextEnabled } },
+          { headers: { Authorization: `Bearer ${user.token}` } },
+        );
+      } catch (e) {
+        console.error('wallet band toggle', e);
+        setWalletBands((p) => ({ ...p, [key]: { enabled: rollbackEnabled } }));
+      } finally {
+        setWalletBandSaving(null);
+      }
+    },
+    [user?.token],
+  );
 
   const fetchWallet = useCallback(async () => {
     if (!user?.token) return;
@@ -704,18 +663,13 @@ const UserAccounts = () => {
               </div>
             )}
 
-            <WalletBandEditor
-              accent={{
-                border: 'border-yellow-500/25',
-                inputBorder: 'border-yellow-500/35',
-                btn: 'bg-yellow-600/90 hover:bg-yellow-600 text-white disabled:opacity-50',
-              }}
+            <WalletLimitToggleRow
+              accent={{ border: 'border-yellow-500/25' }}
               walletKey="mcx"
-              label="Pending limit SL: Only when ON, price must fall between Low and High."
-              walletBands={walletBands}
-              onPatch={patchWalletBand}
-              onSave={saveWalletBand}
+              label="Allow limit & pending (SL) orders for MCX. OFF = blocked."
+              enabled={walletBands.mcx?.enabled}
               saving={walletBandSaving}
+              onToggle={toggleWalletBand}
             />
 
             <button
@@ -1297,18 +1251,13 @@ const UserAccounts = () => {
               </div>
             )}
 
-            <WalletBandEditor
-              accent={{
-                border: 'border-orange-500/25',
-                inputBorder: 'border-orange-500/35',
-                btn: 'bg-orange-600/90 hover:bg-orange-600 text-white disabled:opacity-50',
-              }}
+            <WalletLimitToggleRow
+              accent={{ border: 'border-orange-500/25' }}
               walletKey="crypto"
-              label="Crypto limit/pending orders: OFF blocks them; ON allows only inside Low–High (API price units)."
-              walletBands={walletBands}
-              onPatch={patchWalletBand}
-              onSave={saveWalletBand}
+              label="Allow limit & pending orders for crypto. OFF = blocked."
+              enabled={walletBands.crypto?.enabled}
               saving={walletBandSaving}
+              onToggle={toggleWalletBand}
             />
 
             <button
@@ -1487,18 +1436,13 @@ const UserAccounts = () => {
                 </div>
               )}
 
-              <WalletBandEditor
-                accent={{
-                  border: 'border-cyan-500/25',
-                  inputBorder: 'border-cyan-500/35',
-                  btn: 'bg-cyan-600/90 hover:bg-cyan-600 text-white disabled:opacity-50',
-                }}
+              <WalletLimitToggleRow
+                accent={{ border: 'border-cyan-500/25' }}
                 walletKey="forex"
-                label="Forex limit/pending: OFF blocks; ON requires trigger/limit inside Low–High."
-                walletBands={walletBands}
-                onPatch={patchWalletBand}
-                onSave={saveWalletBand}
+                label="Allow limit & pending orders for forex. OFF = blocked."
+                enabled={walletBands.forex?.enabled}
                 saving={walletBandSaving}
+                onToggle={toggleWalletBand}
               />
 
               <button
