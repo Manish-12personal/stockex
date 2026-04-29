@@ -1,27 +1,24 @@
-/** MCX / crypto / forex wallet limit-band rules — keep in sync with `server/services/tradingService.js` walletLimitBandKey */
-
-export function walletLimitBandKeyFromFlags({ isCryptoOnly, isForex, exchange, segment, displaySegment }) {
-  if (isForex === true && !isCryptoOnly) return 'forex';
-  if (isCryptoOnly === true) return 'crypto';
-  const seg = String(displaySegment || segment || '').toUpperCase();
-  const ex = String(exchange || '').toUpperCase();
-  if (ex === 'MCX' || ['MCX', 'MCXFUT', 'MCXOPT', 'COMMODITY'].includes(seg)) return 'mcx';
-  return null;
-}
+/**
+ * Limit/pending orders gated by admin per-segment (`allowLimitPendingOrders` on user's merged segmentPermissions).
+ */
 
 /**
+ * @param {Record<string, { allowLimitPendingOrders?: boolean }>|null|undefined} segmentPermissions
+ * @param {string|null|undefined} orderSegment — `order.segment` / `instrument.displaySegment` (same as API order)
+ * @param {string} orderType — MARKET | LIMIT | SL | SL-M
  * @returns {string|null} error message or null if ok / not applicable
  */
-export function validateWalletLimitBand(bands, key, orderType) {
-  if (!key) return null;
+export function validateLimitPendingFromSegmentPerms(segmentPermissions, orderSegment, orderType) {
   const ot = String(orderType || '').toUpperCase();
   if (ot === 'MARKET') return null;
-  const isPending = ot === 'LIMIT' || ot === 'SL' || ot === 'SL-M';
-  if (!isPending) return null;
+  if (ot !== 'LIMIT' && ot !== 'SL' && ot !== 'SL-M') return null;
 
-  const b = bands?.[key] || {};
-  if (!b.enabled) {
-    return `${key.toUpperCase()}: Pending/limit orders are off. Turn ON the checkbox on My Accounts → ${key.toUpperCase()} wallet card.`;
+  const seg = String(orderSegment || '').trim().toUpperCase();
+  if (!seg) return null;
+
+  const perm = segmentPermissions?.[seg];
+  if (perm && perm.allowLimitPendingOrders === false) {
+    return `${seg}: Limit & pending orders are off for this segment (admin Segment Permissions).`;
   }
   return null;
 }

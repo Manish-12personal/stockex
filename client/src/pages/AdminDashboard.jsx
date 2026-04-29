@@ -4783,6 +4783,26 @@ const AdminChargesModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                           </label>
                         </div>
 
+                        <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+                          <label className="flex cursor-pointer items-start gap-3">
+                            <input
+                              type="checkbox"
+                              className="mt-1 shrink-0"
+                              checked={s.allowLimitPendingOrders !== false}
+                              onChange={(e) =>
+                                handleSegDefChange(expandedSeg, 'allowLimitPendingOrders', e.target.checked)}
+                            />
+                            <span>
+                              <span className="text-sm font-medium text-gray-200">
+                                Allow limit & pending (LIMIT / SL-M) orders
+                              </span>
+                              <span className="mt-1 block text-xs text-gray-500">
+                                Uncheck to block for traders under this hierarchy (set only here, not on My Accounts).
+                              </span>
+                            </span>
+                          </label>
+                        </div>
+
                         {/* Lot & Quantity */}
                         {!['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
                           <>
@@ -17127,6 +17147,26 @@ const SystemDefaultSettings = () => {
                       </label>
                     </div>
 
+                    <div className="mb-6 rounded-lg border border-dark-600 bg-dark-700/60 p-3">
+                      <label className="flex cursor-pointer items-start gap-3">
+                        <input
+                          type="checkbox"
+                          className="mt-1 shrink-0"
+                          checked={s.allowLimitPendingOrders !== false}
+                          onChange={(e) =>
+                            handleAdminSegDefChange(adminDefExpandedSeg, 'allowLimitPendingOrders', e.target.checked)}
+                        />
+                        <span>
+                          <span className="text-sm font-medium text-gray-200">
+                            Allow limit & pending (LIMIT / SL-M) orders
+                          </span>
+                          <span className="mt-1 block text-xs text-gray-500">
+                            Uncheck to block segment-wide for downstream traders (not exposed on user My Accounts).
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+
                     {/* Lot & Quantity Settings */}
                     {!['MCXFUT', 'MCXOPT', 'MCX'].includes(adminDefExpandedSeg) && (
                       <>
@@ -22125,6 +22165,7 @@ const MySegmentSettings = () => {
     cryptoStartTime: '', cryptoClosingTime: '', cryptoReferenceSymbol: '', cryptoPricePerLotInr: 0,
     cryptoLotSizeLots: 1,
     cryptoLotSizeQuantity: 0,
+    allowLimitPendingOrders: true,
     optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 },
     optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }
   };
@@ -22330,6 +22371,26 @@ const MySegmentSettings = () => {
                       </span>
                       <span className="mt-1 block text-xs text-gray-500">
                         Merged with Super Admin defaults → hierarchy → user. Traders have no dashboard toggle for this flag.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
+                <div className="col-span-2 md:col-span-4 mb-2 rounded-lg border border-dark-600 bg-dark-700/60 p-3">
+                  <label className="flex cursor-pointer items-start gap-3">
+                    <input
+                      type="checkbox"
+                      className="mt-1 shrink-0"
+                      checked={segmentPermissions[expandedSegment].allowLimitPendingOrders !== false}
+                      onChange={(e) =>
+                        handleSegmentChange(expandedSegment, 'allowLimitPendingOrders', e.target.checked)}
+                    />
+                    <span>
+                      <span className="text-sm font-medium text-gray-200">
+                        Allow limit & pending (LIMIT / SL-M) orders
+                      </span>
+                      <span className="mt-1 block text-xs text-gray-500">
+                        Uncheck to block for traders under your hierarchy (admin Segment Permissions only).
                       </span>
                     </span>
                   </label>
@@ -23524,6 +23585,7 @@ const AllUsersManagement = () => {
     cryptoPricePerLotInr: 0,
     cryptoLotSizeLots: 1,
     cryptoLotSizeQuantity: 0,
+    allowLimitPendingOrders: true,
     optionBuy: {
       allowed: true,
       fraction: false,
@@ -24462,6 +24524,30 @@ const AllUsersManagement = () => {
                         </span>
                         <span className="mt-1 block text-xs text-gray-500">
                           Merged with Super Admin defaults → hierarchy → user. No trader toggle on the dashboard.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        className="mt-1 shrink-0"
+                        checked={editFormData.segmentPermissions[expandedSegment].allowLimitPendingOrders !== false}
+                        onChange={(e) =>
+                          handleEditSegmentPermissionChange(
+                            expandedSegment,
+                            'allowLimitPendingOrders',
+                            e.target.checked
+                          )}
+                      />
+                      <span>
+                        <span className="text-sm font-medium text-gray-200">
+                          Allow limit & pending (LIMIT / SL-M) orders
+                        </span>
+                        <span className="mt-1 block text-xs text-gray-500">
+                          User override merges with hierarchy. Traders cannot change this from My Accounts.
                         </span>
                       </span>
                     </label>
@@ -26252,6 +26338,7 @@ const UserManagement = () => {
     cryptoPricePerLotInr: 0,
     cryptoLotSizeLots: 1,
     cryptoLotSizeQuantity: 0,
+    allowLimitPendingOrders: true,
     optionBuy: {
       allowed: true,
       fraction: false,
@@ -27042,6 +27129,30 @@ const UserManagement = () => {
                         </span>
                         <span className="mt-1 block text-xs text-gray-500">
                           Merged with Super Admin defaults → hierarchy → user. No trader toggle on the dashboard.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="mb-4 rounded-lg border border-dark-600 bg-dark-800/60 p-3">
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        className="mt-1 shrink-0"
+                        checked={editFormData.segmentPermissions[expandedSegment].allowLimitPendingOrders !== false}
+                        onChange={(e) =>
+                          handleEditSegmentPermissionChange(
+                            expandedSegment,
+                            'allowLimitPendingOrders',
+                            e.target.checked
+                          )}
+                      />
+                      <span>
+                        <span className="text-sm font-medium text-gray-200">
+                          Allow limit & pending (LIMIT / SL-M) orders
+                        </span>
+                        <span className="mt-1 block text-xs text-gray-500">
+                          User override merges with hierarchy. Traders cannot change this from My Accounts.
                         </span>
                       </span>
                     </label>

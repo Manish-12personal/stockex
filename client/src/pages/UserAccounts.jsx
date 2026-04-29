@@ -15,29 +15,7 @@ import {
 import { GAMES_LEDGER_FILTER_OPTIONS } from '../components/games/GamesWalletGameLedgerPanel.jsx';
 import { formatGamesLedgerWhen } from '../lib/gamesLedgerWhen.js';
 
-/** MCX / crypto / forex — one checkbox: OFF = block limit/pending orders; ON = allow them. */
-function WalletLimitToggleRow({ accent, walletKey, label, enabled, saving, onToggle }) {
-  return (
-    <div className={`mt-4 rounded-lg border ${accent.border} bg-dark-900/40 px-3 py-2.5 flex items-center justify-between gap-3 text-left`}>
-      <span className="text-[11px] text-gray-400 leading-snug flex-1 min-w-0">{label}</span>
-      <label
-        className={`flex items-center gap-2 cursor-pointer text-xs shrink-0 text-gray-300 ${
-          saving === walletKey ? 'opacity-60 pointer-events-none' : ''
-        }`}
-      >
-        <input
-          type="checkbox"
-          checked={!!enabled}
-          onChange={(e) => onToggle(walletKey, e.target.checked)}
-          className="rounded border-dark-600"
-        />
-        <span>On</span>
-      </label>
-    </div>
-  );
-}
-
-/** Same wallet routing as server `walletLimitBandKey` — MCX commodity trades only. */
+/** MCX-only wallet row (commodity), excluding crypto/forex. */
 function isMcxWalletTrade(row) {
   if (!row || row.isCrypto || row.isForex) return false;
   if (row.exchange === 'MCX') return true;
@@ -89,62 +67,6 @@ const UserAccounts = () => {
   const [showWalletTransferModal, setShowWalletTransferModal] = useState(false);
   const [walletTransferSource, setWalletTransferSource] = useState('');
   const [walletTransferTarget, setWalletTransferTarget] = useState('');
-
-  const [walletBands, setWalletBands] = useState({
-    mcx: { enabled: false },
-    crypto: { enabled: false },
-    forex: { enabled: false },
-  });
-  const [walletBandSaving, setWalletBandSaving] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!user?.token) return;
-      try {
-        const { data } = await axios.get('/api/user/settings', {
-          headers: { Authorization: `Bearer ${user.token}` },
-        });
-        const b = data?.walletLimitOrderBand;
-        if (cancelled || !b) return;
-        setWalletBands({
-          mcx: { enabled: !!b.mcx?.enabled },
-          crypto: { enabled: !!b.crypto?.enabled },
-          forex: { enabled: !!b.forex?.enabled },
-        });
-      } catch {
-        /* noop */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.token]);
-
-  const toggleWalletBand = useCallback(
-    async (key, nextEnabled) => {
-      if (!user?.token) return;
-      let rollbackEnabled = false;
-      setWalletBands((p) => {
-        rollbackEnabled = !!p[key]?.enabled;
-        return { ...p, [key]: { enabled: nextEnabled } };
-      });
-      setWalletBandSaving(key);
-      try {
-        await axios.put(
-          '/api/user/wallet-limit-band',
-          { [key]: { enabled: nextEnabled } },
-          { headers: { Authorization: `Bearer ${user.token}` } },
-        );
-      } catch (e) {
-        console.error('wallet band toggle', e);
-        setWalletBands((p) => ({ ...p, [key]: { enabled: rollbackEnabled } }));
-      } finally {
-        setWalletBandSaving(null);
-      }
-    },
-    [user?.token],
-  );
 
   const fetchWallet = useCallback(async () => {
     if (!user?.token) return;
@@ -662,15 +584,6 @@ const UserAccounts = () => {
                 P&L: {mcxRealizedPnL >= 0 ? '+' : ''}₹{mcxRealizedPnL.toLocaleString()}
               </div>
             )}
-
-            <WalletLimitToggleRow
-              accent={{ border: 'border-yellow-500/25' }}
-              walletKey="mcx"
-              label="Allow limit & pending (SL) orders for MCX. OFF = blocked."
-              enabled={walletBands.mcx?.enabled}
-              saving={walletBandSaving}
-              onToggle={toggleWalletBand}
-            />
 
             <button
               type="button"
@@ -1251,15 +1164,6 @@ const UserAccounts = () => {
               </div>
             )}
 
-            <WalletLimitToggleRow
-              accent={{ border: 'border-orange-500/25' }}
-              walletKey="crypto"
-              label="Allow limit & pending orders for crypto. OFF = blocked."
-              enabled={walletBands.crypto?.enabled}
-              saving={walletBandSaving}
-              onToggle={toggleWalletBand}
-            />
-
             <button
               type="button"
               onClick={openCryptoOrders}
@@ -1435,15 +1339,6 @@ const UserAccounts = () => {
                   Realized P/L: {forexRealizedPnL >= 0 ? '+' : ''}₹{forexRealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               )}
-
-              <WalletLimitToggleRow
-                accent={{ border: 'border-cyan-500/25' }}
-                walletKey="forex"
-                label="Allow limit & pending orders for forex. OFF = blocked."
-                enabled={walletBands.forex?.enabled}
-                saving={walletBandSaving}
-                onToggle={toggleWalletBand}
-              />
 
               <button
                 type="button"

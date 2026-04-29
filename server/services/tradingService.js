@@ -22,28 +22,32 @@ import {
 } from '../utils/tradingUsdSpot.js';
 import { creditReferralTradingReward } from './referralService.js';
 
-/** @returns {'mcx'|'crypto'|'forex'|null} */
-function walletLimitBandKey(orderData) {
-  if (!orderData) return null;
-  if (orderData.isCrypto === true) return 'crypto';
-  if (orderData.isForex === true) return 'forex';
-  const ex = String(orderData.exchange || '').toUpperCase();
-  const seg = String(orderData.segment || '').toUpperCase();
-  if (ex === 'MCX' || ['MCX', 'MCXFUT', 'MCXOPT', 'COMMODITY'].includes(seg)) return 'mcx';
+/** Read one segment entry from User.segmentPermissions (Map or plain object after lean). */
+function getUserSegmentPerm(user, segmentKey) {
+  const seg = String(segmentKey || '').trim().toUpperCase();
+  if (!seg) return null;
+  const sp = user.segmentPermissions;
+  if (sp && typeof sp.get === 'function') {
+    return sp.get(seg) ?? null;
+  }
+  if (sp && typeof sp === 'object' && sp.get == null) {
+    return sp[seg] ?? null;
+  }
   return null;
 }
 
-function assertWalletLimitOrderBand(user, orderData) {
-  const key = walletLimitBandKey(orderData);
-  if (!key) return;
+function assertSegmentAllowLimitPendingOrders(user, orderData) {
   const ot = String(orderData.orderType || '').toUpperCase();
   if (ot === 'MARKET') return;
   if (ot !== 'LIMIT' && ot !== 'SL' && ot !== 'SL-M') return;
 
-  const band = user.walletLimitOrderBand?.[key];
-  if (band?.enabled !== true) {
+  const seg = String(orderData.segment || orderData.displaySegment || '').trim().toUpperCase();
+  if (!seg) return;
+
+  const perm = getUserSegmentPerm(user, seg);
+  if (perm && perm.allowLimitPendingOrders === false) {
     throw new Error(
-      `${key.toUpperCase()}: Pending/limit orders are disabled. Turn ON the checkbox in My Accounts (wallet card).`
+      `${seg}: Limit & pending (SL) orders are disabled for this segment. Your admin can enable "Allow limit/pending orders" in Segment Permissions (hierarchy).`
     );
   }
 }
@@ -446,7 +450,7 @@ class TradingService {
       throw new Error('Trading blocked. Contact admin.');
     }
 
-    assertWalletLimitOrderBand(user, orderData);
+    assertSegmentAllowLimitPendingOrders(user, orderData);
 
     // ==================== STEP 2: MARKET HOURS CHECK ====================
     const exchange = orderData.exchange || 'NSE';

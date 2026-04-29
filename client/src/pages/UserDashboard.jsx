@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import MarketWatch from '../components/MarketWatch';
 import ClosedInstrumentsTicker from '../components/ClosedInstrumentsTicker';
-import { walletLimitBandKeyFromFlags, validateWalletLimitBand } from '../lib/walletLimitOrderBand.js';
+import { validateLimitPendingFromSegmentPerms } from '../lib/walletLimitOrderBand.js';
 
 // Demo instruments with mock data for testing trading features
 const demoInstrumentsData = {
@@ -458,12 +458,6 @@ const DEFAULT_FOREX_INSTRUMENTS = [
   { symbol: 'USDINR', name: 'US Dollar / Indian Rupee', exchange: 'FOREX', pair: 'USDINR', token: 'USDINR', isForex: true, instrumentType: 'CURRENCY', segment: 'FOREXFUT', displaySegment: 'FOREXFUT' },
 ];
 
-const DEFAULT_WALLET_LIMIT_BANDS = {
-  mcx: { enabled: false, low: 0, high: 0 },
-  crypto: { enabled: false, low: 0, high: 0 },
-  forex: { enabled: false, low: 0, high: 0 },
-};
-
 const UserDashboard = () => {
   const { user, logoutUser } = useAuth();
   const navigate = useNavigate();
@@ -502,7 +496,8 @@ const UserDashboard = () => {
   /** Last bar close from ChartPanel / mobile chart — bid/ask align to this (fixes MCX feed vs Kite chart mismatch). */
   const [chartLtpAnchor, setChartLtpAnchor] = useState({ token: null, ltp: null });
 
-  const [walletLimitBands, setWalletLimitBands] = useState(DEFAULT_WALLET_LIMIT_BANDS);
+  /** Merged segment permissions from GET /user/settings — limit/pending gate (admin Segment Permissions only). */
+  const [segmentPermissionsGate, setSegmentPermissionsGate] = useState({});
 
   useEffect(() => {
     if (!user?.token) return;
@@ -512,8 +507,8 @@ const UserDashboard = () => {
         const { data } = await axios.get('/api/user/settings', {
           headers: { Authorization: `Bearer ${user.token}` },
         });
-        if (cancelled || !data?.walletLimitOrderBand) return;
-        setWalletLimitBands({ ...DEFAULT_WALLET_LIMIT_BANDS, ...data.walletLimitOrderBand });
+        if (cancelled || !data?.segmentPermissions) return;
+        setSegmentPermissionsGate(data.segmentPermissions);
       } catch {
         /* ignore */
       }
@@ -1186,7 +1181,7 @@ const UserDashboard = () => {
                 usdRate={usdRate}
                 usdSpotClientSpreads={usdSpotClientSpreads}
                 chartAnchorLtp={null}
-                walletLimitBands={walletLimitBands}
+                segmentPermissionsGate={segmentPermissionsGate}
               />
             </div>
           )}
@@ -1288,7 +1283,7 @@ const UserDashboard = () => {
           usdRate={usdRate}
           usdSpotClientSpreads={usdSpotClientSpreads}
           chartAnchorLtp={null}
-          walletLimitBands={walletLimitBands}
+          segmentPermissionsGate={segmentPermissionsGate}
         />
       )}
 
@@ -3807,7 +3802,7 @@ const TradingPanel = ({
   usdSpotClientSpreads = { crypto: 0, forex: 0 },
   /** Optional chart reference LTP; bid/ask use Kite book from marketData, not LTP. */
   chartAnchorLtp = null,
-  walletLimitBands = DEFAULT_WALLET_LIMIT_BANDS,
+  segmentPermissionsGate = {},
 }) => {
   const [lots, setLots] = useState(instrument?.defaultQty?.toString() || '1');
   const [price, setPrice] = useState('');
@@ -4172,16 +4167,10 @@ const TradingPanel = ({
           : parseFloat(limitPrice);
       }
 
-      const bandKey = walletLimitBandKeyFromFlags({
-        isCryptoOnly,
-        isForex,
-        exchange: orderData.exchange,
-        segment: orderData.segment,
-        displaySegment: orderData.displaySegment,
-      });
-      const bandErr = validateWalletLimitBand(walletLimitBands, bandKey, orderMode);
-      if (bandErr) {
-        setError(bandErr);
+      const gateSeg = String(orderData.segment || orderData.displaySegment || '').trim();
+      const gateErr = validateLimitPendingFromSegmentPerms(segmentPermissionsGate, gateSeg, orderMode);
+      if (gateErr) {
+        setError(gateErr);
         setLoading(false);
         return;
       }
@@ -8069,7 +8058,7 @@ const BuySellModal = ({
   usdRate = 83.5,
   usdSpotClientSpreads = { crypto: 0, forex: 0 },
   chartAnchorLtp = null,
-  walletLimitBands = DEFAULT_WALLET_LIMIT_BANDS,
+  segmentPermissionsGate = {},
 }) => {
   const [quantity, setQuantity] = useState('0.01');
   const [limitPrice, setLimitPrice] = useState('');
@@ -8360,16 +8349,10 @@ const BuySellModal = ({
           : parseFloat(limitPrice);
       }
 
-      const bandKey = walletLimitBandKeyFromFlags({
-        isCryptoOnly,
-        isForex,
-        exchange: orderData.exchange,
-        segment: orderData.segment,
-        displaySegment: orderData.displaySegment,
-      });
-      const bandErrModal = validateWalletLimitBand(walletLimitBands, bandKey, orderPriceType);
-      if (bandErrModal) {
-        setError(bandErrModal);
+      const gateSegModal = String(orderData.segment || orderData.displaySegment || '').trim();
+      const gateErrModal = validateLimitPendingFromSegmentPerms(segmentPermissionsGate, gateSegModal, orderPriceType);
+      if (gateErrModal) {
+        setError(gateErrModal);
         setLoading(false);
         return;
       }
