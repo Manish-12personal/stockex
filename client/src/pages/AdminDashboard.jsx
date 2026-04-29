@@ -2,7 +2,11 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import axios from '../config/axios';
-import { canManageLimitPendingSegmentGate } from '../lib/adminSegmentRoleGates.js';
+import {
+  canManageLimitPendingSegmentGate,
+  showLimitPendingHierarchyTarget,
+  LIMIT_PENDING_HELP_TEXT,
+} from '../lib/adminSegmentRoleGates.js';
 import {
   requiredUnitForCommissionType,
   commissionAmountLabel,
@@ -4549,7 +4553,9 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
     }
   };
 
-  const showLimitPendingGate = canManageLimitPendingSegmentGate(viewerRole);
+  const showLimitPendingGate =
+    canManageLimitPendingSegmentGate(viewerRole) &&
+    showLimitPendingHierarchyTarget(targetAdmin?.role);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -4803,7 +4809,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                                 Allow limit & pending (LIMIT / SL-M) orders
                               </span>
                               <span className="mt-1 block text-xs text-gray-500">
-                                Uncheck to block for traders under this hierarchy (set only here, not on My Accounts).
+                                {LIMIT_PENDING_HELP_TEXT}
                               </span>
                             </span>
                           </label>
@@ -17168,7 +17174,7 @@ const SystemDefaultSettings = () => {
                             Allow limit & pending (LIMIT / SL-M) orders
                           </span>
                           <span className="mt-1 block text-xs text-gray-500">
-                            Uncheck to block segment-wide for downstream traders (not exposed on user My Accounts).
+                            {LIMIT_PENDING_HELP_TEXT}
                           </span>
                         </span>
                       </label>
@@ -22400,7 +22406,7 @@ const MySegmentSettings = () => {
                         Allow limit & pending (LIMIT / SL-M) orders
                       </span>
                       <span className="mt-1 block text-xs text-gray-500">
-                        Uncheck to block for traders under your hierarchy (admin Segment Permissions only).
+                        {LIMIT_PENDING_HELP_TEXT}
                       </span>
                     </span>
                   </label>
@@ -24560,7 +24566,7 @@ const AllUsersManagement = () => {
                           Allow limit & pending (LIMIT / SL-M) orders
                         </span>
                         <span className="mt-1 block text-xs text-gray-500">
-                          User override merges with hierarchy. Traders cannot change this from My Accounts.
+                          {LIMIT_PENDING_HELP_TEXT}
                         </span>
                       </span>
                     </label>
@@ -27168,7 +27174,7 @@ const UserManagement = () => {
                           Allow limit & pending (LIMIT / SL-M) orders
                         </span>
                         <span className="mt-1 block text-xs text-gray-500">
-                          User override merges with hierarchy. Traders cannot change this from My Accounts.
+                          {LIMIT_PENDING_HELP_TEXT}
                         </span>
                       </span>
                     </label>
