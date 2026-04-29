@@ -4,7 +4,7 @@
  * Games:
  * 1. Nifty Up/Down - Predict UP or DOWN, win 1.95x
  * 2. BTC Up/Down - Predict UP or DOWN, win 1.95x
- * 3. Nifty Number - Pick decimal (.00-.99); win pays fixed gross ₹ per ticket minus gross hierarchy % (Jackpot-style) or legacy brokerage %
+ * 3. Nifty Number - Pick decimal (.00-.99); win pays (ticket×winMultiplier×qty) gross, or legacy fixedProfit×qty minus gross hierarchy % (Jackpot-style) or legacy brokerage %
  * 4. Nifty Bracket - Buy/Sell on bracket levels, win 1.9x gross (default ₹1,000/ticket)
  * 5. Nifty Jackpot - Bid for top ranks, prize distribution
  * 
@@ -255,7 +255,7 @@ function testGamesLogic() {
   console.log(`   Bets Per Day: ${game3.betsPerDay}`);
   console.log(`   Result Time: ${game3.resultTime} IST`);
   
-  // Test 3: Pick number .45, 1 ticket (quantity 1); gross prize = fixedProfit × quantity
+  // Test 3: Pick number .45, 1 ticket (quantity 1); gross prize = ticket×winMultiplier×qty (token when no ticketPrice)
   tickets = 1;
   betAmount = tickets * tokenValue; // 300
   const quantity = 1;
@@ -276,7 +276,19 @@ function testGamesLogic() {
   console.log(`   Selected: .${selectedNumber.toString().padStart(2, '0')} | ${won ? '✅ WIN' : '❌ LOSS'}`);
   
   if (won) {
-    const grossPrize = game3.fixedProfit * quantity;
+    const ticketPxNn =
+      game3.ticketPrice != null &&
+      Number.isFinite(Number(game3.ticketPrice)) &&
+      Number(game3.ticketPrice) > 0
+        ? Number(game3.ticketPrice)
+        : tokenValue;
+    const multNn = Number(game3.winMultiplier);
+    const grossPrize =
+      Number.isFinite(multNn) && multNn > 0
+        ? parseFloat((ticketPxNn * multNn * quantity).toFixed(2))
+        : Number(game3.fixedProfit) > 0
+          ? game3.fixedProfit * quantity
+          : 4000 * quantity;
     const grossHierarchyPctSum =
       (Number(game3.grossPrizeSubBrokerPercent) || 0) +
       (Number(game3.grossPrizeBrokerPercent) || 0) +
@@ -301,13 +313,20 @@ function testGamesLogic() {
   }
   
   console.log(`\n💰 Payout Calculation:`);
-  console.log(`   Gross prize G: fixedProfit × qty = ₹${game3.fixedProfit} × ${quantity} = ₹${(game3.fixedProfit * quantity).toLocaleString()}`);
+  console.log(
+    `   Gross prize G: ticket×multiplier×qty = ₹${(tokenValue * Number(game3.winMultiplier)).toLocaleString()} × ${quantity} = ₹${won ? (parseFloat((tokenValue * Number(game3.winMultiplier) * quantity).toFixed(2))).toLocaleString() : 0}`
+  );
   console.log(`   Gross hierarchy % (SB+Br+Ad): ${((Number(game3.grossPrizeSubBrokerPercent)||0)+(Number(game3.grossPrizeBrokerPercent)||0)+(Number(game3.grossPrizeAdminPercent)||0))}% of G → fee ₹${(won ? brokerage : 0).toLocaleString()}`);
   console.log(`   User credit (gross G): ₹${payout.toLocaleString()}`);
   console.log(`   Profit vs stake: ₹${profit.toLocaleString()}`);
   console.log(`   New Balance: ₹${user.gamesWallet.balance.toLocaleString()}`);
   
-  const grossPrize3 = game3.fixedProfit * quantity;
+  const grossPrize3 =
+    Number(game3.winMultiplier) > 0
+      ? parseFloat((tokenValue * Number(game3.winMultiplier) * quantity).toFixed(2))
+      : Number(game3.fixedProfit) > 0
+        ? game3.fixedProfit * quantity
+        : 4000 * quantity;
   const expected3 = expected2 - betAmount + grossPrize3;
   const test3Pass = Math.abs(user.gamesWallet.balance - expected3) < 0.01;
   console.log(`\n   ✅ EXPECTED: ₹${expected3.toLocaleString()} | ACTUAL: ₹${user.gamesWallet.balance.toLocaleString()} | ${test3Pass ? 'PASS ✅' : 'FAIL ❌'}`);

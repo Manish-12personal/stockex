@@ -952,6 +952,10 @@ const UserGames = () => {
           const tv = gameSettings?.tokenValue || 300;
           const gs = gameSettings?.games?.[GAME_SETTINGS_KEY[howToPlayGame]] || {};
           const tkt = Number(gs.ticketPrice) > 0 ? Number(gs.ticketPrice) : tv;
+          /** Align with server: gross = tkt × winMultiplier (else fixedProfit fallback) */
+          const niftyBtcDecimalWinGrossDisplay = Number(gs.winMultiplier) > 0
+            ? parseFloat((tkt * Number(gs.winMultiplier)).toFixed(2))
+            : gs.fixedProfit > 0 ? Number(gs.fixedProfit) : 4000;
           const selectedGame = games.find(g => g.id === howToPlayGame);
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => setHowToPlayGame(null)}>
@@ -1082,7 +1086,7 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Pick the <span className="text-purple-400 font-bold">last 2 decimal digits</span> (.00 to .99) of the Nifty 50 closing price.</li>
                         <li>2. If the Nifty closes at 24,850<span className="text-yellow-400 font-bold">.75</span>, the winning number is <span className="text-yellow-400 font-bold">75</span>.</li>
-                        <li>3. Correct guess wins a <span className="text-green-400 font-bold">fixed profit of ₹{gs.fixedProfit || 4000}</span>.</li>
+                        <li>3. Correct guess wins <span className="text-green-400 font-bold">₹{niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross</span> per winning ticket (<span className="text-cyan-400 font-bold">{gs.winMultiplier != null ? `${tkt}×${gs.winMultiplier}` : `fixed ₹${gs.fixedProfit || 4000}`}</span>), before hierarchy.</li>
                         <li>4. You can place up to <span className="text-cyan-400 font-bold">{gs.betsPerDay || 10} bets per day</span> on different numbers.</li>
                       </ul>
                     </div>
@@ -1108,13 +1112,13 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1.5 pl-1">
                         <li>1. Pick any number from <span className="text-yellow-400 font-bold">00 to 99</span> from the grid.</li>
                         <li>2. At market close, the last 2 decimals of Nifty closing price are checked.</li>
-                        <li>3. If your number matches → <span className="text-green-400 font-bold">You WIN ₹{gs.fixedProfit || 4000} fixed profit!</span></li>
+                        <li>3. If your number matches → <span className="text-green-400 font-bold">You WIN ₹{niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross!</span></li>
                         <li>4. If not → <span className="text-red-400 font-bold">You lose your bet amount.</span></li>
                       </ul>
                       <div className="mt-2 bg-dark-700/60 rounded-lg p-2">
                         <div className="text-[10px] text-yellow-400 font-bold mb-1">Example</div>
                         <div className="text-gray-400">You bet <span className="text-purple-400 font-bold">2 Tkt</span> on number <span className="text-yellow-400 font-bold">75</span>. Nifty closes at 24,850.75.</div>
-                        <div className="text-green-400 font-bold mt-1">Result: WIN! You get ₹{gs.fixedProfit || 4000} profit</div>
+                        <div className="text-green-400 font-bold mt-1">Result: WIN! You get ₹{niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross credited</div>
                       </div>
                     </div>
                     <div className="bg-cyan-900/20 border border-cyan-500/20 rounded-xl p-3">
@@ -1133,7 +1137,7 @@ const UserGames = () => {
                       <ul className="text-gray-300 space-y-1 pl-1">
                         <li>1. Pick the <span className="text-amber-400 font-bold">last 2 decimal digits</span> (.00 to .99) of the <span className="text-amber-400 font-bold">BTC / USDT</span> spot at result time (IST).</li>
                         <li>2. If BTC is <span className="text-yellow-400 font-bold">76,123.65</span>, the winning number is <span className="text-yellow-400 font-bold">65</span> (.65).</li>
-                        <li>3. Correct guess wins a <span className="text-green-400 font-bold">fixed profit of ₹{gs.fixedProfit || 4000}</span> (gross, before hierarchy; same rules as Nifty Number).</li>
+                        <li>3. Correct guess wins <span className="text-green-400 font-bold">₹{niftyBtcDecimalWinGrossDisplay.toLocaleString()} gross</span> per ticket (same payout rules as Nifty Number).</li>
                         <li>4. You can place up to <span className="text-cyan-400 font-bold">{gs.betsPerDay || 10} bets per day</span> on different numbers.</li>
                       </ul>
                     </div>
@@ -5302,8 +5306,18 @@ const NiftyNumberScreen = ({
   /** BTC Number (.00–.99): digits typed after the fixed "." */
   const [centInput, setCentInput] = useState('');
 
-  // Admin-configured settings with fallbacks
-  const fixedProfit = settings?.fixedProfit || 4000;
+  // Admin-configured: gross win uses ticket×multiplier when multiplier set (matches server declare).
+  const ticketPxWin =
+    settings?.ticketPrice != null && Number(settings.ticketPrice) > 0
+      ? Number(settings.ticketPrice)
+      : actualTokenValue;
+  const winMultCfg = Number(settings?.winMultiplier);
+  const grossWinPerTicketDisplay =
+    Number.isFinite(winMultCfg) && winMultCfg > 0
+      ? parseFloat((ticketPxWin * winMultCfg).toFixed(2))
+      : settings?.fixedProfit != null && Number(settings.fixedProfit) > 0
+        ? Number(settings.fixedProfit)
+        : 4000;
   const minTickets = settings?.minTickets || 1;
   const maxTickets = settings?.maxTickets || 100;
   const minBet = minTickets * actualTokenValue;
@@ -5561,7 +5575,7 @@ const NiftyNumberScreen = ({
                 </div>
                 <div>
                   <h1 className="font-bold">{game.name}</h1>
-                  <p className="text-xs text-gray-400">Win ₹{fixedProfit.toLocaleString()} profit</p>
+                  <p className="text-xs text-gray-400">Win ₹{grossWinPerTicketDisplay.toLocaleString()} gross</p>
                 </div>
               </div>
             </div>
@@ -5697,7 +5711,7 @@ const NiftyNumberScreen = ({
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Win Profit</span>
-                  <span className="text-green-400 font-bold">₹{fixedProfit.toLocaleString()}</span>
+                  <span className="text-green-400 font-bold">₹{grossWinPerTicketDisplay.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-dark-600">
                   <span className="text-gray-400">Min Bet</span>
@@ -5723,7 +5737,7 @@ const NiftyNumberScreen = ({
                 </div>
               </div>
               <div className="mt-2 bg-dark-700/50 rounded-lg p-2 text-[10px] text-gray-500">
-                Bet {minTickets} Ticket (₹{minBet}) → If you win: <span className="text-green-400 font-medium">+₹{fixedProfit.toLocaleString()} profit</span>
+                Bet {minTickets} Ticket (₹{minBet}) → If you win: <span className="text-green-400 font-medium">+₹{grossWinPerTicketDisplay.toLocaleString()} gross</span>
               </div>
               <p className="text-[10px] text-gray-500 mt-2 text-center leading-snug">
                 Jeet/haar upar wale &quot;Aaj ka result&quot; box aur har line par tab dikhega jab admin aaj ka result declare karein ({resultTimeDisplay} IST policy).

@@ -11,6 +11,7 @@ import {
   creditNiftyJackpotGrossHierarchyFromPool,
 } from './gameProfitDistribution.js';
 import { creditReferralPercentOfTotalStake } from './referralGameStakeCredit.js';
+import { computeDecimalNumberWinGrossPrize } from '../utils/decimalNumberWinGrossPrize.js';
 
 /**
  * Declare Nifty Number for a bet date (YYYY-MM-DD). Credits games wallet for winners.
@@ -44,7 +45,6 @@ export async function declareNiftyNumberResultForDate({ date, resultNumber, clos
     throw new Error('Nifty Number game is disabled');
   }
 
-  const fixedProfit = gameConfig?.fixedProfit || 4000;
   const brokeragePctSetting = Number(gameConfig?.brokeragePercent);
   const brokeragePercent =
     Number.isFinite(brokeragePctSetting) && brokeragePctSetting > 0 ? brokeragePctSetting : 0;
@@ -85,7 +85,7 @@ export async function declareNiftyNumberResultForDate({ date, resultNumber, clos
     const user = await User.findById(bet.user).populate('admin');
 
     if (won) {
-      const grossPrize = fixedProfit * (bet.quantity || 1);
+      const grossPrize = computeDecimalNumberWinGrossPrize(gameConfig, settings, bet.quantity);
       let totalWinnerBrokerage = 0;
       let grossBreakdown = null;
 
