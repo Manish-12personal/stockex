@@ -17093,15 +17093,15 @@ const SystemDefaultSettings = () => {
                         <input
                           type="checkbox"
                           className="mt-1 shrink-0"
-                          checked={s.allowClientIntradayOnly !== false}
+                          checked={s.defaultIntradayOnly === true}
                           onChange={(e) =>
-                            handleAdminSegDefChange(adminDefExpandedSeg, 'allowClientIntradayOnly', e.target.checked)
+                            handleAdminSegDefChange(adminDefExpandedSeg, 'defaultIntradayOnly', e.target.checked)
                           }
                         />
                         <span>
-                          <span className="text-sm font-medium text-gray-200">Allow users to enable “Intraday only” on the trading panel</span>
+                          <span className="text-sm font-medium text-gray-200">Default intraday-only orders (EOD auto square)</span>
                           <span className="mt-1 block text-xs text-gray-500">
-                            Untick to hide that checkbox for traders (hierarchy admins can override per segment on their Admin settings).
+                            When enabled, new trades in this segment get the intraday-only flag (no trader toggle). Hierarchy admins and user overrides can adjust per segment.
                           </span>
                         </span>
                       </label>

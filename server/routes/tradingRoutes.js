@@ -102,7 +102,8 @@ router.get('/wallet', protect, async (req, res) => {
 // Calculate margin for order (preview) - Uses user's segment and script settings
 router.post('/margin-preview', protect, async (req, res) => {
   try {
-    let leverage = req.body.leverage || 1;
+    // User-selectable leverage removed: margin = tradeValue / segment exposure / 1 (instrument caps still apply).
+    let leverage = 1;
     const { symbol, productType, side, instrumentType, category, segment } = req.body;
     const lotsRaw = req.body.lots;
     const lots = lotsRaw != null && lotsRaw !== '' && Number.isFinite(Number(lotsRaw)) ? Number(lotsRaw) : 1;
@@ -188,8 +189,7 @@ router.post('/margin-preview', protect, async (req, res) => {
     }
     
     // Priority 2: Use segment exposure if no fixed margin
-    // Exposure formula: margin = tradeValue / exposure / leverage
-    // Both exposure and user-selected leverage are applied
+    // Exposure formula: margin = tradeValue / exposure / 1
     const segmentSettingsForMargin = TradeService.applyInstrumentExposureOverrides(
       instrumentDoc,
       segmentSettings
@@ -203,7 +203,6 @@ router.post('/margin-preview', protect, async (req, res) => {
       const exposure = Number.isFinite(exposureNum) && exposureNum > 0 ? exposureNum : 1;
 
       if (exposure > 0) {
-        // Apply both segment exposure AND user-selected leverage
         marginRequired = tradeValue / exposure / leverage;
         marginSource = 'segment_exposure';
       }
@@ -216,10 +215,7 @@ router.post('/margin-preview', protect, async (req, res) => {
       marginSource = 'default_calculated';
     }
     
-    // NOTE: Leverage is now applied correctly:
-    // - For 'default_calculated': leverage is applied inside calculateMargin()
-    // - For 'script_fixed': fixed margin is absolute (admin sets it per lot, no leverage)
-    // - For 'segment_exposure': leverage is applied above (tradeValue / exposure / leverage)
+    // Note: divisor in responses is fixed at 1; segment exposure carries effective leverage from hierarchy/rules.
     
     const baseBrokerage = TradeService.calculateUserBrokerage(segmentSettings, scriptSettings, req.body, lots);
     const extraBrokerage = TradeService.instrumentAdditionalCommission(instrumentDoc, effectiveLots, tradeValue);
@@ -331,7 +327,7 @@ router.post('/margin-preview', protect, async (req, res) => {
       shortfall: totalRequired > availableBalance ? totalRequired - availableBalance : 0,
       exposureIntraday: segmentSettingsForMargin?.exposureIntraday || null,
       exposureCarryForward: segmentSettingsForMargin?.exposureCarryForward || null,
-      allowClientIntradayOnly: segmentSettings?.allowClientIntradayOnly !== false,
+      defaultIntradayOnly: segmentSettings?.defaultIntradayOnly === true,
       breakupQuantity: breakupQuantity > 0 ? breakupQuantity : null,
       maxBid: maxBid > 0 ? maxBid : null
     });

@@ -585,8 +585,8 @@ class TradingService {
       throw new Error(`Trading in ${orderData.segment} segment is not enabled for your account`);
     }
 
-    if (orderData.intradayOnly && segmentSettings.allowClientIntradayOnly === false) {
-      throw new Error('Intraday-only mode is disabled for this segment by your administrator.');
+    if (segmentSettings.defaultIntradayOnly === true) {
+      orderData.productType = 'MIS';
     }
 
     await TradeService.assertCryptoSegmentTradingWindowOpen(user, segmentSettings, orderData.segment);
@@ -761,8 +761,8 @@ class TradingService {
     let marginRequired = 0;
     let usedFixedMargin = false;
     let marginSource = 'calculated';
-    // Option buy requires full premium (no leverage) as per Indian market rules (SEBI/Zerodha)
-    let leverage = isOptionBuy ? 1 : (orderData.leverage || 1);
+    // User multiplier fixed at 1; margin scales with merged segment exposure + instrument rules only
+    let leverage = 1;
     leverage = TradeService.capLeverageFromInstrument(instrument, leverage, isIntraday, isOptionBuy);
     const marginCalc = this.calculateMargin({ ...orderData, quantity: totalQuantity }, user, leverage);
     
@@ -800,8 +800,7 @@ class TradingService {
     }
     
     // Priority 2: Use segment exposure if no fixed margin
-    // Exposure formula: margin = tradeValue / exposure / leverage
-    // Both exposure and user-selected leverage are applied
+    // Exposure formula: margin = tradeValue / exposure / 1
     const segmentSettingsForMargin = TradeService.applyInstrumentExposureOverrides(instrument, segmentSettings);
     if (!usedFixedMargin && segmentSettingsForMargin) {
       const exposureNum = Number(
@@ -812,7 +811,6 @@ class TradingService {
       const exposure = Number.isFinite(exposureNum) && exposureNum > 0 ? exposureNum : 1;
 
       if (exposure > 0) {
-        // Apply both segment exposure AND user-selected leverage
         marginRequired = tradeValue / exposure / leverage;
         marginSource = 'segment_exposure';
         console.log('Order margin from exposure:', { tradeValue, exposure, leverage, marginRequired, isIntraday });
@@ -981,7 +979,7 @@ class TradingService {
       optionType: orderData.optionType,
       side: orderData.side,
       productType: orderData.productType || 'MIS',
-      intradayOnly: orderData.intradayOnly || false,
+      intradayOnly: segmentSettings.defaultIntradayOnly === true,
       orderType: orderData.orderType || 'MARKET',
       quantity: totalQuantity,
       lotSize: lotSize,

@@ -177,6 +177,7 @@ class TradeService {
     exposureIntraday: 10,
     exposureCarryForward: 5,
     allowClientIntradayOnly: true,
+    defaultIntradayOnly: false,
     cryptoSpreadInr: 0,
     cryptoStartTime: '',
     cryptoClosingTime: '',

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { createChart } from 'lightweight-charts';
@@ -7,10 +7,10 @@ import { AUTO_REFRESH_EVENT } from '../lib/autoRefresh';
 import { io } from 'socket.io-client';
 import {
   Search, LogOut, Wallet, RefreshCw, Plus, TrendingUp,
-  ChevronDown, ChevronRight, Settings, Bell, User, X,
+  ChevronRight, Settings, Bell, User, X,
   BarChart2, History, ListOrdered, UserCircle, Menu,
   ArrowDownCircle, ArrowUpCircle, CreditCard, Copy, Check, Building2,
-  Home, ArrowLeft, ClipboardList, Star, Info, ArrowRightLeft, Share2, Timer
+  Home, ArrowLeft, ClipboardList, Star, Info, ArrowRightLeft, Share2
 } from 'lucide-react';
 import MarketWatch from '../components/MarketWatch';
 import ClosedInstrumentsTicker from '../components/ClosedInstrumentsTicker';
@@ -131,14 +131,6 @@ const CRYPTO_LOT_MIN_STEP = 0.25;
 function roundCryptoLotsToStep(n) {
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.round(n / CRYPTO_LOT_MIN_STEP) * CRYPTO_LOT_MIN_STEP;
-}
-
-/** 1..N from Super Admin segment exposure (intraday / carry); null if unset. */
-function leverageChoicesFromSegmentExposure(exposure, cap = 125) {
-  const n = Math.floor(Number(exposure));
-  if (!Number.isFinite(n) || n < 1) return null;
-  const lim = Math.min(n, cap);
-  return Array.from({ length: lim }, (_, i) => i + 1);
 }
 
 /** Path segment for GET /api/binance/candles/:symbol (must not produce e.g. DOGEUSDTUSDT). */
@@ -3794,10 +3786,6 @@ const TradingPanel = ({
   const [productType, setProductType] = useState('MIS');
   const [orderMode, setOrderMode] = useState('MARKET');
   const [inputMode, setInputMode] = useState('lots'); // 'lots' or 'quantity' - default to lots, quantity mode only for futures/equity
-  const [leverage, setLeverage] = useState(1);
-  const [intradayLeverages, setIntradayLeverages] = useState([1, 2, 5, 10]);
-  const [carryForwardLeverages, setCarryForwardLeverages] = useState([1, 2, 5]);
-  const [availableLeverages, setAvailableLeverages] = useState([1, 2, 5, 10]);
   const [marginPreview, setMarginPreview] = useState(null);
   const [marketStatus, setMarketStatus] = useState({ open: true });
   const [loading, setLoading] = useState(false);
@@ -3809,7 +3797,6 @@ const TradingPanel = ({
   const [cryptoAmount, setCryptoAmount] = useState('150');
   const [cryptoInputMode, setCryptoInputMode] = useState('amount'); // 'amount' | 'units' | 'lots' (lots = crypto only)
   const [cryptoLotInput, setCryptoLotInput] = useState('1');
-  const [intradayOnly, setIntradayOnly] = useState(false);
   
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.segment === 'CRYPTO' || instrument?.exchange === 'BINANCE');
   const isForex = isForexInstrument(instrument);
@@ -3876,29 +3863,18 @@ const TradingPanel = ({
   const priceSymbol =
     isCryptoOnly ? '$' : '₹';
 
-  // Fetch available leverages and market status
+  // Market status (Indian book); USD spot is 24/7
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        // Crypto markets are always open
         if (isUsdSpot) {
           setMarketStatus({ open: true, reason: isForex ? 'Forex quotes 24/7' : 'Crypto markets are 24/7' });
-          // Leverage choices for USD spot come from margin-preview (segment exposureIntraday)
-          setAvailableLeverages([1]);
         } else {
-          const [leverageRes, marketRes] = await Promise.all([
-            axios.get('/api/trading/leverages', { headers: { Authorization: `Bearer ${user?.token}` } }),
-            axios.get('/api/trading/market-status', { params: { exchange: instrument?.exchange || 'NSE' } })
-          ]);
-          // Store separate intraday and carryforward leverages
-          setIntradayLeverages(leverageRes.data.intraday || [1, 2, 5, 10]);
-          setCarryForwardLeverages(leverageRes.data.carryForward || [1, 2, 5]);
-          // Set initial available leverages based on current productType
-          const currentLeverages = productType === 'MIS' 
-            ? (leverageRes.data.intraday || [1, 2, 5, 10])
-            : (leverageRes.data.carryForward || [1, 2, 5]);
-          setAvailableLeverages(currentLeverages);
-          setMarketStatus(marketRes.data);
+          const { data } = await axios.get('/api/trading/market-status', {
+            params: { exchange: instrument?.exchange || 'NSE' },
+            headers: { Authorization: `Bearer ${user?.token}` }
+          });
+          setMarketStatus(data);
         }
       } catch (err) {
         console.error('Error fetching settings:', err);
@@ -3906,30 +3882,6 @@ const TradingPanel = ({
     };
     if (user?.token) fetchSettings();
   }, [user?.token, instrument?.exchange, isUsdSpot, isForex]);
-
-  // Update available leverages when productType changes
-  useEffect(() => {
-    if (!isUsdSpot) {
-      const newLeverages = productType === 'MIS' ? intradayLeverages : carryForwardLeverages;
-      setAvailableLeverages(newLeverages);
-      // Reset leverage to 1 if current leverage is not in new list
-      if (!newLeverages.includes(leverage)) {
-        setLeverage(newLeverages[0] || 1);
-      }
-    } else if (isForex && availableLeverages.length > 0 && !availableLeverages.includes(leverage)) {
-      setLeverage(availableLeverages[0] || 1);
-    }
-  }, [productType, intradayLeverages, carryForwardLeverages, isUsdSpot, isCryptoOnly, isForex, availableLeverages, leverage]);
-
-  useEffect(() => {
-    if (isCryptoOnly) setLeverage(1);
-  }, [isCryptoOnly, instrument?.token, instrument?.pair, instrument?.symbol]);
-
-  useEffect(() => {
-    if (marginPreview?.allowClientIntradayOnly === false) {
-      setIntradayOnly(false);
-    }
-  }, [marginPreview?.allowClientIntradayOnly]);
 
   useEffect(() => {
     if (isForex && cryptoInputMode === 'lots') setCryptoInputMode('amount');
@@ -3978,6 +3930,12 @@ const TradingPanel = ({
   const isMCX = instrument?.exchange === 'MCX' || instrument?.segment === 'MCX' || instrument?.displaySegment === 'MCX' ||
                 instrument?.segment === 'MCXFUT' || instrument?.segment === 'MCXOPT';
   const isFnO = isFutures || isOptions || isMCX; // MCX is always lot-based
+
+  useEffect(() => {
+    if (!isUsdSpot && marginPreview?.defaultIntradayOnly && (isFutures || isOptions || isMCX)) {
+      setProductType('MIS');
+    }
+  }, [marginPreview?.defaultIntradayOnly, isUsdSpot, isFutures, isOptions, isMCX]);
 
   // Determine which wallet to use based on instrument type
   const getActiveWallet = () => {
@@ -4073,7 +4031,7 @@ const TradingPanel = ({
           quantity: totalQuantity,
           lotSize: isUsdSpot ? 1 : lotSize,
           price: isUsdSpot ? Number(livePrice) : parseFloat(price),
-          leverage: isCryptoOnly ? 1 : leverage,
+          leverage: 1,
           isCrypto: isCryptoOnly,
           isForex: isForex
         };
@@ -4089,10 +4047,6 @@ const TradingPanel = ({
           headers: { Authorization: `Bearer ${user?.token}` }
         });
         setMarginPreview(data);
-        if (isUsdSpot && isForex) {
-          const fromSeg = leverageChoicesFromSegmentExposure(data?.exposureIntraday);
-          if (fromSeg?.length) setAvailableLeverages(fromSeg);
-        }
       } catch (err) {
         console.error('Margin preview error:', err);
       }
@@ -4100,7 +4054,7 @@ const TradingPanel = ({
 
     const debounce = setTimeout(fetchMarginPreview, 300);
     return () => clearTimeout(debounce);
-  }, [instrument, lots, price, productType, orderType, user, totalQuantity, lotSize, leverage, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice, cryptoInputMode, cryptoLotInput]);
+  }, [instrument, lots, price, productType, orderType, user, totalQuantity, lotSize, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice, cryptoInputMode, cryptoLotInput]);
 
   // Place order
   const handlePlaceOrder = async () => {
@@ -4147,7 +4101,7 @@ const TradingPanel = ({
         price: isUsdSpot ? livePrice : parseFloat(price),
         bidPrice: liveBid,
         askPrice: liveAsk,
-        leverage: isCryptoOnly ? 1 : leverage,
+        leverage: 1,
         stopLoss: stopLoss
           ? isUsdSpot
             ? isCryptoOnly
@@ -4164,7 +4118,6 @@ const TradingPanel = ({
           : null,
         cryptoAmount: isUsdSpot ? cryptoTotalCost : null,
         forexAmount: isForex ? cryptoTotalCost : null,
-        intradayOnly: intradayOnly
       };
       if (!isUsdSpot) {
         orderData.lots = parseInt(lots, 10);
@@ -4411,59 +4364,21 @@ const TradingPanel = ({
         <div>
           <label className="block text-xs text-gray-400 mb-2">Product Type</label>
           
-          {/* Intraday Only Toggle — gated by Super Admin default + hierarchy (allowClientIntradayOnly) */}
-          {!isUsdSpot && (isFutures || isOptions || isMCX) && marginPreview?.allowClientIntradayOnly !== false && (
-            <div className="mb-3 p-3 bg-dark-700 rounded border border-dark-600">
-              <label className="flex items-center justify-between cursor-pointer">
-                <div className="flex items-center gap-2">
-                  <Timer size={16} className="text-orange-400" />
-                  <span className="text-sm font-medium">Intraday Only</span>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={intradayOnly}
-                  onChange={(e) => {
-                    setIntradayOnly(e.target.checked);
-                    if (e.target.checked) {
-                      setProductType('MIS');
-                    }
-                  }}
-                  className="w-5 h-5 rounded"
-                />
-              </label>
-              <p className="text-xs text-gray-500 mt-2">
-                {intradayOnly 
-                  ? 'Auto square-off at 3:30 PM. Manual cancellation allowed.' 
-                  : 'Enable to force intraday trading only (auto square at 3:30 PM)'}
-              </p>
-            </div>
-          )}
-          
           <div className="space-y-2">
-            {getProductTypes().map(pt => {
-              // Disable NRML if intradayOnly is enabled
-              const isDisabled = intradayOnly && pt.value === 'NRML';
-              return (
-                <button
+            {getProductTypes().map(pt => (
+              <button
                   key={pt.value}
-                  onClick={() => !isDisabled && setProductType(pt.value)}
-                  disabled={isDisabled}
+                  onClick={() => setProductType(pt.value)}
                   className={`w-full text-left px-3 py-2 rounded border transition ${
                     productType === pt.value 
                       ? 'border-green-500 bg-green-500/10' 
-                      : isDisabled
-                      ? 'border-dark-600 bg-dark-700 text-gray-600 cursor-not-allowed'
                       : 'border-dark-600 hover:border-dark-500'
                   }`}
                 >
                   <div className="font-medium text-sm">{pt.label}</div>
                   <div className="text-xs text-gray-500">{pt.desc}</div>
-                  {isDisabled && (
-                    <div className="text-xs text-orange-400 mt-1">Disabled (Intraday Only mode)</div>
-                  )}
-                </button>
-              );
-            })}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -4497,40 +4412,15 @@ const TradingPanel = ({
           </div>
         </div>
 
-        {/* Leverage: user multiplier on top of segment exposure from defaults + hierarchy + instrument Rules */}
-        {!isCryptoOnly && (!isUsdSpot || isForex) && (
-          <div>
-            {!isUsdSpot && marginPreview?.exposureIntraday != null && (
-              <div className="text-xs text-cyan-400/95 mb-1.5">
-                Segment exposure (MIS ×{marginPreview.exposureIntraday ?? '—'} · CF ×{marginPreview.exposureCarryForward ?? '—'}) applies to margin below
-              </div>
-            )}
-            <label className="block text-xs text-gray-400 mb-2">
-              Leverage
-              {isUsdSpot && isForex && marginPreview?.exposureIntraday != null && (
-                <span className="text-gray-500 font-normal"> (max {marginPreview.exposureIntraday}× segment)</span>
-              )}
-            </label>
-            <div className="flex gap-1 flex-wrap">
-              {availableLeverages.map(lev => (
-                <button
-                  key={lev}
-                  onClick={() => setLeverage(lev)}
-                  className={`px-3 py-2 rounded text-sm font-medium transition ${
-                    leverage === lev 
-                      ? 'bg-blue-600 text-white' 
-                      : 'bg-dark-700 text-gray-400 hover:bg-dark-600'
-                  }`}
-                >
-                  {lev}x
-                </button>
-              ))}
-            </div>
-            <div className="text-xs text-gray-500 mt-1">
-              {isUsdSpot && isForex
-                ? 'Options match Super Admin FOREX intraday exposure; higher × = less margin.'
-                : 'Higher leverage = Lower margin required, Higher risk'}
-            </div>
+        {!isUsdSpot && marginPreview?.exposureIntraday != null && (
+          <div className="text-xs text-cyan-400/95 mb-2">
+            Segment exposure (MIS ×{marginPreview.exposureIntraday ?? '—'} · CF ×{marginPreview.exposureCarryForward ?? '—'}) drives margin below
+          </div>
+        )}
+        {isUsdSpot && isForex && marginPreview?.exposureIntraday != null && (
+          <div className="text-xs text-cyan-400/95 mb-2">
+            Segment exposure MIS ×{marginPreview.exposureIntraday ?? '—'}
+            {marginPreview?.exposureCarryForward != null && ` · CF ×${marginPreview.exposureCarryForward}`}; margin follows broker hierarchy + instrument rules only
           </div>
         )}
 
@@ -4893,12 +4783,14 @@ const TradingPanel = ({
                   ₹{activeWallet.usedMargin.toLocaleString()}
                 </span>
               </div>
+              {(marginPreview?.exposureIntraday != null || marginPreview?.exposureCarryForward != null) && (
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Leverage</span>
-                <span className="text-blue-400 font-medium">
-                  {marginPreview?.leverage || leverage || 1}x
+                <span className="text-gray-400">Segment exposure</span>
+                <span className="text-cyan-400 font-medium text-xs text-right">
+                  MIS ×{marginPreview.exposureIntraday ?? '—'} · CF ×{marginPreview.exposureCarryForward ?? '—'}
                 </span>
               </div>
+              )}
               <div className="flex justify-between text-sm border-t border-dark-600 pt-2">
                 <span className="text-gray-400">Available</span>
                 <span className="text-green-400 font-medium">
@@ -8137,7 +8029,6 @@ const BuySellModal = ({
   const [limitPrice, setLimitPrice] = useState('');
   const [productType, setProductType] = useState('MIS');
   const [orderPriceType, setOrderPriceType] = useState('MARKET');
-  const [leverage, setLeverage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -8257,37 +8148,10 @@ const BuySellModal = ({
     ? parseFloat(quantity || 0.01)
     : (isMCX ? parseFloat(quantity || 1) : (isLotBased && (quantityMode === 'lot' || isOptions) ? parseFloat(quantity || 1) * lotSize : parseFloat(quantity || 1)));
   const orderValue = ltp * totalQuantity;
-  
-  // Calculate margin required with leverage (fallback before margin-preview returns)
-  const effLeverage = isUsdSpot && isCryptoOnly ? 1 : leverage;
-  const marginRequired = isUsdSpot ? (orderValue / effLeverage) : orderValue;
-  const buyingPower = activeWallet.available * (isUsdSpot ? effLeverage : leverage);
+  const marginRequired = orderValue;
 
   const commissionPerLot = 10;
   const totalCommission = parseFloat(quantity || 0.01) * commissionPerLot;
-
-  const leverageOptions = useMemo(() => {
-    const isCarry = productType === 'NRML' || productType === 'CNC';
-    const exp = isCarry ? marginPreview?.exposureCarryForward : marginPreview?.exposureIntraday;
-    const fromSeg = leverageChoicesFromSegmentExposure(exp);
-    return fromSeg?.length ? fromSeg : [1, 2, 5, 10, 25, 50, 100];
-  }, [marginPreview?.exposureIntraday, marginPreview?.exposureCarryForward, productType]);
-
-  const maxLeverageChoice = useMemo(
-    () => (leverageOptions.length ? Math.max(...leverageOptions) : 100),
-    [leverageOptions]
-  );
-
-  useEffect(() => {
-    if (isCryptoOnly) {
-      setLeverage(1);
-      return;
-    }
-    if (!leverageOptions.length) return;
-    const maxL = Math.max(...leverageOptions);
-    if (leverage > maxL) setLeverage(maxL);
-    else if (!leverageOptions.includes(leverage)) setLeverage(leverageOptions[0] || 1);
-  }, [leverageOptions, leverage, isCryptoOnly]);
 
   const estBrokerageInr = Number.isFinite(Number(marginPreview?.brokerage))
     ? Number(marginPreview.brokerage)
@@ -8320,7 +8184,7 @@ const BuySellModal = ({
           lots: parseFloat(quantity),
           lotSize: lotSize,
           price: parseFloat(ltp),
-          leverage: isCryptoOnly ? 1 : leverage,
+          leverage: 1,
           isCrypto: isCryptoOnly,
           isForex: isForex
         }, {
@@ -8334,7 +8198,7 @@ const BuySellModal = ({
 
     const debounce = setTimeout(fetchMarginPreview, 300);
     return () => clearTimeout(debounce);
-  }, [instrument, quantity, ltp, productType, orderType, user, totalQuantity, lotSize, leverage, isForex, isCryptoOnly]);
+  }, [instrument, quantity, ltp, productType, orderType, user, totalQuantity, lotSize, isForex, isCryptoOnly]);
 
   // Product types based on segment
   const productTypes = isUsdSpot
@@ -8425,7 +8289,7 @@ const BuySellModal = ({
         price: ltp,
         bidPrice: liveBid,
         askPrice: liveAsk,
-        leverage: isCryptoOnly ? 1 : (isUsdSpot ? leverage : 1),
+        leverage: 1,
         takeProfit: takeProfit
           ? isUsdSpot
             ? isCryptoOnly
@@ -8633,45 +8497,22 @@ const BuySellModal = ({
           </div>
 
           {!isCryptoOnly && (
-            <>
-          {/* Leverage Dropdown — options from segment exposure (Super Admin CRYPTO/FOREX) via margin-preview */}
-          <div className="px-3 pb-3">
-            <div className="text-sm text-gray-400 mb-2">
-              Leverage (1–{maxLeverageChoice}×)
+            <div className="px-3 pb-3">
               {(marginPreview?.exposureIntraday != null || marginPreview?.exposureCarryForward != null) && (
-                <span className="text-gray-500 block text-[11px] mt-0.5">
-                  Segment exposure: intraday ×{marginPreview?.exposureIntraday ?? '—'}
-                  {productType === 'NRML' || productType === 'CNC'
-                    ? ` · carry ×${marginPreview?.exposureCarryForward ?? '—'}`
-                    : ''}
-                </span>
+                <div className="text-xs text-cyan-400/90 mb-2">
+                  Segment exposure: MIS ×{marginPreview?.exposureIntraday ?? '—'}
+                  {marginPreview?.exposureCarryForward != null && ` · CF ×${marginPreview.exposureCarryForward}`}; margin follows broker hierarchy + instrument rules only
+                </div>
               )}
-            </div>
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <select
-                  value={leverage}
-                  onChange={(e) => setLeverage(parseInt(e.target.value, 10))}
-                  className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 appearance-none cursor-pointer"
-                >
-                  {leverageOptions.map(lev => (
-                    <option key={lev} value={lev}>1:{lev}</option>
-                  ))}
-                </select>
-                <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <div className="flex gap-2 items-stretch">
+                <div className="flex-1 bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-green-400 font-medium text-center">
+                  Est. margin ₹{estMarginInr.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                </div>
               </div>
-              <div className="bg-[#1a1a1a] border border-gray-700 rounded-lg px-4 py-3 text-green-400 font-medium min-w-[90px] text-center">
-                ₹{estMarginInr.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              <div className="text-xs text-gray-500 mt-2">
+                Wallet: ₹{activeWallet.available.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
               </div>
             </div>
-            <div className="text-xs text-gray-500 mt-2">
-              Margin (est. ₹) | Free: ₹{activeWallet.available.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-            </div>
-            <div className="text-xs text-blue-400 mt-1">
-              Buying Power (×{leverage}): ₹{buyingPower.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-            </div>
-          </div>
-            </>
           )}
 
           {/* Take Profit Section */}
