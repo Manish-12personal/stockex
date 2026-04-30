@@ -79,3 +79,37 @@ export async function atomicGamesWalletDebit(User, userId, amount, extraInc = {}
   );
   return updated?.gamesWallet || null;
 }
+
+/**
+ * Wallet transfer out of games: allow full stamped balance; clamp usedMargin to the new balance.
+ *
+ * @returns {Object|null} updated gamesWallet or null if insufficient balance
+ */
+export async function atomicGamesWalletDebitForTransfer(User, userId, amount) {
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) return null;
+
+  const updated = await User.findOneAndUpdate(
+    { _id: userId, 'gamesWallet.balance': { $gte: amt } },
+    [
+      {
+        $set: {
+          'gamesWallet.balance': {
+            $subtract: [{ $toDouble: { $ifNull: ['$gamesWallet.balance', 0] } }, amt],
+          },
+          'gamesWallet.usedMargin': {
+            $min: [
+              { $toDouble: { $ifNull: ['$gamesWallet.usedMargin', 0] } },
+              {
+                $subtract: [{ $toDouble: { $ifNull: ['$gamesWallet.balance', 0] } }, amt],
+              },
+            ],
+          },
+        },
+      },
+    ],
+    { new: true, select: 'gamesWallet' }
+  );
+
+  return updated?.gamesWallet || null;
+}

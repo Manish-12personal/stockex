@@ -1,6 +1,16 @@
 import User from '../models/User.js';
 import WalletLedger from '../models/WalletLedger.js';
-import { atomicGamesWalletUpdate, atomicGamesWalletDebit } from '../utils/gamesWallet.js';
+import {
+  atomicGamesWalletUpdate,
+  atomicGamesWalletDebitForTransfer,
+} from '../utils/gamesWallet.js';
+import {
+  atomicMarginSegmentDebitForTransfer,
+  getStampedSegmentBalance,
+} from '../utils/segmentWalletDebit.js';
+
+/** Source wallets that debit full stamped balance and clamp usedMargin on transfer out. */
+const MARGIN_SEGMENT_SOURCES = ['mcxWallet', 'cryptoWallet', 'forexWallet'];
 
 /**
  * Wallet Transfer Service
@@ -35,6 +45,23 @@ class WalletTransferService {
         return (user.gamesWallet?.balance || 0) - (user.gamesWallet?.usedMargin || 0);
       default:
         return 0;
+    }
+  }
+
+  /**
+   * Balance user can move in one inter-wallet transfer:
+   * games + segment wallets → full stamped balance; main + trading account → existing free-balance rules.
+   */
+  static getTransferSourceBalance(user, walletType) {
+    switch (walletType) {
+      case 'gamesWallet':
+        return Number(user?.gamesWallet?.balance) || 0;
+      case 'mcxWallet':
+      case 'cryptoWallet':
+      case 'forexWallet':
+        return getStampedSegmentBalance(user, walletType);
+      default:
+        return this.getWalletBalance(user, walletType);
     }
   }
 
@@ -90,10 +117,12 @@ class WalletTransferService {
       return { valid: false, error: 'Transfer amount must be greater than 0' };
     }
 
-    // Check if source wallet has sufficient balance
-    const sourceBalance = this.getWalletBalance(user, sourceWallet);
+    const sourceBalance = this.getTransferSourceBalance(user, sourceWallet);
     if (sourceBalance < amount) {
-      return { valid: false, error: `Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Available: ₹${sourceBalance.toLocaleString()}` };
+      return {
+        valid: false,
+        error: `Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Balance: ₹${sourceBalance.toLocaleString()}`,
+      };
     }
 
     return { valid: true };
@@ -188,50 +217,68 @@ class WalletTransferService {
       const sourceBalanceField = this.getBalanceFieldName(sourceWallet);
       const targetBalanceField = this.getBalanceFieldName(targetWallet);
 
-      const currentSourceBalance = this.getWalletBalance(freshUser, sourceWallet);
+      const currentSourceBalance = this.getTransferSourceBalance(freshUser, sourceWallet);
       if (currentSourceBalance < amount) {
-        throw new Error(`Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Available: ₹${currentSourceBalance.toLocaleString()}`);
+        throw new Error(
+          `Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Balance: ₹${currentSourceBalance.toLocaleString()}`
+        );
       }
 
-      const updates = {};
-      updates[sourceBalanceField] = -amount;
-      updates[targetBalanceField] = amount;
+      let finalUser;
 
-      if (this._shouldIncDepositTotal(targetWallet)) {
-        updates[`${targetWallet}.depositTotal`] = amount;
-      }
+      if (MARGIN_SEGMENT_SOURCES.includes(sourceWallet)) {
+        const debitUser = await atomicMarginSegmentDebitForTransfer(User, user._id, sourceWallet, amount);
+        if (!debitUser) {
+          throw new Error(`Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}`);
+        }
 
-      const finalUser = await User.findByIdAndUpdate(
-        user._id,
-        { $inc: updates },
-        { new: true }
-      );
-
-      if (!finalUser) {
-        throw new Error('Failed to update wallet balances');
-      }
-
-      const afterSource = this._balanceAfterSourceDebit(finalUser, sourceWallet);
-      const usedMargin = finalUser.wallet?.usedMargin || 0;
-
-      const rollbackMirror = async () => {
-        const rollbackUpdates = {};
-        rollbackUpdates[sourceBalanceField] = amount;
-        rollbackUpdates[targetBalanceField] = -amount;
+        const targetInc = {};
+        targetInc[targetBalanceField] = amount;
         if (this._shouldIncDepositTotal(targetWallet)) {
-          rollbackUpdates[`${targetWallet}.depositTotal`] = -amount;
+          targetInc[`${targetWallet}.depositTotal`] = amount;
         }
-        await User.findByIdAndUpdate(user._id, { $inc: rollbackUpdates });
-      };
 
-      if (sourceWallet === 'tradingAccount') {
-        if (afterSource < usedMargin) {
-          await rollbackMirror();
-          throw new Error('Insufficient free margin in Trading Account for this transfer');
+        finalUser = await User.findByIdAndUpdate(user._id, { $inc: targetInc }, { new: true });
+        if (!finalUser) {
+          throw new Error('Failed to update target wallet');
         }
-      } else if (afterSource < 0) {
-        await rollbackMirror();
-        throw new Error('Insufficient balance after transfer');
+      } else {
+        const updates = {};
+        updates[sourceBalanceField] = -amount;
+        updates[targetBalanceField] = amount;
+
+        if (this._shouldIncDepositTotal(targetWallet)) {
+          updates[`${targetWallet}.depositTotal`] = amount;
+        }
+
+        finalUser = await User.findByIdAndUpdate(user._id, { $inc: updates }, { new: true });
+
+        if (!finalUser) {
+          throw new Error('Failed to update wallet balances');
+        }
+
+        const afterSource = this._balanceAfterSourceDebit(finalUser, sourceWallet);
+        const usedMargin = finalUser.wallet?.usedMargin || 0;
+
+        const rollbackMirror = async () => {
+          const rollbackUpdates = {};
+          rollbackUpdates[sourceBalanceField] = amount;
+          rollbackUpdates[targetBalanceField] = -amount;
+          if (this._shouldIncDepositTotal(targetWallet)) {
+            rollbackUpdates[`${targetWallet}.depositTotal`] = -amount;
+          }
+          await User.findByIdAndUpdate(user._id, { $inc: rollbackUpdates });
+        };
+
+        if (sourceWallet === 'tradingAccount') {
+          if (afterSource < usedMargin) {
+            await rollbackMirror();
+            throw new Error('Insufficient free margin in Trading Account for this transfer');
+          }
+        } else if (afterSource < 0) {
+          await rollbackMirror();
+          throw new Error('Insufficient balance after transfer');
+        }
       }
 
       const ledgerSourceAfter = this._balanceAfterSourceDebit(finalUser, sourceWallet);
@@ -294,8 +341,7 @@ class WalletTransferService {
   static async executeGamesWalletTransfer(user, sourceWallet, targetWallet, amount, transferId, remarks, performedBy) {
     try {
       if (sourceWallet === 'gamesWallet') {
-        // Debit from games wallet
-        const gamesWalletDebit = await atomicGamesWalletDebit(User, user._id, amount);
+        const gamesWalletDebit = await atomicGamesWalletDebitForTransfer(User, user._id, amount);
         if (!gamesWalletDebit) {
           throw new Error('Insufficient balance in games wallet');
         }
@@ -370,42 +416,53 @@ class WalletTransferService {
           targetBalance: ledgerTargetAfter
         };
       } else {
-        // Get current source balance
         const freshUser = await User.findById(user._id);
         const sourceBalanceField = this.getBalanceFieldName(sourceWallet);
 
-        const currentSourceBalance = this.getWalletBalance(freshUser, sourceWallet);
+        const currentSourceBalance = this.getTransferSourceBalance(freshUser, sourceWallet);
 
         if (currentSourceBalance < amount) {
-          throw new Error(`Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Available: ₹${currentSourceBalance.toLocaleString()}`);
+          throw new Error(
+            `Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}. Balance: ₹${currentSourceBalance.toLocaleString()}`
+          );
         }
 
-        const sourceUpdate = {};
-        sourceUpdate[sourceBalanceField] = -amount;
+        let updatedUser;
 
-        const updatedUser = await User.findByIdAndUpdate(
-          user._id,
-          { $inc: sourceUpdate },
-          { new: true }
-        );
-
-        if (!updatedUser) {
-          throw new Error('Failed to debit source wallet');
-        }
-
-        const afterSource = this._balanceAfterSourceDebit(updatedUser, sourceWallet);
-        const um = updatedUser.wallet?.usedMargin || 0;
-
-        if (sourceWallet === 'tradingAccount') {
-          if (afterSource < um) {
-            await User.findByIdAndUpdate(user._id, { $inc: { [sourceBalanceField]: amount } });
-            throw new Error('Insufficient free margin in Trading Account for this transfer');
+        if (MARGIN_SEGMENT_SOURCES.includes(sourceWallet)) {
+          const debited = await atomicMarginSegmentDebitForTransfer(User, user._id, sourceWallet, amount);
+          if (!debited) {
+            throw new Error(`Insufficient balance in ${this.getWalletDisplayName(sourceWallet)}`);
           }
-        } else if (afterSource < 0) {
-          const rollbackUpdates = {};
-          rollbackUpdates[sourceBalanceField] = amount;
-          await User.findByIdAndUpdate(user._id, { $inc: rollbackUpdates });
-          throw new Error('Insufficient balance after transfer');
+          updatedUser = await User.findById(user._id);
+        } else {
+          const sourceUpdate = {};
+          sourceUpdate[sourceBalanceField] = -amount;
+
+          updatedUser = await User.findByIdAndUpdate(
+            user._id,
+            { $inc: sourceUpdate },
+            { new: true }
+          );
+
+          if (!updatedUser) {
+            throw new Error('Failed to debit source wallet');
+          }
+
+          const afterSource = this._balanceAfterSourceDebit(updatedUser, sourceWallet);
+          const um = updatedUser.wallet?.usedMargin || 0;
+
+          if (sourceWallet === 'tradingAccount') {
+            if (afterSource < um) {
+              await User.findByIdAndUpdate(user._id, { $inc: { [sourceBalanceField]: amount } });
+              throw new Error('Insufficient free margin in Trading Account for this transfer');
+            }
+          } else if (afterSource < 0) {
+            const rollbackUpdates = {};
+            rollbackUpdates[sourceBalanceField] = amount;
+            await User.findByIdAndUpdate(user._id, { $inc: rollbackUpdates });
+            throw new Error('Insufficient balance after transfer');
+          }
         }
 
         const newSourceBalance = this._balanceAfterSourceDebit(updatedUser, sourceWallet);
@@ -459,8 +516,8 @@ class WalletTransferService {
           success: true,
           transferId,
           message: `Successfully transferred ₹${amount.toLocaleString()} from ${this.getWalletDisplayName(sourceWallet)} to ${this.getWalletDisplayName(targetWallet)}`,
-          sourceBalance: this.getWalletBalance(updatedUser, sourceWallet),
-          targetBalance: finalUser?.gamesWallet?.balance || 0
+          sourceBalance: this.getTransferSourceBalance(updatedUser, sourceWallet),
+          targetBalance: finalUser?.gamesWallet?.balance || 0,
         };
       }
     } catch (error) {

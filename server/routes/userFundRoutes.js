@@ -885,40 +885,74 @@ router.post('/games-transfer', protectUser, async (req, res) => {
       user.wallet.cashBalance = mainWalletBalance;
     }
     const gamesBalance = user.gamesWallet?.balance || 0;
-    const gamesUsedMargin = user.gamesWallet?.usedMargin || 0;
-    const availableGamesBalance = gamesBalance - gamesUsedMargin;
-    
+
+    let updated;
     if (direction === 'toGames') {
-      // Transfer from Main Wallet to Games Account
       if (amount > mainWalletBalance) {
-        return res.status(400).json({ message: `Insufficient balance in Main Wallet. Available: ₹${mainWalletBalance.toLocaleString()}` });
+        return res.status(400).json({
+          message: `Insufficient balance in Main Wallet. Available: ₹${mainWalletBalance.toLocaleString()}`,
+        });
       }
+      updated = await User.findOneAndUpdate(
+        { _id: req.user._id },
+        {
+          $inc: {
+            'wallet.cashBalance': -amount,
+            'wallet.balance': -amount,
+            'gamesWallet.balance': amount,
+          },
+        },
+        { new: true, select: 'wallet.cashBalance gamesWallet.balance' }
+      );
     } else {
-      // Transfer from Games Account to Main Wallet — free funds only
-      if (amount > availableGamesBalance) {
-        return res.status(400).json({ 
-          message: `Insufficient free funds. Available for withdrawal: ₹${availableGamesBalance.toLocaleString()}. In play: ₹${gamesUsedMargin.toLocaleString()}` 
+      if (amount > gamesBalance) {
+        return res.status(400).json({
+          message: `Insufficient balance in Games account. Balance: ₹${gamesBalance.toLocaleString()}`,
+        });
+      }
+      updated = await User.findOneAndUpdate(
+        {
+          _id: req.user._id,
+          'gamesWallet.balance': { $gte: amount },
+        },
+        [
+          {
+            $set: {
+              'wallet.cashBalance': {
+                $add: [{ $toDouble: { $ifNull: ['$wallet.cashBalance', 0] } }, amount],
+              },
+              'wallet.balance': {
+                $add: [{ $toDouble: { $ifNull: ['$wallet.balance', 0] } }, amount],
+              },
+              'gamesWallet.balance': {
+                $subtract: [{ $toDouble: { $ifNull: ['$gamesWallet.balance', 0] } }, amount],
+              },
+              'gamesWallet.usedMargin': {
+                $min: [
+                  { $toDouble: { $ifNull: ['$gamesWallet.usedMargin', 0] } },
+                  {
+                    $subtract: [{ $toDouble: { $ifNull: ['$gamesWallet.balance', 0] } }, amount],
+                  },
+                ],
+              },
+            },
+          },
+        ],
+        { new: true, select: 'wallet.cashBalance gamesWallet.balance' }
+      );
+      if (!updated) {
+        return res.status(400).json({
+          message: `Insufficient balance in Games account. Balance: ₹${gamesBalance.toLocaleString()}`,
         });
       }
     }
 
-    const sign = direction === 'toGames' ? 1 : -1;
-
-    // Atomic $inc — never overwrites concurrent game credits / debits
-    const updated = await User.findOneAndUpdate(
-      { _id: req.user._id },
-      {
-        $inc: {
-          'wallet.cashBalance': -sign * amount,
-          'wallet.balance': -sign * amount,
-          'gamesWallet.balance': sign * amount,
-        }
-      },
-      { new: true, select: 'wallet.cashBalance gamesWallet.balance' }
-    );
-
-    const newCashBalance = updated?.wallet?.cashBalance ?? (mainWalletBalance - sign * amount);
-    const newGamesBalance = updated?.gamesWallet?.balance ?? (gamesBalance + sign * amount);
+    const newCashBalance =
+      updated?.wallet?.cashBalance ??
+      (direction === 'toGames' ? mainWalletBalance - amount : mainWalletBalance + amount);
+    const newGamesBalance =
+      updated?.gamesWallet?.balance ??
+      (direction === 'toGames' ? gamesBalance + amount : gamesBalance - amount);
 
     // Create ledger entry for the transfer
     const description = direction === 'toGames' 
