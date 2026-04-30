@@ -50,6 +50,7 @@ const MCX_FUT_BASES_DESC = [
   'GOLDGUINEA',
   'GOLDPETAL',
   'GOLDM',
+  'GOLDTEN',
   'GOLD',
   'SILVERM',
   'SILVERMIC',
@@ -984,7 +985,7 @@ router.post('/seed-mcx', protectAdmin, superAdminOnly, async (req, res) => {
     const mcxFutures = allInstruments.filter(isKiteMcxFuturesRow);
     
     // Group by tradingsymbol base (GOLD, SILVER, CRUDEOIL, etc.)
-    const mcxSymbols = ['GOLD', 'GOLDM', 'SILVER', 'SILVERM', 'CRUDEOIL', 'CRUDEOILM', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'NICKEL'];
+    const mcxSymbols = ['GOLD', 'GOLDM', 'GOLDTEN', 'SILVER', 'SILVERM', 'CRUDEOIL', 'CRUDEOILM', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'NICKEL'];
     
     const Instrument = (await import('../models/Instrument.js')).default;
     let added = 0;
@@ -997,7 +998,7 @@ router.post('/seed-mcx', protectAdmin, superAdminOnly, async (req, res) => {
         .filter(
           (i) =>
             i.tradingsymbol &&
-            i.tradingsymbol.startsWith(baseSymbol) &&
+            mcxFuturesBaseFromKite(i.tradingsymbol) === baseSymbol &&
             !i.tradingsymbol.includes('MINI') &&
             i.expiry &&
             kolkataCalendarDateString(new Date(i.expiry)) >= todayYmdSeed
@@ -1141,7 +1142,7 @@ router.post('/sync-lot-sizes', protectAdmin, superAdminOnly, async (req, res) =>
     
     // MCX lot sizes - fallback when Zerodha doesn't provide correct lot size
     const MCX_LOT_SIZES = {
-      'GOLDM': 10, 'GOLDGUINEA': 1, 'GOLDPETAL': 1, 'GOLD': 100,
+      'GOLDM': 10, 'GOLDGUINEA': 1, 'GOLDPETAL': 1, 'GOLDTEN': 100, 'GOLD': 100,
       'SILVERM': 5, 'SILVERMIC': 1, 'SILVER': 30,
       'CRUDEOILM': 10, 'CRUDEOIL': 100,
       'NATURALGAS': 1250, 'COPPER': 2500, 'ZINC': 5000,
@@ -1279,6 +1280,7 @@ router.post('/fix-mcx-lot-sizes', protectAdmin, superAdminOnly, async (req, res)
     // MCX lot size mapping - mini variants first
     const mcxLotSizes = [
       { pattern: /GOLDM/i, lotSize: 10 },
+      { pattern: /GOLDTEN/i, lotSize: 100 },
       { pattern: /GOLDGUINEA/i, lotSize: 1 },
       { pattern: /GOLDPETAL/i, lotSize: 1 },
       { pattern: /SILVERM/i, lotSize: 5 },
@@ -1639,11 +1641,11 @@ router.post('/sync-all-instruments', protectAdmin, superAdminOnly, async (req, r
     // 5. MCX Commodities
     const mcxFutures = allInstruments.filter(isKiteMcxFuturesRow);
     
-    const mcxSymbols = ['GOLD', 'GOLDM', 'SILVER', 'SILVERM', 'CRUDEOIL', 'CRUDEOILM', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'NICKEL'];
+    const mcxSymbols = ['GOLD', 'GOLDM', 'GOLDTEN', 'SILVER', 'SILVERM', 'CRUDEOIL', 'CRUDEOILM', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'NICKEL'];
     
     for (const baseSymbol of mcxSymbols) {
       const contracts = mcxFutures.filter(i => 
-        i.tradingsymbol && i.tradingsymbol.startsWith(baseSymbol)
+        i.tradingsymbol && mcxFuturesBaseFromKite(i.tradingsymbol) === baseSymbol
       ).sort((a, b) => new Date(a.expiry) - new Date(b.expiry));
       
       if (contracts.length > 0) {
@@ -1991,13 +1993,14 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
       }
     }
     
-    const mcxPriority = ['GOLD', 'GOLDM', 'SILVER', 'SILVERM', 'CRUDEOIL', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'NICKEL'];
+    const mcxPriority = ['GOLD', 'GOLDM', 'GOLDTEN', 'SILVER', 'SILVERM', 'CRUDEOIL', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'NICKEL'];
     
     // MCX lot sizes - fallback when Zerodha doesn't provide correct lot size
     const MCX_LOT_SIZES = {
       'GOLDM': 10,
       'GOLDGUINEA': 1,
       'GOLDPETAL': 1,
+      'GOLDTEN': 100,
       'GOLD': 100,
       'SILVERM': 5,
       'SILVERMIC': 1,
@@ -2433,12 +2436,22 @@ router.post('/sync-all-nse', protectAdmin, superAdminOnly, async (req, res) => {
     
     // ============ 4. MCX COMMODITIES ============
     const mcxFutures = allInstruments.filter(isKiteMcxFuturesRow);
-    
-    // Group by base symbol and get nearest expiry
+    const todayYmdMcx = kolkataCalendarDateString(new Date());
+    const mcxFuturesActive = mcxFutures.filter((fut) => {
+      if (!fut.expiry) return false;
+      const e = new Date(fut.expiry);
+      if (Number.isNaN(e.getTime())) return false;
+      return kolkataCalendarDateString(e) >= todayYmdMcx;
+    });
+
     const mcxBySymbol = {};
-    for (const fut of mcxFutures) {
-      const baseSymbol = fut.name || fut.tradingsymbol.replace(/\d+[A-Z]+FUT$/, '');
-      if (!mcxBySymbol[baseSymbol] || new Date(fut.expiry) < new Date(mcxBySymbol[baseSymbol].expiry)) {
+    for (const fut of mcxFuturesActive) {
+      const baseSymbol = mcxFuturesBaseFromKite(fut.tradingsymbol);
+      if (!baseSymbol) continue;
+      if (
+        !mcxBySymbol[baseSymbol] ||
+        new Date(fut.expiry) < new Date(mcxBySymbol[baseSymbol].expiry)
+      ) {
         mcxBySymbol[baseSymbol] = fut;
       }
     }
@@ -2446,7 +2459,7 @@ router.post('/sync-all-nse', protectAdmin, superAdminOnly, async (req, res) => {
     console.log(`Found ${Object.keys(mcxBySymbol).length} unique MCX commodities`);
     
     // Priority order for MCX
-    const mcxPriority = ['GOLD', 'GOLDM', 'SILVER', 'SILVERM', 'CRUDEOIL', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'NICKEL'];
+    const mcxPriority = ['GOLD', 'GOLDM', 'GOLDTEN', 'SILVER', 'SILVERM', 'CRUDEOIL', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'NICKEL'];
     
     for (const [baseSymbol, contract] of Object.entries(mcxBySymbol)) {
       try {
