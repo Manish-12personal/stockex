@@ -1703,85 +1703,102 @@ router.post('/sync-all-instruments', protectAdmin, superAdminOnly, async (req, r
   }
 });
 
-// Reset instruments and sync fresh from Zerodha
-router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) => {
-  try {
-    if (!zerodhaSession.accessToken) {
-      return res.status(401).json({ message: 'Not logged in to Zerodha. Please connect first.' });
-    }
-    
-    const Instrument = (await import('../models/Instrument.js')).default;
+// Reset instruments and sync fresh from Zerodha (background job; avoids Cloudflare 524; fetch-before-delete)
+const ZERODHA_RESET_INSERT_CHUNK = Math.min(
+  2000,
+  Math.max(200, parseInt(process.env.ZERODHA_RESET_INSERT_CHUNK || '800', 10)),
+);
 
-    // Preserve super-admin / per-instrument config before wipe (tradingDefaults, visibility, circuit, etc.)
-    const existingPreReset = await Instrument.find({}).lean();
-    const preserveByToken = new Map();
-    const preserveByExchangeSymbol = new Map();
-    for (const doc of existingPreReset) {
-      if (doc.token != null) preserveByToken.set(String(doc.token), doc);
-      const exSym = exchangeSymbolPreserveKey(doc);
-      if (exSym) preserveByExchangeSymbol.set(exSym, doc);
-    }
-    const withTradingDefaults = existingPreReset.filter(
-      (d) => d?.tradingDefaults != null && typeof d.tradingDefaults === 'object'
-    ).length;
+let zerodhaResetSyncJob = {
+  status: 'idle',
+  message: '',
+  error: '',
+  startedAt: null,
+  finishedAt: null,
+  result: null,
+};
 
-    const deleteResult = await Instrument.deleteMany({});
-    console.log(
-      `Deleted ${deleteResult.deletedCount} instruments; preserved admin snapshots: ${preserveByToken.size} by token, ${preserveByExchangeSymbol.size} by exchange+symbol (${withTradingDefaults} rows had tradingDefaults)`
+router.get('/reset-and-sync/status', protectAdmin, superAdminOnly, (req, res) => {
+  res.json(zerodhaResetSyncJob);
+});
+
+async function runZerodhaResetAndSyncJob() {
+  const Instrument = (await import('../models/Instrument.js')).default;
+  const apiKey = process.env.ZERODHA_API_KEY;
+  if (!apiKey) {
+    throw new Error('ZERODHA_API_KEY is not set');
+  }
+  if (!zerodhaSession.accessToken) {
+    throw new Error('Not logged in to Zerodha. Please connect first.');
+  }
+
+  const existingPreReset = await Instrument.find({}).lean();
+  const preserveByToken = new Map();
+  const preserveByExchangeSymbol = new Map();
+  for (const doc of existingPreReset) {
+    if (doc.token != null) preserveByToken.set(String(doc.token), doc);
+    const exSym = exchangeSymbolPreserveKey(doc);
+    if (exSym) preserveByExchangeSymbol.set(exSym, doc);
+  }
+  const withTradingDefaults = existingPreReset.filter(
+    (d) => d?.tradingDefaults != null && typeof d.tradingDefaults === 'object'
+  ).length;
+
+  console.log('Downloading ALL instruments from Zerodha...');
+  const response = await axios.get('https://api.kite.trade/instruments', {
+    responseType: 'text',
+    headers: {
+      'X-Kite-Version': '3',
+      Authorization: `token ${apiKey}:${zerodhaSession.accessToken}`,
+    },
+  });
+
+  const csvText = typeof response.data === 'string' ? response.data : String(response.data ?? '');
+  const lines = csvText.split('\n');
+  const headers = parseCSVLine(lines[0]);
+
+  const allInstruments = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+
+    const values = parseCSVLine(lines[i]);
+    const inst = {};
+    headers.forEach((h, idx) => {
+      inst[h.trim()] = values[idx]?.trim();
+    });
+    allInstruments.push(inst);
+  }
+
+  console.log(`Total instruments from Zerodha: ${allInstruments.length}`);
+
+  if (allInstruments.length < 100) {
+    throw new Error(
+      `Unexpected instrument count from Zerodha (${allInstruments.length}). Check API key and session.`
     );
+  }
 
-    const createFromKiteDoc = (kiteDoc) =>
-      Instrument.create(
-        mergeInstrumentPreservedFromBackup(kiteDoc, preserveByToken, preserveByExchangeSymbol)
-      );
-    
-    // Now call sync-all-nse logic
-    const apiKey = process.env.ZERODHA_API_KEY;
-    
-    console.log('Downloading ALL instruments from Zerodha...');
-    const response = await axios.get(
-      'https://api.kite.trade/instruments',
-      {
-        headers: {
-          'X-Kite-Version': '3',
-          'Authorization': `token ${apiKey}:${zerodhaSession.accessToken}`
-        }
-      }
-    );
-    
-    // Parse CSV with proper quote handling
-    const lines = response.data.split('\n');
-    const headers = parseCSVLine(lines[0]);
-    
-    const allInstruments = [];
-    for (let i = 1; i < lines.length; i++) {
-      if (!lines[i].trim()) continue;
-      
-      const values = parseCSVLine(lines[i]);
-      const inst = {};
-      headers.forEach((h, idx) => {
-        inst[h.trim()] = values[idx]?.trim();
-      });
-      allInstruments.push(inst);
-    }
-    
-    console.log(`Total instruments from Zerodha: ${allInstruments.length}`);
-    
-    // Debug: Log sample instrument and available fields
-    if (allInstruments.length > 0) {
-      console.log('CSV Headers:', headers);
-      console.log('Sample instrument:', JSON.stringify(allInstruments[0]));
-      
-      // Check what exchanges exist
-      const exchanges = [...new Set(allInstruments.map(i => i.exchange))];
-      console.log('Available exchanges:', exchanges);
-      
-      // Check NSE instruments
-      const nseCount = allInstruments.filter(i => i.exchange === 'NSE').length;
-      console.log('NSE instruments count:', nseCount);
-    }
-    
-    let added = 0;
+  if (allInstruments.length > 0) {
+    console.log('CSV Headers:', headers);
+    console.log('Sample instrument:', JSON.stringify(allInstruments[0]));
+
+    const exchangesDbg = [...new Set(allInstruments.map((i) => i.exchange))];
+    console.log('Available exchanges:', exchangesDbg);
+
+    const nseCount = allInstruments.filter((i) => i.exchange === 'NSE').length;
+    console.log('NSE instruments count:', nseCount);
+  }
+
+  const deleteResult = await Instrument.deleteMany({});
+  console.log(
+    `Deleted ${deleteResult.deletedCount} instruments; preserved admin snapshots: ${preserveByToken.size} by token, ${preserveByExchangeSymbol.size} by exchange+symbol (${withTradingDefaults} rows had tradingDefaults)`
+  );
+
+  const docsToInsert = [];
+  const pushDoc = (kiteDoc) => {
+    docsToInsert.push(mergeInstrumentPreservedFromBackup(kiteDoc, preserveByToken, preserveByExchangeSymbol));
+  };
+
+  let added = 0;
     let errors = 0;
     const counts = { 'NSE-EQ': 0, 'NSEFUT': 0, 'NSEOPT': 0, 'MCXFUT': 0, 'MCXOPT': 0, 'BSE-FUT': 0, 'BSE-OPT': 0 };
     
@@ -1793,7 +1810,7 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
     
     for (const stock of nseEquity) {
       try {
-        await createFromKiteDoc({
+        pushDoc({
           token: stock.instrument_token,
           symbol: stock.tradingsymbol,
           name: stock.name || stock.tradingsymbol,
@@ -1820,7 +1837,7 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
     for (const idx of indices) {
       try {
         const isMajorIndex = ['NIFTY 50', 'NIFTY BANK', 'NIFTY FIN SERVICE', 'INDIA VIX'].includes(idx.tradingsymbol);
-        await createFromKiteDoc({
+        pushDoc({
           token: idx.instrument_token,
           symbol: idx.tradingsymbol.replace(/ /g, ''),
           name: idx.tradingsymbol,
@@ -1883,7 +1900,7 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
       try {
         const expiryMonth = getExpiryMonth(fut.expiry);
         const isIndex = indexNames.includes(baseName);
-        await createFromKiteDoc({
+        pushDoc({
           token: String(fut.instrument_token),
           symbol: fut.tradingsymbol,
           name: `${baseName} ${expiryMonth} FUT`,
@@ -1946,7 +1963,7 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
           if (!selectedStrikes.includes(parseFloat(opt.strike))) continue;
           
           try {
-            await createFromKiteDoc({
+            pushDoc({
               token: opt.instrument_token,
               symbol: opt.tradingsymbol,
               name: `${opt.name} ${expiryMonth} ${opt.strike} ${opt.instrument_type}`,
@@ -2037,7 +2054,7 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
       try {
         const priorityIndex = mcxPriority.indexOf(baseSymbol);
         const lotSize = getMcxLotSize(baseSymbol, contract.lot_size);
-        await createFromKiteDoc({
+        pushDoc({
           token: contract.instrument_token,
           symbol: baseSymbol,
           name: contract.name || baseSymbol,
@@ -2092,7 +2109,7 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
           if (!selectedStrikes.includes(parseFloat(opt.strike))) continue;
           
           try {
-            await createFromKiteDoc({
+            pushDoc({
               token: opt.instrument_token,
               symbol: opt.tradingsymbol,
               name: `${opt.name} ${opt.strike} ${opt.instrument_type}`,
@@ -2140,7 +2157,7 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
     for (const [name, futures] of Object.entries(bseFuturesByName)) {
       for (const fut of futures) {
         try {
-          await createFromKiteDoc({
+          pushDoc({
             token: fut.instrument_token,
             symbol: fut.tradingsymbol,
             name: `${fut.name} FUT`,
@@ -2197,7 +2214,7 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
           if (!selectedStrikes.includes(parseFloat(opt.strike))) continue;
           
           try {
-            await createFromKiteDoc({
+            pushDoc({
               token: opt.instrument_token,
               symbol: opt.tradingsymbol,
               name: `${opt.name} ${opt.strike} ${opt.instrument_type}`,
@@ -2223,33 +2240,95 @@ router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) =>
       }
     }
     
-    // Currency (CDS) sync removed - no longer part of segment structure
-    
-    // Subscribe to all tokens
-    const allDbInstruments = await Instrument.find({ isEnabled: true }).select('token').lean();
-    const tokens = allDbInstruments.map(i => parseInt(i.token)).filter(t => !isNaN(t));
-    
-    if (tokens.length > 0) {
-      await subscribeTokens(tokens);
+  // Currency (CDS) sync removed - no longer part of segment structure
+
+  console.log(
+    `Bulk inserting ${docsToInsert.length} documents in chunks of ${ZERODHA_RESET_INSERT_CHUNK}…`
+  );
+  for (let ci = 0; ci < docsToInsert.length; ci += ZERODHA_RESET_INSERT_CHUNK) {
+    const chunk = docsToInsert.slice(ci, ci + ZERODHA_RESET_INSERT_CHUNK);
+    try {
+      await Instrument.insertMany(chunk, { ordered: false });
+    } catch (bulkErr) {
+      console.error('insertMany chunk error (partial inserts may exist):', bulkErr.message);
     }
-    
-    res.json({
-      message: `Database reset and synced fresh from Zerodha`,
-      deleted: deleteResult.deletedCount,
-      counts,
-      added,
-      errors,
-      totalInDatabase: await Instrument.countDocuments(),
-      subscribedTokens: tokens.length,
-      preservedAdminSnapshots: {
-        byToken: preserveByToken.size,
-        byExchangeSymbol: preserveByExchangeSymbol.size,
-        rowsWithTradingDefaultsBeforeReset: withTradingDefaults,
-      },
+  }
+
+  const allDbInstruments = await Instrument.find({ isEnabled: true }).select('token').lean();
+  const tokens = allDbInstruments.map((i) => parseInt(i.token, 10)).filter((t) => !Number.isNaN(t));
+
+  if (tokens.length > 0) {
+    await subscribeTokens(tokens);
+  }
+
+  return {
+    message: 'Database reset and synced fresh from Zerodha',
+    deleted: deleteResult.deletedCount,
+    counts,
+    added,
+    errors,
+    totalInDatabase: await Instrument.countDocuments(),
+    subscribedTokens: tokens.length,
+    preservedAdminSnapshots: {
+      byToken: preserveByToken.size,
+      byExchangeSymbol: preserveByExchangeSymbol.size,
+      rowsWithTradingDefaultsBeforeReset: withTradingDefaults,
+    },
+    docsPrepared: docsToInsert.length,
+  };
+}
+
+router.post('/reset-and-sync', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    if (!zerodhaSession.accessToken) {
+      return res.status(401).json({ message: 'Not logged in to Zerodha. Please connect first.' });
+    }
+    if (zerodhaResetSyncJob.status === 'running') {
+      return res.status(409).json({
+        message: 'Reset & sync is already running. Poll GET /api/zerodha/reset-and-sync/status.',
+        job: zerodhaResetSyncJob,
+      });
+    }
+    const startedAt = new Date().toISOString();
+    zerodhaResetSyncJob = {
+      status: 'running',
+      message: 'Running (download → wipe → bulk insert → subscribe)',
+      error: '',
+      startedAt,
+      finishedAt: null,
+      result: null,
+    };
+    void runZerodhaResetAndSyncJob()
+      .then((result) => {
+        zerodhaResetSyncJob = {
+          status: 'completed',
+          message: result.message,
+          error: '',
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          result,
+        };
+      })
+      .catch((error) => {
+        console.error('Reset and sync error:', error.response?.data || error.message);
+        zerodhaResetSyncJob = {
+          status: 'failed',
+          message: 'Reset & sync failed',
+          error: error.response?.data?.message || error.message,
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          result: null,
+        };
+      });
+
+    return res.status(202).json({
+      message:
+        'Reset & sync started in the background (avoids proxy timeouts). Poll GET /api/zerodha/reset-and-sync/status until completed or failed.',
+      statusUrl: '/api/zerodha/reset-and-sync/status',
+      startedAt,
     });
   } catch (error) {
-    console.error('Reset and sync error:', error.response?.data || error.message);
-    res.status(500).json({ message: error.response?.data?.message || error.message });
+    return res.status(500).json({ message: error.message });
   }
 });
 

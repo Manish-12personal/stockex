@@ -76,6 +76,25 @@ import {
   Info,
 } from 'lucide-react';
 
+/** Polls background Zerodha reset-and-sync until completed/failed (POST returns 202). */
+async function pollZerodhaResetSyncResult(authToken, options = {}) {
+  const intervalMs = options.intervalMs ?? 2000;
+  const maxAttempts = options.maxAttempts ?? 300;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const { data } = await axios.get('/api/zerodha/reset-and-sync/status', {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (data.status === 'completed' && data.result) return data.result;
+    if (data.status === 'failed') {
+      throw new Error(data.error || data.message || 'Reset & sync failed');
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(
+    'Reset & sync is still running after a long wait. Check server logs or refresh later.'
+  );
+}
+
 /** IST calendar YYYY-MM-DD (matches server `getTodayISTString` / jackpot `betDate`). */
 function getTodayISTDateKeyForAdmin() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -9572,10 +9591,32 @@ const InstrumentManagement = () => {
     try {
       // If Zerodha is connected, use reset-and-sync to get all instruments
       if (zerodhaStatus?.connected) {
-        const { data } = await axios.post('/api/zerodha/reset-and-sync', {}, {
-          headers: { Authorization: `Bearer ${admin.token}` }
-        });
-        alert(`Synced ${data.added} instruments from Zerodha!\n\nNSE: ${data.counts?.nse || 0}\nIndices: ${data.counts?.indices || 0}\nNSE F&O: ${data.counts?.nsefo || 0}\nMCX: ${data.counts?.mcx || 0}\nBSE F&O: ${data.counts?.bsefo || 0}\nCurrency: ${data.counts?.currency || 0}`);
+        let summary;
+        try {
+          const res = await axios.post('/api/zerodha/reset-and-sync', {}, {
+            headers: { Authorization: `Bearer ${admin.token}` },
+          });
+          if (res.status === 202 && res.data?.statusUrl) {
+            summary = await pollZerodhaResetSyncResult(admin.token);
+          } else if (res.data?.added != null || res.data?.totalInDatabase != null) {
+            summary = res.data;
+          } else {
+            throw new Error('Unexpected response from reset-and-sync');
+          }
+        } catch (err) {
+          if (err.response?.status === 409 && admin.token) {
+            summary = await pollZerodhaResetSyncResult(admin.token);
+          } else {
+            throw err;
+          }
+        }
+        const c = summary.counts || {};
+        const breakdown = Object.keys(c).length
+          ? Object.entries(c).map(([k, v]) => `${k}: ${v}`).join('\n')
+          : '—';
+        alert(
+          `Synced ${summary.added ?? '—'} instruments from Zerodha!\n\n${breakdown}\n\nTotal in DB: ${summary.totalInDatabase ?? '—'}`
+        );
       } else {
         // Fallback to basic seed if not connected
         const { data } = await axios.post('/api/instruments/admin/seed-defaults', {}, {
@@ -10210,21 +10251,50 @@ const MarketControl = () => {
               <>
                 <div className="text-xs text-gray-400 mb-3">User ID: {zerodhaStatus.userId}</div>
                 <div className="flex gap-2 mb-2">
-                  <button onClick={async () => {
+                  <button onClick={async (ev) => {
                     if (!confirm('This will DELETE all instruments and resync from Zerodha. Continue?')) return;
+                    const btn = ev.currentTarget;
+                    btn.disabled = true;
+                    btn.textContent = 'Resetting...';
                     try {
-                      const btn = document.activeElement;
-                      btn.disabled = true;
-                      btn.textContent = 'Resetting...';
-                      const { data } = await axios.post('/api/zerodha/reset-and-sync', {}, { headers: { Authorization: `Bearer ${admin.token}` } });
-                      const countsStr = Object.entries(data.counts || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
-                      alert(`${data.message}\n\nDeleted: ${data.deleted}\n\n${countsStr}\n\nAdded: ${data.added}\nTotal in DB: ${data.totalInDatabase}\nSubscribed: ${data.subscribedTokens}`);
+                      let data;
+                      try {
+                        const res = await axios.post(
+                          '/api/zerodha/reset-and-sync',
+                          {},
+                          { headers: { Authorization: `Bearer ${admin.token}` } }
+                        );
+                        if (res.status === 202 && res.data?.statusUrl) {
+                          btn.textContent = 'Syncing…';
+                          data = await pollZerodhaResetSyncResult(admin.token);
+                        } else if (
+                          res.data?.counts != null ||
+                          res.data?.deleted !== undefined ||
+                          res.data?.totalInDatabase != null
+                        ) {
+                          data = res.data;
+                        } else {
+                          throw new Error('Unexpected reset-and-sync response');
+                        }
+                      } catch (err) {
+                        if (err.response?.status === 409 && admin?.token) {
+                          btn.textContent = 'Syncing…';
+                          data = await pollZerodhaResetSyncResult(admin.token);
+                        } else {
+                          throw err;
+                        }
+                      }
+                      const countsStr = Object.entries(data.counts || {})
+                        .map(([k, v]) => `${k}: ${v}`)
+                        .join('\n');
+                      alert(
+                        `${data.message}\n\nDeleted: ${data.deleted}\n\n${countsStr}\n\nAdded: ${data.added}\nTotal in DB: ${data.totalInDatabase}\nSubscribed: ${data.subscribedTokens}`
+                      );
+                    } catch (error) {
+                      alert(error.response?.data?.message || error.message || 'Error resetting');
+                    } finally {
                       btn.disabled = false;
                       btn.textContent = 'Reset & Sync';
-                    } catch (error) { 
-                      alert(error.response?.data?.message || 'Error resetting'); 
-                      const btn = document.activeElement;
-                      if (btn) { btn.disabled = false; btn.textContent = 'Reset & Sync'; }
                     }
                   }} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm disabled:opacity-50">Reset & Sync</button>
                   <button onClick={async () => {
