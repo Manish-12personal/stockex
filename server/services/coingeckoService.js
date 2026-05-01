@@ -160,6 +160,65 @@ export async function fetchOhlcCandlesUsd(symbolParam, interval) {
   }));
 }
 
+/** BTC spot USD — Binance REST/WebSocket unavailable (e.g. HTTP 451). */
+export async function fetchBtcSimpleUsd() {
+  const { data } = await axios.get(`${CG_BASE}/simple/price`, {
+    params: { ids: 'bitcoin', vs_currencies: 'usd' },
+    headers: cgAuthHeaders(),
+    timeout: 12000,
+  });
+  const p = data?.bitcoin?.usd;
+  return Number.isFinite(Number(p)) ? Number(p) : null;
+}
+
+/** `[[ms, price], ...]` — CoinGecko `market_chart/range` (`from`/`to` in unix seconds). */
+export async function fetchBtcUsdPricesInRangeMs(fromMs, toMs) {
+  const from = Math.floor(fromMs / 1000);
+  const to = Math.floor(toMs / 1000);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return [];
+  const { data } = await axios.get(`${CG_BASE}/coins/bitcoin/market_chart/range`, {
+    params: { vs_currency: 'usd', from, to },
+    headers: cgAuthHeaders(),
+    timeout: 18000,
+  });
+  return Array.isArray(data?.prices) ? data.prices : [];
+}
+
+export function pickUsdPriceNearestMs(targetMs, pricePoints) {
+  if (!Array.isArray(pricePoints) || pricePoints.length === 0) return null;
+  let best = null;
+  let bestAbs = Infinity;
+  for (const pt of pricePoints) {
+    const t = Number(pt[0]);
+    const p = Number(pt[1]);
+    if (!Number.isFinite(t) || !Number.isFinite(p) || p <= 0) continue;
+    const d = Math.abs(t - targetMs);
+    if (d < bestAbs) {
+      bestAbs = d;
+      best = p;
+    }
+  }
+  return best;
+}
+
+/** First / last USD sample whose timestamps fall inside [t0Ms, t1Ms] (inclusive). */
+export function openCloseFromUsdPricesInWindow(pricePoints, t0Ms, t1Ms) {
+  if (!Array.isArray(pricePoints) || pricePoints.length === 0) return null;
+  const inWin = pricePoints
+    .map((pt) => ({ t: Number(pt[0]), p: Number(pt[1]) }))
+    .filter(
+      (x) =>
+        Number.isFinite(x.t) &&
+        Number.isFinite(x.p) &&
+        x.p > 0 &&
+        x.t >= t0Ms &&
+        x.t <= t1Ms,
+    )
+    .sort((a, b) => a.t - b.t);
+  if (inWin.length === 0) return null;
+  return { open: inWin[0].p, close: inWin[inWin.length - 1].p };
+}
+
 export async function searchCoinsQuery(query) {
   const q = String(query || '').trim();
   const { data } = await axios.get(`${CG_BASE}/search`, {
