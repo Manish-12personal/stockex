@@ -801,19 +801,23 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
 // Get admin's own segment permissions and script settings
 router.get('/my-settings', protectAdmin, async (req, res) => {
   try {
-    const admin = await Admin.findById(req.admin._id).select('segmentPermissions scriptSettings');
-    
-    let segmentPermissions = admin.segmentPermissions;
-    if (segmentPermissions && typeof segmentPermissions.toObject === 'function') {
-      segmentPermissions = segmentPermissions.toObject();
+    const adminDoc = await Admin.findById(req.admin._id).select('segmentPermissions scriptSettings').lean();
+    if (!adminDoc) {
+      return res.status(404).json({ message: 'Admin not found' });
     }
-    
-    let scriptSettings = admin.scriptSettings;
-    if (scriptSettings && typeof scriptSettings.toObject === 'function') {
-      scriptSettings = scriptSettings.toObject();
+
+    let segmentPermissions = adminDoc.segmentPermissions || {};
+    let scriptSettings = adminDoc.scriptSettings || {};
+
+    // Mongoose Map fields do not JSON-serialize; lean() yields plain objects — guard Maps anyway.
+    if (segmentPermissions instanceof Map) {
+      segmentPermissions = Object.fromEntries(segmentPermissions);
     }
-    
-    res.json({ segmentPermissions: segmentPermissions || {}, scriptSettings: scriptSettings || {} });
+    if (scriptSettings instanceof Map) {
+      scriptSettings = Object.fromEntries(scriptSettings);
+    }
+
+    res.json({ segmentPermissions, scriptSettings });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

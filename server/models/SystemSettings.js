@@ -208,7 +208,7 @@ const systemSettingsSchema = new mongoose.Schema({
       carryForwardBreakupLots: { type: Number, default: 5 },
       brokeragePerLot: { type: Number, default: 20 },
       brokeragePerCrore: { type: Number, default: 100 },
-      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       maxExchangeLots: { type: Number, default: 500 },
       maxLots: { type: Number, default: 100 },
@@ -216,7 +216,7 @@ const systemSettingsSchema = new mongoose.Schema({
       orderLots: { type: Number, default: 25 },
       optionBuy: {
         allowed: { type: Boolean, default: true },
-        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 20 },
         strikeSelection: { type: Number, default: 50 },
@@ -224,7 +224,7 @@ const systemSettingsSchema = new mongoose.Schema({
       },
       optionSell: {
         allowed: { type: Boolean, default: true },
-        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 20 },
         strikeSelection: { type: Number, default: 50 },
@@ -285,7 +285,7 @@ const systemSettingsSchema = new mongoose.Schema({
       carryForwardBreakupLots: { type: Number, default: 50 },
       brokeragePerLot: { type: Number, default: 30 },
       brokeragePerCrore: { type: Number, default: 150 },
-      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       maxExchangeLots: { type: Number, default: 1000 },
       maxLots: { type: Number, default: 500 },
@@ -304,7 +304,7 @@ const systemSettingsSchema = new mongoose.Schema({
       carryForwardBreakupLots: { type: Number, default: 5 },
       brokeragePerLot: { type: Number, default: 20 },
       brokeragePerCrore: { type: Number, default: 100 },
-      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       maxExchangeLots: { type: Number, default: 100 },
       maxLots: { type: Number, default: 50 },
@@ -448,7 +448,7 @@ const systemSettingsSchema = new mongoose.Schema({
     of: {
       enabled: { type: Boolean, default: false },
       maxExchangeLots: { type: Number, default: 100 },
-      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       commissionLot: { type: Number, default: 0 },
       maxLots: { type: Number, default: 50 },
@@ -461,6 +461,7 @@ const systemSettingsSchema = new mongoose.Schema({
       /** When true, new orders are marked intraday-only (EOD auto square). Set in Super Admin defaults + hierarchy; clients do not choose. */
       defaultIntradayOnly: { type: Boolean, default: false },
       cryptoSpreadInr: { type: Number, default: 0 },
+      cryptoSpreadUsdPerSide: { type: Number, default: 0 },
       /** IST (HH:mm or HH:mm:ss) — earliest time users may trade CRYPTOFUT/CRYPTOOPT; empty = no start gate */
       cryptoStartTime: { type: String, default: '' },
       /** IST session close hint (HH:mm or HH:mm:ss) */
@@ -475,7 +476,7 @@ const systemSettingsSchema = new mongoose.Schema({
       maxCarryQty: { type: Number, default: 1000 }, // Max shares/quantity for carry forward
       optionBuy: {
         allowed: { type: Boolean, default: true },
-        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
         strikeSelection: { type: Number, default: 50 },
@@ -483,7 +484,7 @@ const systemSettingsSchema = new mongoose.Schema({
       },
       optionSell: {
         allowed: { type: Boolean, default: true },
-        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
         strikeSelection: { type: Number, default: 50 },
@@ -549,7 +550,12 @@ const systemSettingsSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Admin'
   }
-}, { timestamps: true });
+}, {
+  timestamps: true,
+  /** Ensure Maps (e.g. adminSegmentDefaults) serialize as plain objects in JSON responses */
+  toJSON: { flattenMaps: true },
+  toObject: { flattenMaps: true },
+});
 
 // Static method to get or create the singleton settings document
 systemSettingsSchema.statics.getSettings = async function() {

@@ -618,7 +618,7 @@ const userSchema = new mongoose.Schema({
     of: {
       enabled: { type: Boolean, default: false },
       maxExchangeLots: { type: Number, default: 100 },
-      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       commissionLot: { type: Number, default: 0 },
       maxLots: { type: Number, default: 50 },
@@ -630,6 +630,7 @@ const userSchema = new mongoose.Schema({
       defaultIntradayOnly: { type: Boolean, default: false },
       allowLimitPendingOrders: { type: Boolean, default: true },
       cryptoSpreadInr: { type: Number, default: 0 },
+      cryptoSpreadUsdPerSide: { type: Number, default: 0 },
       /** IST earliest trading start (HH:mm or HH:mm:ss). Empty = no gate. */
       cryptoStartTime: { type: String, default: '' },
       /** IST session end hint (HH:mm or HH:mm:ss). */
@@ -649,7 +650,7 @@ const userSchema = new mongoose.Schema({
       // Option Buy Settings
       optionBuy: {
         allowed: { type: Boolean, default: true },
-        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
         strikeSelection: { type: Number, default: 50 }, // Number of strikes up/down from ATM
@@ -658,7 +659,7 @@ const userSchema = new mongoose.Schema({
       // Option Sell Settings
       optionSell: {
         allowed: { type: Boolean, default: true },
-        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
         strikeSelection: { type: Number, default: 50 }, // Number of strikes up/down from ATM

@@ -579,7 +579,7 @@ const adminSchema = new mongoose.Schema({
     of: {
       enabled: { type: Boolean, default: false },
       maxExchangeLots: { type: Number, default: 100 },
-      commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+      commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
       /** INR for PER_LOT/PER_TRADE; PER_CRORE uses PERCENT (% of notional) or legacy INR (₹ per crore). */
       commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
       commissionLot: { type: Number, default: 0 },
@@ -593,6 +593,8 @@ const adminSchema = new mongoose.Schema({
       allowLimitPendingOrders: { type: Boolean, default: true },
       // Crypto (USD spot): total client bid–ask width in ₹ per coin (half applied to bid, half to ask vs exchange mid)
       cryptoSpreadInr: { type: Number, default: 0 },
+      /** Binance USD spot: $ widened per side on client quotes (bid − n, ask + n). 0 = use cryptoSpreadInr only. */
+      cryptoSpreadUsdPerSide: { type: Number, default: 0 },
       /** IST (HH:mm or HH:mm:ss) — earliest time this segment allows trading */
       cryptoStartTime: { type: String, default: '' },
       cryptoClosingTime: { type: String, default: '' },
@@ -608,7 +610,7 @@ const adminSchema = new mongoose.Schema({
       maxCarryQty: { type: Number, default: 1000 },
       optionBuy: {
         allowed: { type: Boolean, default: true },
-        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
         strikeSelection: { type: Number, default: 50 },
@@ -616,7 +618,7 @@ const adminSchema = new mongoose.Schema({
       },
       optionSell: {
         allowed: { type: Boolean, default: true },
-        commissionType: { type: String, enum: ['PER_LOT', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
+        commissionType: { type: String, enum: ['PER_LOT', 'PER_QUANTITY', 'PER_TRADE', 'PER_CRORE'], default: 'PER_LOT' },
         commissionUnit: { type: String, enum: ['INR', 'PERCENT'], default: null },
         commission: { type: Number, default: 0 },
         strikeSelection: { type: Number, default: 50 },

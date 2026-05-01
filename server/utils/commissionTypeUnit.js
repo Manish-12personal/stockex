@@ -90,6 +90,24 @@ export function preserveAllowLimitPendingOrdersFromExisting(incomingPlain, exist
   return out;
 }
 
+/**
+ * Convert Mongoose Map / hydrated subdocs into plain POJO slices so merges keep nested fields (e.g. cryptoSpreadUsdPerSide).
+ */
+export function plainSegmentDefaultsMap(val) {
+  if (!val || typeof val !== 'object') return {};
+  const obj = val instanceof Map ? Object.fromEntries(val) : { ...val };
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v == null || typeof v !== 'object') continue;
+    try {
+      out[k] = JSON.parse(JSON.stringify(v));
+    } catch {
+      out[k] = { ...v };
+    }
+  }
+  return out;
+}
+
 /** Align every segment slice in a defaults map (plain object). */
 export function alignSegmentDefaultsMap(segmentDefaults) {
   if (!segmentDefaults || typeof segmentDefaults !== 'object') return segmentDefaults;
@@ -98,6 +116,56 @@ export function alignSegmentDefaultsMap(segmentDefaults) {
     if (out[k] && typeof out[k] === 'object') {
       out[k] = withAlignedSegmentCommissionUnit(normalizeLegacySystemSegmentDefaultsSlice(k, out[k]));
     }
+  }
+  return out;
+}
+
+/**
+ * Deep-merge two segment-default maps (e.g. existing DB + incoming PUT). Preserves segment keys omitted from the client payload.
+ */
+export function mergeSegmentDefaultsMaps(existingPlain, incomingPlain) {
+  const existing = existingPlain && typeof existingPlain === 'object' ? existingPlain : {};
+  const incoming = incomingPlain && typeof incomingPlain === 'object' ? incomingPlain : {};
+  const keys = new Set([...Object.keys(existing), ...Object.keys(incoming)]);
+  const out = {};
+  for (const k of keys) {
+    const mergedSlice = {
+      ...(existing[k] && typeof existing[k] === 'object' ? existing[k] : {}),
+      ...(incoming[k] && typeof incoming[k] === 'object' ? incoming[k] : {}),
+    };
+    for (const numKey of ['cryptoSpreadUsdPerSide', 'cryptoSpreadInr']) {
+      if (mergedSlice[numKey] != null && mergedSlice[numKey] !== '') {
+        const n = Number(mergedSlice[numKey]);
+        mergedSlice[numKey] = Number.isFinite(n) ? n : 0;
+      }
+    }
+    out[k] = withAlignedSegmentCommissionUnit(normalizeLegacySystemSegmentDefaultsSlice(k, mergedSlice));
+  }
+  return out;
+}
+
+/**
+ * Apply crypto spread numbers straight from the raw client map onto merged slices so saves never silently drop them.
+ */
+export function overlayCryptoSpreadFromRaw(rawPlain, merged) {
+  const raw = rawPlain && typeof rawPlain === 'object' ? rawPlain : {};
+  const out = merged && typeof merged === 'object' ? { ...merged } : {};
+  for (const segKey of Object.keys(raw)) {
+    const src = raw[segKey];
+    if (!src || typeof src !== 'object') continue;
+    const hasUsd = Object.prototype.hasOwnProperty.call(src, 'cryptoSpreadUsdPerSide');
+    const hasInr = Object.prototype.hasOwnProperty.call(src, 'cryptoSpreadInr');
+    if (!hasUsd && !hasInr) continue;
+    const base = out[segKey] && typeof out[segKey] === 'object' ? { ...out[segKey] } : {};
+    if (hasUsd) {
+      const n = Number(src.cryptoSpreadUsdPerSide);
+      base.cryptoSpreadUsdPerSide = Number.isFinite(n) ? Math.max(0, n) : 0;
+    }
+    if (hasInr) {
+      const n = Number(src.cryptoSpreadInr);
+      base.cryptoSpreadInr = Number.isFinite(n) ? Math.max(0, n) : 0;
+    }
+    out[segKey] = withAlignedSegmentCommissionUnit(normalizeLegacySystemSegmentDefaultsSlice(segKey, base));
   }
   return out;
 }

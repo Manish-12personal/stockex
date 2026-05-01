@@ -31,12 +31,11 @@ class TradeService {
   }
 
   /**
-   * USD spot: if segment `cryptoSpreadInr` is missing/0, apply Super Admin default (adminSegmentDefaults).
+   * USD spot: fill missing segment spread from Super Admin `adminSegmentDefaults` (INR width and/or USD per side).
    */
   static async mergeUsdSpotSpreadFromSuperAdmin(segmentSettings, tradeData) {
     if (!orderIsUsdSpot(tradeData)) return segmentSettings;
-    const w = Number(segmentSettings?.cryptoSpreadInr);
-    if (Number.isFinite(w) && w > 0) return segmentSettings;
+    let out = { ...segmentSettings };
 
     let key = 'CRYPTO';
     if (orderIsForex(tradeData)) {
@@ -50,9 +49,42 @@ class TradeService {
       const raw = sys?.adminSegmentDefaults;
       const asd =
         raw instanceof Map ? Object.fromEntries(raw) : raw && typeof raw === 'object' ? { ...raw } : {};
-      const def = Number(asd[key]?.cryptoSpreadInr);
-      if (!Number.isFinite(def) || def <= 0) return segmentSettings;
-      return { ...segmentSettings, cryptoSpreadInr: def };
+
+      const w = Number(out.cryptoSpreadInr);
+      if (!Number.isFinite(w) || w <= 0) {
+        let defInr = NaN;
+        if (orderIsForex(tradeData)) {
+          defInr = Number(asd[key]?.cryptoSpreadInr);
+        } else {
+          for (const segKey of ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT']) {
+            const v = Number(asd[segKey]?.cryptoSpreadInr);
+            if (Number.isFinite(v) && v > 0) {
+              defInr = v;
+              break;
+            }
+          }
+        }
+        if (Number.isFinite(defInr) && defInr > 0) out.cryptoSpreadInr = defInr;
+      }
+
+      const us = Number(out.cryptoSpreadUsdPerSide);
+      if (!Number.isFinite(us) || us <= 0) {
+        let defUsd = NaN;
+        if (orderIsForex(tradeData)) {
+          defUsd = Number(asd[key]?.cryptoSpreadUsdPerSide);
+        } else {
+          for (const segKey of ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT']) {
+            const v = Number(asd[segKey]?.cryptoSpreadUsdPerSide);
+            if (Number.isFinite(v) && v > 0) {
+              defUsd = v;
+              break;
+            }
+          }
+        }
+        if (Number.isFinite(defUsd) && defUsd > 0) out.cryptoSpreadUsdPerSide = defUsd;
+      }
+
+      return out;
     } catch {
       return segmentSettings;
     }
@@ -179,6 +211,7 @@ class TradeService {
     allowClientIntradayOnly: true,
     defaultIntradayOnly: false,
     cryptoSpreadInr: 0,
+    cryptoSpreadUsdPerSide: 0,
     cryptoStartTime: '',
     cryptoClosingTime: '',
     cryptoReferenceSymbol: '',
@@ -673,8 +706,10 @@ class TradeService {
     return side === 'BUY' ? (scriptSettings.spread.buy || 0) : (scriptSettings.spread.sell || 0);
   }
 
-  /** Half of segment `cryptoSpreadInr` (total ₹ width per coin) as USDT price adjustment for USD spot quotes. */
+  /** USDT adjustment per side on client USD spot quotes: USD field wins, else half of INR total width converted to USD. */
   static segmentCryptoSpreadHalfUsd(segmentSettings) {
+    const usdSide = Number(segmentSettings?.cryptoSpreadUsdPerSide);
+    if (Number.isFinite(usdSide) && usdSide > 0) return usdSide;
     const w = Number(segmentSettings?.cryptoSpreadInr);
     if (!Number.isFinite(w) || w <= 0) return 0;
     const fx = getUsdInrRate();

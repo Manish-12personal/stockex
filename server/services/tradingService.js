@@ -799,13 +799,21 @@ class TradingService {
     const marginCalc = this.calculateMargin({ ...orderData, quantity: totalQuantity }, user, leverage);
     
     const price = orderData.price || 0;
+    const spreadUsdSide = Number(segmentSettings?.cryptoSpreadUsdPerSide);
     const segmentSpreadMarkupInr =
-      (isCryptoWallet || isForexWallet) &&
+      isCryptoWallet &&
+      isUsdSpot &&
       orderData.orderType === 'MARKET' &&
       orderData.side === 'BUY' &&
-      Number(segmentSettings?.cryptoSpreadInr) > 0
-        ? (Number(segmentSettings.cryptoSpreadInr) / 2) * totalQuantity
-        : 0;
+      Number.isFinite(spreadUsdSide) &&
+      spreadUsdSide > 0
+        ? spreadUsdSide * usdInr * totalQuantity
+        : (isCryptoWallet || isForexWallet) &&
+            orderData.orderType === 'MARKET' &&
+            orderData.side === 'BUY' &&
+            Number(segmentSettings?.cryptoSpreadInr) > 0
+          ? (Number(segmentSettings.cryptoSpreadInr) / 2) * totalQuantity
+          : 0;
     const tradeValue = isUsdSpot ? price * usdInr * totalQuantity + segmentSpreadMarkupInr : price * totalQuantity;
 
     const oneWayBrokerage =

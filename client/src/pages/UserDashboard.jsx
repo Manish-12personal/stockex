@@ -424,6 +424,21 @@ function adjustUsdSpotBidAskForSegmentSpread(bidUsd, askUsd, spreadInrTotal, inr
   return { bidUsd: b - halfUsd, askUsd: a + halfUsd };
 }
 
+/** Binance USD crypto: `cryptoSpreadUsdPerSide` widens bid (−) / ask (+) in USDT; else INR total width via adjustUsdSpotBidAskForSegmentSpread. */
+function resolveUsdSpotCryptoDisplayBidAsk(bidUsd, askUsd, cryptoUsdPerSide, cryptoSpreadInr, usdRate) {
+  const us = Number(cryptoUsdPerSide);
+  const b = Number(bidUsd);
+  const a = Number(askUsd);
+  if (Number.isFinite(us) && us > 0 && Number.isFinite(b) && Number.isFinite(a)) {
+    return { bidUsd: b - us, askUsd: a + us };
+  }
+  const inr = Number(cryptoSpreadInr);
+  if (Number.isFinite(inr) && inr > 0) {
+    return adjustUsdSpotBidAskForSegmentSpread(bidUsd, askUsd, inr, usdRate);
+  }
+  return { bidUsd: b, askUsd: a };
+}
+
 const DEFAULT_FOREX_INSTRUMENTS = [
   { symbol: 'EURUSD', name: 'Euro / US Dollar', exchange: 'FOREX', pair: 'EURUSD', token: 'EURUSD', isForex: true, instrumentType: 'CURRENCY', segment: 'FOREXFUT', displaySegment: 'FOREXFUT' },
   { symbol: 'GBPUSD', name: 'British Pound / US Dollar', exchange: 'FOREX', pair: 'GBPUSD', token: 'GBPUSD', isForex: true, instrumentType: 'CURRENCY', segment: 'FOREXFUT', displaySegment: 'FOREXFUT' },
@@ -488,7 +503,11 @@ const UserDashboard = () => {
   const [positionsRefreshKey, setPositionsRefreshKey] = useState(0); // Key to trigger positions refresh
   const [activeSegment, setActiveSegment] = useState(() => localStorage.getItem('stockex_active_segment') || 'FAVORITES'); // Track active segment for currency display
   const [usdRate, setUsdRate] = useState(83.50); // USD to INR rate (default fallback)
-  const [usdSpotClientSpreads, setUsdSpotClientSpreads] = useState({ crypto: 0, forex: 0 });
+  const [usdSpotClientSpreads, setUsdSpotClientSpreads] = useState({
+    cryptoInr: 0,
+    cryptoUsdPerSide: 0,
+    forex: 0,
+  });
   const [watchlistRefreshKey, setWatchlistRefreshKey] = useState(0); // Key to trigger watchlist refresh
   /** Bumps on each Socket.IO connect so MCX can re-post /tick-subscribe after server is ready */
   const [socketConnectEpoch, setSocketConnectEpoch] = useState(0);
@@ -682,16 +701,32 @@ const UserDashboard = () => {
         headers: { Authorization: `Bearer ${user.token}` },
       });
       const sp = data?.segmentPermissions || {};
-      const c = Number(sp.CRYPTO?.cryptoSpreadInr);
+      const pickCryptoSpreadInr = () => {
+        for (const seg of ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT']) {
+          const v = Number(sp[seg]?.cryptoSpreadInr);
+          if (Number.isFinite(v) && v > 0) return v;
+        }
+        return 0;
+      };
+      const pickCryptoUsdPerSide = () => {
+        for (const seg of ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT']) {
+          const v = Number(sp[seg]?.cryptoSpreadUsdPerSide);
+          if (Number.isFinite(v) && v > 0) return v;
+        }
+        return 0;
+      };
+      const cInr = pickCryptoSpreadInr();
+      const cUsd = pickCryptoUsdPerSide();
       const f = Number(
         sp.FOREXFUT?.cryptoSpreadInr ?? sp.FOREXOPT?.cryptoSpreadInr ?? sp.FOREX?.cryptoSpreadInr
       );
       setUsdSpotClientSpreads({
-        crypto: Number.isFinite(c) && c > 0 ? c : 0,
+        cryptoInr: Number.isFinite(cInr) && cInr > 0 ? cInr : 0,
+        cryptoUsdPerSide: Number.isFinite(cUsd) && cUsd > 0 ? cUsd : 0,
         forex: Number.isFinite(f) && f > 0 ? f : 0,
       });
     } catch {
-      setUsdSpotClientSpreads({ crypto: 0, forex: 0 });
+      setUsdSpotClientSpreads({ cryptoInr: 0, cryptoUsdPerSide: 0, forex: 0 });
     }
   }, [user]);
 
@@ -732,10 +767,13 @@ const UserDashboard = () => {
   }, []);
 
   useEffect(() => {
-    const onSoftRefresh = () => fetchWallet();
+    const onSoftRefresh = () => {
+      fetchWallet();
+      fetchUsdSpotClientSpreads();
+    };
     window.addEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
     return () => window.removeEventListener(AUTO_REFRESH_EVENT, onSoftRefresh);
-  }, [fetchWallet]);
+  }, [fetchWallet, fetchUsdSpotClientSpreads]);
 
   const handleLogout = () => {
     logoutUser();
@@ -3837,7 +3875,7 @@ const TradingPanel = ({
   onRefreshWallet,
   onRefreshPositions,
   usdRate = 83.5,
-  usdSpotClientSpreads = { crypto: 0, forex: 0 },
+  usdSpotClientSpreads = { cryptoInr: 0, cryptoUsdPerSide: 0, forex: 0 },
   /** Optional chart reference LTP; bid/ask use Kite book from marketData, not LTP. */
   chartAnchorLtp = null,
   segmentPermissionsGate = {},
@@ -3907,15 +3945,18 @@ const TradingPanel = ({
         ? (parseFloat(cryptoAmount) || 0) * cryptoUnitNotionalInr
         : 0;
 
-  const segmentSpreadInr = isCryptoOnly
-    ? usdSpotClientSpreads.crypto
-    : isForex
-      ? usdSpotClientSpreads.forex
-      : 0;
+  const cryptoSpreadInrClient =
+    usdSpotClientSpreads.cryptoInr ?? usdSpotClientSpreads.crypto ?? 0;
+  const cryptoUsdPerSideClient = usdSpotClientSpreads.cryptoUsdPerSide ?? 0;
+  const forexSpreadInrClient = usdSpotClientSpreads.forex ?? 0;
+
+  const segmentSpreadInr = isCryptoOnly ? cryptoSpreadInrClient : isForex ? forexSpreadInrClient : 0;
   const displayBidAsk =
-    isUsdSpot && segmentSpreadInr > 0
-      ? adjustUsdSpotBidAskForSegmentSpread(liveBid, liveAsk, segmentSpreadInr, usdRate)
-      : { bidUsd: liveBid, askUsd: liveAsk };
+    isUsdSpot && isCryptoOnly
+      ? resolveUsdSpotCryptoDisplayBidAsk(liveBid, liveAsk, cryptoUsdPerSideClient, cryptoSpreadInrClient, usdRate)
+      : isUsdSpot && segmentSpreadInr > 0
+        ? adjustUsdSpotBidAskForSegmentSpread(liveBid, liveAsk, segmentSpreadInr, usdRate)
+        : { bidUsd: liveBid, askUsd: liveAsk };
   const stripeBidPx =
     isUsdSpot && displayBidAsk.bidUsd != null && instrument != null && !isNaN(Number(displayBidAsk.bidUsd))
       ? spotQuoteDisplayPrice(instrument, Number(displayBidAsk.bidUsd), usdRate)
@@ -4994,12 +5035,12 @@ const TradingPanel = ({
         </div>
       </div>
 
-      {/* Submit Button */}
+      {/* Submit Button — opens confirm modal (breakup, bid/ask, limits) like stripe tap */}
       <div className="p-4 border-t border-dark-600">
         <button
           type="button"
-          onClick={() => handlePlaceOrder()}
-          disabled={loading || (marginPreview && !marginPreview.canPlace)}
+          onClick={() => setTradeConfirmOpen(true)}
+          disabled={loading}
           className={`w-full py-3 rounded-lg font-semibold transition ${
             orderType === 'buy' 
               ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800' 
@@ -5041,6 +5082,30 @@ const TradingPanel = ({
               </button>
             </div>
             <div className="p-4 overflow-y-auto space-y-2 text-sm flex-1">
+              <div className="flex rounded-lg overflow-hidden border border-dark-600 mb-3 text-center">
+                <div className="flex-1 py-2 px-2 bg-dark-700/90 border-r border-dark-600">
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wide">
+                    {isUsdSpot ? (isCryptoOnly ? 'Bid ($)' : 'Bid (₹)') : 'Bid'}
+                  </div>
+                  <div className="text-base font-semibold text-white tabular-nums">
+                    {stripeBidPx != null && !isNaN(stripeBidPx)
+                      ? `${priceSymbol}${stripeBidPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      : '—'}
+                  </div>
+                  <div className="text-[10px] text-red-400 font-medium">SELL</div>
+                </div>
+                <div className="flex-1 py-2 px-2 bg-green-900/25">
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wide">
+                    {isUsdSpot ? (isCryptoOnly ? 'Ask ($)' : 'Ask (₹)') : 'Ask'}
+                  </div>
+                  <div className="text-base font-semibold text-white tabular-nums">
+                    {stripeAskPx != null && !isNaN(stripeAskPx)
+                      ? `${priceSymbol}${stripeAskPx.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      : '—'}
+                  </div>
+                  <div className="text-[10px] text-green-400 font-medium">BUY</div>
+                </div>
+              </div>
               {marginPreview == null && (
                 <div className="text-xs text-amber-400/95 mb-2">Loading margin preview…</div>
               )}
@@ -8309,7 +8374,7 @@ const BuySellModal = ({
   onRefreshWallet,
   onRefreshPositions,
   usdRate = 83.5,
-  usdSpotClientSpreads = { crypto: 0, forex: 0 },
+  usdSpotClientSpreads = { cryptoInr: 0, cryptoUsdPerSide: 0, forex: 0 },
   chartAnchorLtp = null,
   segmentPermissionsGate = {},
 }) => {
@@ -8506,15 +8571,18 @@ const BuySellModal = ({
   const symbolName = isForex
     ? (instrument?.symbol || instrument?.pair || 'FX')
     : (instrument?.symbol?.replace('USDT', '') || 'BTC');
-  const segmentSpreadInr = isCryptoOnly
-    ? usdSpotClientSpreads.crypto
-    : isForex
-      ? usdSpotClientSpreads.forex
-      : 0;
+  const cryptoSpreadInrModal =
+    usdSpotClientSpreads.cryptoInr ?? usdSpotClientSpreads.crypto ?? 0;
+  const cryptoUsdPerSideModal = usdSpotClientSpreads.cryptoUsdPerSide ?? 0;
+  const forexSpreadInrModal = usdSpotClientSpreads.forex ?? 0;
+
+  const segmentSpreadInr = isCryptoOnly ? cryptoSpreadInrModal : isForex ? forexSpreadInrModal : 0;
   const displayBidAsk =
-    isUsdSpot && segmentSpreadInr > 0
-      ? adjustUsdSpotBidAskForSegmentSpread(liveBid, liveAsk, segmentSpreadInr, usdRate)
-      : { bidUsd: liveBid, askUsd: liveAsk };
+    isUsdSpot && isCryptoOnly
+      ? resolveUsdSpotCryptoDisplayBidAsk(liveBid, liveAsk, cryptoUsdPerSideModal, cryptoSpreadInrModal, usdRate)
+      : isUsdSpot && segmentSpreadInr > 0
+        ? adjustUsdSpotBidAskForSegmentSpread(liveBid, liveAsk, segmentSpreadInr, usdRate)
+        : { bidUsd: liveBid, askUsd: liveAsk };
   const bidDisp =
     isUsdSpot && displayBidAsk.bidUsd != null && effectiveInstrument
       ? spotQuoteDisplayPrice(effectiveInstrument, Number(displayBidAsk.bidUsd), usdRate)

@@ -46,8 +46,11 @@ import {
 import {
   withAlignedSegmentCommissionUnit,
   alignSegmentDefaultsMap,
+  mergeSegmentDefaultsMaps,
   normalizeLegacySystemSegmentDefaultsSlice,
   preserveAllowLimitPendingOrdersFromExisting,
+  plainSegmentDefaultsMap,
+  overlayCryptoSpreadFromRaw,
 } from '../utils/commissionTypeUnit.js';
 import { resolveJackpotPrizePercentForRank } from '../utils/niftyJackpotPrize.js';
 import { buildNiftyJackpotIstDayQuery } from '../utils/niftyJackpotDayScope.js';
@@ -5580,8 +5583,12 @@ router.get('/net-positions/:symbol/users', protectAdmin, async (req, res) => {
 // Get system-wide default settings
 router.get('/system-settings', protectAdmin, superAdminOnly, async (req, res) => {
   try {
-    const settings = await SystemSettings.getSettings();
-    res.json(settings);
+    let doc = await SystemSettings.findOne({ settingsType: 'global' }).lean();
+    if (!doc) {
+      await SystemSettings.create({ settingsType: 'global' });
+      doc = await SystemSettings.findOne({ settingsType: 'global' }).lean();
+    }
+    res.json(doc);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -5734,7 +5741,12 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
         req.body.adminSegmentDefaults instanceof Map
           ? Object.fromEntries(req.body.adminSegmentDefaults)
           : req.body.adminSegmentDefaults;
-      settings.adminSegmentDefaults = alignSegmentDefaultsMap(raw);
+      const rawPlain = plainSegmentDefaultsMap(raw);
+      const incomingAligned = alignSegmentDefaultsMap(rawPlain);
+      const existingPlain = plainSegmentDefaultsMap(settings.adminSegmentDefaults);
+      let merged = mergeSegmentDefaultsMaps(existingPlain, incomingAligned);
+      merged = overlayCryptoSpreadFromRaw(rawPlain, merged);
+      settings.adminSegmentDefaults = merged;
     }
     
     // Update Admin Script Defaults (same structure as Admin.scriptSettings)
@@ -5757,8 +5769,9 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
     settings.markModified('adminScriptDefaults');
     settings.markModified('deliveryPledgeSettings');
     await settings.save();
-    
-    res.json({ message: 'System settings updated successfully', settings });
+
+    const fresh = await SystemSettings.findOne({ settingsType: 'global' }).lean();
+    res.json({ message: 'System settings updated successfully', settings: fresh });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

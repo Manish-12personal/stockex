@@ -4947,20 +4947,43 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                           </>
                         )}
 
-                        {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
+                        {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
                           <div className="mb-4">
                             <h4 className="text-xs font-semibold text-orange-300 mb-2">Client spread (Binance crypto)</h4>
-                            <p className="text-[11px] text-gray-500 mb-2">Total ₹ bid–ask width per coin (half on bid, half on ask vs exchange). 0 = exchange prices.</p>
-                            <div className="max-w-xs">
-                              <label className="block text-xs text-gray-400 mb-1">Spread (₹ / coin)</label>
-                              <input
-                                type="number"
-                                min={0}
-                                step={1}
-                                value={s.cryptoSpreadInr ?? 0}
-                                onChange={(e) => handleSegDefChange(expandedSeg, 'cryptoSpreadInr', Math.max(0, parseFloat(e.target.value) || 0))}
-                                className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                              />
+                            <p className="text-[11px] text-gray-500 mb-2">
+                              Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy ₹ total width per coin applies (half bid / half ask). 0 / 0 = exchange prices.
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={0.01}
+                                  value={s.cryptoSpreadUsdPerSide ?? 0}
+                                  onChange={(e) =>
+                                    handleSegDefChange(
+                                      expandedSeg,
+                                      'cryptoSpreadUsdPerSide',
+                                      Math.max(0, parseFloat(e.target.value) || 0)
+                                    )
+                                  }
+                                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin, legacy)</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={1}
+                                  value={s.cryptoSpreadInr ?? 0}
+                                  onChange={(e) =>
+                                    handleSegDefChange(expandedSeg, 'cryptoSpreadInr', Math.max(0, parseFloat(e.target.value) || 0))
+                                  }
+                                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                                />
+                              </div>
                             </div>
                           </div>
                         )}
@@ -16489,6 +16512,23 @@ function SuperAdminClientWallet({ embedded = false }) {
   );
 }
 
+/** Plain-object snapshot of Mongoose Map / nested docs from GET responses (avoids stale getters / shallow-merge bugs). */
+function normalizeMongoMapOfObjects(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const entries = raw instanceof Map ? [...raw.entries()] : Object.entries(raw);
+  const out = {};
+  for (const [k, v] of entries) {
+    if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+      try {
+        out[k] = JSON.parse(JSON.stringify(v));
+      } catch {
+        out[k] = { ...v };
+      }
+    }
+  }
+  return out;
+}
+
 // System Default Settings (Super Admin only)
 const SystemDefaultSettings = () => {
   const { admin } = useAuth();
@@ -16497,13 +16537,22 @@ const SystemDefaultSettings = () => {
   const [mainTab, setMainTab] = useState('roles'); // 'roles', 'adminDefaults', 'sharing', 'notifications'
   const [activeTab, setActiveTab] = useState('ADMIN');
   const [message, setMessage] = useState({ type: '', text: '' });
-  
-  // Admin Segment/Script Defaults state (same structure as admin My Settings)
-  const adminSegmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
+
+  /** Bumps invalidate slower GET responses so they cannot overwrite state after a newer save/load. */
+  const settingsFetchGenRef = useRef(0);
+
+  // Admin Segment/Script Defaults state (same structure as admin My Settings). Include CRYPTO for USD spot spread (server merges CRYPTO → CRYPTOFUT → CRYPTOOPT).
+  const adminSegmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'];
   const [adminDefTab, setAdminDefTab] = useState('segments'); // 'segments' or 'scripts'
   const [adminDefExpandedSeg, setAdminDefExpandedSeg] = useState('NSEFUT');
   const [adminSegDefs, setAdminSegDefs] = useState({});
   const [adminScriptDefs, setAdminScriptDefs] = useState({});
+  const adminSegDefsRef = useRef({});
+  const adminScriptDefsRef = useRef({});
+  useEffect(() => {
+    adminSegDefsRef.current = adminSegDefs;
+    adminScriptDefsRef.current = adminScriptDefs;
+  }, [adminSegDefs, adminScriptDefs]);
   const [adminDefScriptSearch, setAdminDefScriptSearch] = useState('');
   const [adminDefSelectedScript, setAdminDefSelectedScript] = useState('');
   const [adminDefScriptSymbolList, setAdminDefScriptSymbolList] = useState([]);
@@ -16628,10 +16677,13 @@ const SystemDefaultSettings = () => {
   }, [adminDefScriptSuggestOpen]);
 
   const fetchSettings = async () => {
+    const myId = ++settingsFetchGenRef.current;
     try {
       const { data } = await axios.get('/api/admin/manage/system-settings', {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
+      if (myId !== settingsFetchGenRef.current) return;
+
       // Merge fetched data with defaults to ensure all fields exist
       setSettings(prev => ({
         ...prev,
@@ -16639,25 +16691,21 @@ const SystemDefaultSettings = () => {
         notificationSettings: { ...prev.notificationSettings, ...data.notificationSettings },
         brokerageSharing: { ...prev.brokerageSharing, ...data.brokerageSharing }
       }));
-      
-      // Load admin segment/script defaults
+
       if (data.adminSegmentDefaults) {
-        const asd = data.adminSegmentDefaults;
-        const normalized = {};
-        const keys = Object.keys(asd);
-        keys.forEach(k => { normalized[k] = { ...asd[k] }; });
-        setAdminSegDefs(normalized);
+        setAdminSegDefs(normalizeMongoMapOfObjects(data.adminSegmentDefaults));
       }
       if (data.adminScriptDefaults) {
-        const assd = data.adminScriptDefaults;
-        const normalized = {};
-        Object.keys(assd).forEach(k => { normalized[k] = { ...assd[k] }; });
-        setAdminScriptDefs(normalized);
+        setAdminScriptDefs(normalizeMongoMapOfObjects(data.adminScriptDefaults));
       }
     } catch (error) {
-      console.error('Error fetching settings:', error);
+      if (myId === settingsFetchGenRef.current) {
+        console.error('Error fetching settings:', error);
+      }
     } finally {
-      setLoading(false);
+      if (myId === settingsFetchGenRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -16665,14 +16713,32 @@ const SystemDefaultSettings = () => {
     setSaving(true);
     setMessage({ type: '', text: '' });
     try {
+      const cloneJson = (x) => {
+        try {
+          return structuredClone(x);
+        } catch {
+          return JSON.parse(JSON.stringify(x ?? {}));
+        }
+      };
       await axios.put('/api/admin/manage/system-settings', {
-        ...settings,
-        adminSegmentDefaults: adminSegDefs,
-        adminScriptDefaults: adminScriptDefs
+        adminDefaults: settings.adminDefaults,
+        brokerDefaults: settings.brokerDefaults,
+        subBrokerDefaults: settings.subBrokerDefaults,
+        userDefaults: settings.userDefaults,
+        segmentDefaults: settings.segmentDefaults,
+        instrumentDefaults: settings.instrumentDefaults,
+        notificationSettings: settings.notificationSettings,
+        brokerageSharing: settings.brokerageSharing,
+        deliveryPledgeSettings: settings.deliveryPledgeSettings,
+        adminSegmentDefaults: cloneJson(adminSegDefsRef.current),
+        adminScriptDefaults: cloneJson(adminScriptDefsRef.current),
       }, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
       setMessage({ type: 'success', text: 'Settings saved successfully!' });
+      // Invalidate any in-flight GET from page load so it cannot overwrite with stale spreads after save.
+      settingsFetchGenRef.current++;
+      await fetchSettings();
     } catch (error) {
       setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to save settings' });
     } finally {
@@ -17396,26 +17462,47 @@ const SystemDefaultSettings = () => {
                       </>
                     )}
 
-                    {['CRYPTOFUT', 'CRYPTOOPT'].includes(adminDefExpandedSeg) && (
+                    {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(adminDefExpandedSeg) && (
                       <div className="mb-6">
                         <h4 className="text-sm font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h4>
-                        <p className="text-[11px] text-gray-500 mb-2">Total ₹ bid–ask width per coin (half bid / half ask vs exchange). 0 = exchange prices.</p>
-                        <div className="max-w-xs">
-                          <label className="block text-xs text-gray-400 mb-1">Spread (₹ / coin)</label>
-                          <input
-                            type="number"
-                            min={0}
-                            step={1}
-                            value={s.cryptoSpreadInr ?? 0}
-                            onChange={(e) =>
-                              handleAdminSegDefChange(
-                                adminDefExpandedSeg,
-                                'cryptoSpreadInr',
-                                Math.max(0, parseFloat(e.target.value) || 0)
-                              )
-                            }
-                            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                          />
+                        <p className="text-[11px] text-gray-500 mb-2">
+                          Primary: USDT per side on client quotes (bid −, ask +). If $ spread is 0, legacy ₹ total width per coin applies. 0 / 0 = exchange prices.
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={s.cryptoSpreadUsdPerSide ?? 0}
+                              onChange={(e) =>
+                                handleAdminSegDefChange(
+                                  adminDefExpandedSeg,
+                                  'cryptoSpreadUsdPerSide',
+                                  Math.max(0, parseFloat(e.target.value) || 0)
+                                )
+                              }
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin, legacy)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={s.cryptoSpreadInr ?? 0}
+                              onChange={(e) =>
+                                handleAdminSegDefChange(
+                                  adminDefExpandedSeg,
+                                  'cryptoSpreadInr',
+                                  Math.max(0, parseFloat(e.target.value) || 0)
+                                )
+                              }
+                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                            />
+                          </div>
                         </div>
                       </div>
                     )}
@@ -22239,12 +22326,13 @@ const MySegmentSettings = () => {
   const [selectedScriptSegment, setSelectedScriptSegment] = useState(null);
   const [selectedScript, setSelectedScript] = useState(null);
   const [scriptSearchTerm, setScriptSearchTerm] = useState('');
+  const mySettingsFetchGenRef = useRef(0);
 
   const segments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
 
   const defaultSegmentSettings = {
     enabled: false, maxExchangeLots: 100, commissionType: 'PER_LOT', commissionLot: 0,
-    maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, cryptoSpreadInr: 0,
+    maxLots: 50, minLots: 1, orderLots: 10, exposureIntraday: 1, exposureCarryForward: 1, cryptoSpreadInr: 0, cryptoSpreadUsdPerSide: 0,
     cryptoStartTime: '', cryptoClosingTime: '', cryptoReferenceSymbol: '', cryptoPricePerLotInr: 0,
     cryptoLotSizeLots: 1,
     cryptoLotSizeQuantity: 0,
@@ -22261,22 +22349,28 @@ const MySegmentSettings = () => {
   }, []);
 
   const fetchSettings = async () => {
+    const myId = ++mySettingsFetchGenRef.current;
     try {
       const { data } = await axios.get('/api/admin/my-settings', {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
-      const sp = data.segmentPermissions || {};
-      // Normalize: ensure all segments have entries
+      if (myId !== mySettingsFetchGenRef.current) return;
+
+      const sp = normalizeMongoMapOfObjects(data.segmentPermissions || {});
       const normalized = {};
       segments.forEach(seg => {
         normalized[seg] = { ...defaultSegmentSettings, ...(sp[seg] || {}) };
       });
       setSegmentPermissions(normalized);
-      setScriptSettings(data.scriptSettings || {});
+      setScriptSettings(normalizeMongoMapOfObjects(data.scriptSettings || {}));
     } catch (error) {
-      setMessage({ type: 'error', text: 'Failed to load settings' });
+      if (myId === mySettingsFetchGenRef.current) {
+        setMessage({ type: 'error', text: 'Failed to load settings' });
+      }
     } finally {
-      setLoading(false);
+      if (myId === mySettingsFetchGenRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -22326,11 +22420,13 @@ const MySegmentSettings = () => {
     setSaving(true);
     setMessage({ type: '', text: '' });
     try {
-      await axios.put('/api/admin/my-settings', 
+      await axios.put('/api/admin/my-settings',
         { segmentPermissions, scriptSettings },
         { headers: { Authorization: `Bearer ${admin.token}` } }
       );
       setMessage({ type: 'success', text: 'Settings saved successfully! New users will inherit these settings.' });
+      mySettingsFetchGenRef.current++;
+      await fetchSettings();
     } catch (error) {
       setMessage({ type: 'error', text: error.response?.data?.message || 'Failed to save settings' });
     } finally {
@@ -22538,20 +22634,47 @@ const MySegmentSettings = () => {
                 </div>
               </div>
 
-              {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
+              {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
                 <div className="mb-6">
                   <h4 className="text-sm font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h4>
-                  <p className="text-xs text-gray-500 mb-2">Total ₹ bid–ask width per coin. 0 = no markup.</p>
-                  <div className="max-w-xs">
-                    <label className="block text-xs text-gray-400 mb-1">Spread (₹ / coin)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={segmentPermissions[expandedSegment].cryptoSpreadInr ?? 0}
-                      onChange={(e) => handleSegmentChange(expandedSegment, 'cryptoSpreadInr', Math.max(0, parseFloat(e.target.value) || 0))}
-                      className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
-                    />
+                  <p className="text-xs text-gray-500 mb-2">
+                    Primary: USDT per side (bid −, ask +). If $ is 0, legacy ₹ total width per coin applies.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={segmentPermissions[expandedSegment].cryptoSpreadUsdPerSide ?? 0}
+                        onChange={(e) =>
+                          handleSegmentChange(
+                            expandedSegment,
+                            'cryptoSpreadUsdPerSide',
+                            Math.max(0, parseFloat(e.target.value) || 0)
+                          )
+                        }
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin, legacy)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={segmentPermissions[expandedSegment].cryptoSpreadInr ?? 0}
+                        onChange={(e) =>
+                          handleSegmentChange(
+                            expandedSegment,
+                            'cryptoSpreadInr',
+                            Math.max(0, parseFloat(e.target.value) || 0)
+                          )
+                        }
+                        className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm"
+                      />
+                    </div>
                   </div>
                 </div>
               )}
@@ -23667,6 +23790,7 @@ const AllUsersManagement = () => {
     exposureIntraday: 1,
     exposureCarryForward: 1,
     cryptoSpreadInr: 0,
+    cryptoSpreadUsdPerSide: 0,
     cryptoStartTime: '',
     cryptoClosingTime: '',
     cryptoReferenceSymbol: '',
@@ -24651,11 +24775,35 @@ const AllUsersManagement = () => {
                           handleEditSegmentPermissionChange(expandedSegment, field, value)
                         }
                       />
-                      <div className="mb-4">
-                        <h5 className="text-xs font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h5>
-                        <p className="text-[11px] text-gray-500 mb-2">Total ₹ bid–ask width per coin (half bid / half ask). 0 = none.</p>
-                        <div className="max-w-xs">
-                          <label className="block text-xs text-gray-400 mb-1">Spread (₹ / coin)</label>
+                    </>
+                  )}
+
+                  {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
+                    <div className="mb-4">
+                      <h5 className="text-xs font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h5>
+                      <p className="text-[11px] text-gray-500 mb-2">
+                        Primary: USDT per side (bid −, ask +). If $ is 0, legacy ₹ total width applies.
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            value={editFormData.segmentPermissions[expandedSegment].cryptoSpreadUsdPerSide ?? 0}
+                            onChange={(e) =>
+                              handleEditSegmentPermissionChange(
+                                expandedSegment,
+                                'cryptoSpreadUsdPerSide',
+                                Math.max(0, parseFloat(e.target.value) || 0)
+                              )
+                            }
+                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin)</label>
                           <input
                             type="number"
                             min={0}
@@ -24672,7 +24820,7 @@ const AllUsersManagement = () => {
                           />
                         </div>
                       </div>
-                    </>
+                    </div>
                   )}
 
                   {/* Option Buy & Sell Settings */}
@@ -26423,6 +26571,7 @@ const UserManagement = () => {
     exposureIntraday: 1,
     exposureCarryForward: 1,
     cryptoSpreadInr: 0,
+    cryptoSpreadUsdPerSide: 0,
     cryptoStartTime: '',
     cryptoClosingTime: '',
     cryptoReferenceSymbol: '',
@@ -27259,11 +27408,35 @@ const UserManagement = () => {
                           handleEditSegmentPermissionChange(expandedSegment, field, value)
                         }
                       />
-                      <div className="mb-4">
-                        <h5 className="text-xs font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h5>
-                        <p className="text-[11px] text-gray-500 mb-2">Total ₹ bid–ask width per coin (half bid / half ask). 0 = none.</p>
-                        <div className="max-w-xs">
-                          <label className="block text-xs text-gray-400 mb-1">Spread (₹ / coin)</label>
+                    </>
+                  )}
+
+                  {['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSegment) && (
+                    <div className="mb-4">
+                      <h5 className="text-xs font-semibold text-orange-400 mb-2">Client spread (Binance crypto)</h5>
+                      <p className="text-[11px] text-gray-500 mb-2">
+                        Primary: USDT per side (bid −, ask +). If $ is 0, legacy ₹ total width applies.
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Spread ($ per side)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            value={editFormData.segmentPermissions[expandedSegment].cryptoSpreadUsdPerSide ?? 0}
+                            onChange={(e) =>
+                              handleEditSegmentPermissionChange(
+                                expandedSegment,
+                                'cryptoSpreadUsdPerSide',
+                                Math.max(0, parseFloat(e.target.value) || 0)
+                              )
+                            }
+                            className="w-full bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Spread (₹ total / coin)</label>
                           <input
                             type="number"
                             min={0}
@@ -27280,7 +27453,7 @@ const UserManagement = () => {
                           />
                         </div>
                       </div>
-                    </>
+                    </div>
                   )}
 
                   {/* Option Buy & Sell Settings */}

@@ -83,8 +83,27 @@ import {
   sumUpDownSideTicketsInWindow,
   sumBracketSideTicketsInDay,
 } from '../utils/gameStakeSideLimits.js';
+import { plainSegmentDefaultsMap } from '../utils/commissionTypeUnit.js';
 
 const router = express.Router();
+
+const CRYPTO_SPREAD_SEGMENT_CHAIN = ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'];
+
+function pickPositiveCryptoSpreadUsdFromDefaults(asdPlain) {
+  for (const seg of CRYPTO_SPREAD_SEGMENT_CHAIN) {
+    const v = Number(asdPlain?.[seg]?.cryptoSpreadUsdPerSide);
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return 0;
+}
+
+function pickPositiveCryptoSpreadInrFromDefaults(asdPlain) {
+  for (const seg of CRYPTO_SPREAD_SEGMENT_CHAIN) {
+    const v = Number(asdPlain?.[seg]?.cryptoSpreadInr);
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return 0;
+}
 
 /** (Reserved) nudge throttling was removed so every /game-results read forces missing GameResult backfill. */
 
@@ -1469,6 +1488,7 @@ router.get('/settings', protectUser, async (req, res) => {
       /** Admin-only: false = block LIMIT / SL pending orders for this segment (inherits to users under hierarchy). */
       allowLimitPendingOrders: true,
       cryptoSpreadInr: 0,
+      cryptoSpreadUsdPerSide: 0,
       cryptoStartTime: '',
       cryptoClosingTime: '',
       cryptoReferenceSymbol: '',
@@ -1487,10 +1507,10 @@ router.get('/settings', protectUser, async (req, res) => {
 
     let adminSegmentDefaultsPlain = {};
     try {
-      const sys = await SystemSettings.getSettings().catch(() => null);
-      const asd = sys?.adminSegmentDefaults;
-      adminSegmentDefaultsPlain =
-        asd && (asd instanceof Map ? Object.fromEntries(asd) : typeof asd === 'object' ? { ...asd } : {});
+      const sysLean = await SystemSettings.findOne({ settingsType: 'global' })
+        .select('adminSegmentDefaults')
+        .lean();
+      adminSegmentDefaultsPlain = plainSegmentDefaultsMap(sysLean?.adminSegmentDefaults || {});
     } catch {
       adminSegmentDefaultsPlain = {};
     }
@@ -1507,7 +1527,28 @@ router.get('/settings', protectUser, async (req, res) => {
         ...defaultSegment,
         ...fromAdminDefaults,
       };
-      segmentPermissions[segment] = perm ? { ...base, ...perm } : base;
+      if (CRYPTO_SPREAD_SEGMENT_CHAIN.includes(segment)) {
+        const chainUsd = pickPositiveCryptoSpreadUsdFromDefaults(adminSegmentDefaultsPlain);
+        const chainInr = pickPositiveCryptoSpreadInrFromDefaults(adminSegmentDefaultsPlain);
+        if (!(Number(base.cryptoSpreadUsdPerSide) > 0) && chainUsd > 0) {
+          base.cryptoSpreadUsdPerSide = chainUsd;
+        }
+        if (!(Number(base.cryptoSpreadInr) > 0) && chainInr > 0) {
+          base.cryptoSpreadInr = chainInr;
+        }
+      }
+      let merged = perm ? { ...base, ...perm } : { ...base };
+      // User/Admin segment slices often persist schema defaults (0). Treat non-positive spread as "unset"
+      // so Super Admin SystemSettings defaults still flow to the trading UI for crypto/forex spreads.
+      if (perm) {
+        const bu = Number(base.cryptoSpreadUsdPerSide);
+        const mu = Number(merged.cryptoSpreadUsdPerSide);
+        if (!(mu > 0) && bu > 0) merged.cryptoSpreadUsdPerSide = bu;
+        const bi = Number(base.cryptoSpreadInr);
+        const mi = Number(merged.cryptoSpreadInr);
+        if (!(mi > 0) && bi > 0) merged.cryptoSpreadInr = bi;
+      }
+      segmentPermissions[segment] = merged;
     });
     
     res.json({
