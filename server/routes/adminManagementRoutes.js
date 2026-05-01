@@ -50,6 +50,7 @@ import {
   normalizeLegacySystemSegmentDefaultsSlice,
   preserveAllowLimitPendingOrdersFromExisting,
   plainSegmentDefaultsMap,
+  sanitizeSegmentExplicitKeysForSave,
   overlayCryptoSpreadFromRaw,
 } from '../utils/commissionTypeUnit.js';
 import { resolveJackpotPrizePercentForRank } from '../utils/niftyJackpotPrize.js';
@@ -59,6 +60,11 @@ import {
   NiftyJackpotDeclareError,
 } from '../services/niftyJackpotDeclare.js';
 import jwt from 'jsonwebtoken';
+import {
+  getEffectivePlatformChargeConfig,
+  getPlatformChargeReport,
+  runDailyPlatformCharges,
+} from '../services/platformChargeService.js';
 
 const router = express.Router();
 
@@ -952,7 +958,7 @@ router.put('/admins/:id/default-settings', protectAdmin, async (req, res) => {
 // Update admin's segment permissions and script settings (parent admin or SuperAdmin)
 router.put('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
   try {
-    const { segmentPermissions, scriptSettings } = req.body;
+    const { segmentPermissions, scriptSettings, segmentExplicitKeys } = req.body;
     const parentAdmin = req.admin;
     
     const childAdmin = await Admin.findById(req.params.id);
@@ -987,23 +993,28 @@ router.put('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
     if (scriptSettings && typeof scriptSettings === 'object') {
       updateFields.scriptSettings = scriptSettings;
     }
-    
+    if (segmentExplicitKeys !== undefined) {
+      const sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+      if (sanitized !== undefined) updateFields.segmentExplicitKeys = sanitized;
+    }
+
     if (Object.keys(updateFields).length === 0) {
       return res.status(400).json({ message: 'No settings provided to update' });
     }
-    
+
     await Admin.updateOne({ _id: childAdmin._id }, { $set: updateFields });
-    
+
     const updatedAdmin = await Admin.findById(childAdmin._id).select('-password');
-    res.json({ 
+    res.json({
       message: 'Admin segment/script settings updated successfully',
       admin: {
         _id: updatedAdmin._id,
         name: updatedAdmin.name,
         adminCode: updatedAdmin.adminCode,
         segmentPermissions: updatedAdmin.segmentPermissions,
-        scriptSettings: updatedAdmin.scriptSettings
-      }
+        segmentExplicitKeys: updatedAdmin.segmentExplicitKeys,
+        scriptSettings: updatedAdmin.scriptSettings,
+      },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -1013,7 +1024,9 @@ router.put('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
 // Get admin's segment permissions and script settings
 router.get('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
   try {
-    const targetAdmin = await Admin.findById(req.params.id).select('segmentPermissions scriptSettings name adminCode role');
+    const targetAdmin = await Admin.findById(req.params.id).select(
+      'segmentPermissions segmentExplicitKeys scriptSettings name adminCode role'
+    );
     if (!targetAdmin) return res.status(404).json({ message: 'Admin not found' });
     
     // Verify access - SuperAdmin can see all, others only their children
@@ -1031,16 +1044,33 @@ router.get('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
     const scriptSettings = targetAdmin.scriptSettings instanceof Map
       ? Object.fromEntries(targetAdmin.scriptSettings)
       : (targetAdmin.scriptSettings || {});
-    
+
+    let segmentExplicitKeys = targetAdmin.segmentExplicitKeys;
+    if (segmentExplicitKeys instanceof Map) {
+      segmentExplicitKeys = Object.fromEntries(segmentExplicitKeys);
+    }
+
+    let adminSegmentDefaults = {};
+    try {
+      const sysLean = await SystemSettings.findOne({ settingsType: 'global' })
+        .select('adminSegmentDefaults')
+        .lean();
+      adminSegmentDefaults = plainSegmentDefaultsMap(sysLean?.adminSegmentDefaults || {});
+    } catch {
+      adminSegmentDefaults = {};
+    }
+
     res.json({
       admin: {
         _id: targetAdmin._id,
         name: targetAdmin.name,
         adminCode: targetAdmin.adminCode,
-        role: targetAdmin.role
+        role: targetAdmin.role,
       },
       segmentPermissions,
-      scriptSettings
+      segmentExplicitKeys: segmentExplicitKeys || {},
+      scriptSettings,
+      adminSegmentDefaults,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -2220,8 +2250,8 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
     
     if (!user) return res.status(404).json({ message: 'User not found' });
     
-    const { segmentPermissions, scriptSettings, mergeScriptSettings } = req.body;
-    
+    const { segmentPermissions, scriptSettings, mergeScriptSettings, segmentExplicitKeys } = req.body;
+
     const updateFields = {};
     if (segmentPermissions) {
       let plain =
@@ -2269,7 +2299,16 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
         updateFields.scriptSettings = scriptSettings;
       }
     }
-    
+
+    if (segmentExplicitKeys !== undefined) {
+      const sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+      if (sanitized !== undefined) updateFields.segmentExplicitKeys = sanitized;
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({ message: 'No settings provided to update' });
+    }
+
     // Use updateOne to avoid segmentPermissions validation error
     await User.updateOne({ _id: user._id }, { $set: updateFields });
     
@@ -2328,7 +2367,7 @@ router.post('/users/:id/copy-settings', protectAdmin, async (req, res) => {
     
     if (!targetUser) return res.status(404).json({ message: 'Target user not found' });
     
-    const { sourceUserId, segmentPermissions, scriptSettings } = req.body;
+    const { sourceUserId, segmentPermissions, scriptSettings, segmentExplicitKeys } = req.body;
     
     if (!sourceUserId) {
       return res.status(400).json({ message: 'Source user ID is required' });
@@ -2357,11 +2396,16 @@ router.post('/users/:id/copy-settings', protectAdmin, async (req, res) => {
         updateFields.scriptSettings = scriptSettings;
       }
     }
-    
+
+    if (segmentExplicitKeys !== undefined && segmentExplicitKeys !== null && typeof segmentExplicitKeys === 'object') {
+      const sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+      if (sanitized !== undefined) updateFields.segmentExplicitKeys = sanitized;
+    }
+
     if (Object.keys(updateFields).length === 0) {
       return res.status(400).json({ message: 'No settings to copy' });
     }
-    
+
     // Use updateOne to avoid segmentPermissions validation error
     await User.updateOne({ _id: targetUser._id }, { $set: updateFields });
     
@@ -5874,6 +5918,73 @@ router.put('/system-settings', protectAdmin, superAdminOnly, async (req, res) =>
 
     const fresh = await SystemSettings.findOne({ settingsType: 'global' }).lean();
     res.json({ message: 'System settings updated successfully', settings: fresh });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ==================== PLATFORM CHARGES (Super Admin) ====================
+
+router.get('/platform-charges/settings', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const effective = await getEffectivePlatformChargeConfig();
+    const doc = await SystemSettings.findOne({ settingsType: 'global' }).select('platformCharges').lean();
+    res.json({
+      effective,
+      stored: doc?.platformCharges || {},
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.put('/platform-charges/settings', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { enabled, dailyAmountInr, graceDays } = req.body || {};
+    const settings = await SystemSettings.getSettings();
+    if (!settings.platformCharges) settings.platformCharges = {};
+    if (typeof enabled === 'boolean') settings.platformCharges.enabled = enabled;
+    if (dailyAmountInr !== undefined) {
+      const n = Number(dailyAmountInr);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ message: 'dailyAmountInr must be a non-negative number' });
+      }
+      settings.platformCharges.dailyAmountInr = n;
+    }
+    if (graceDays !== undefined) {
+      const g = parseInt(String(graceDays), 10);
+      if (!Number.isFinite(g) || g < 0 || g > 3650) {
+        return res.status(400).json({ message: 'graceDays must be between 0 and 3650' });
+      }
+      settings.platformCharges.graceDays = g;
+    }
+    settings.updatedBy = req.admin._id;
+    settings.markModified('platformCharges');
+    await settings.save();
+    const effective = await getEffectivePlatformChargeConfig();
+    res.json({ message: 'Platform charge settings saved', effective, stored: settings.platformCharges });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/platform-charges/report', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const report = await getPlatformChargeReport(req.query);
+    res.json(report);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/** Manual run (IST charge day defaults to today). Super Admin only. */
+router.post('/platform-charges/run', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const raw = req.body?.chargeDayKey;
+    const chargeDayKey =
+      raw && /^\d{4}-\d{2}-\d{2}$/.test(String(raw)) ? String(raw) : undefined;
+    const summary = await runDailyPlatformCharges({ chargeDayKey });
+    res.json({ message: 'Platform charge run finished', summary });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

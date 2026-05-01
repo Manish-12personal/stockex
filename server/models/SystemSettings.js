@@ -533,6 +533,14 @@ const systemSettingsSchema = new mongoose.Schema({
     default: {}
   },
 
+  /** Daily platform fee (Super Admin): debit user main wallet, credit active Super Admin wallet; IST cron */
+  platformCharges: {
+    enabled: { type: Boolean, default: false },
+    dailyAmountInr: { type: Number, default: 25 },
+    /** First N IST calendar days from signup are free; billing starts on calendar day N+1 */
+    graceDays: { type: Number, default: 15 },
+  },
+
   // Notification Settings
   notificationSettings: {
     marginWarningThreshold: { type: Number, default: 70 }, // % margin usage to trigger warning

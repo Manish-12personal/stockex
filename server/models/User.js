@@ -668,6 +668,11 @@ const userSchema = new mongoose.Schema({
     },
     default: {} // Inherited from parent admin at creation time
   },
+
+  /** Per segment key: explicit user overrides (same semantics as Admin.segmentExplicitKeys). Omit = legacy full overlay on user slice. */
+  segmentExplicitKeys: {
+    type: mongoose.Schema.Types.Mixed,
+  },
   
   // Global Script Settings - Override segment settings for specific scripts (applies to all segments)
   scriptSettings: {

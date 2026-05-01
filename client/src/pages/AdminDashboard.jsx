@@ -13,6 +13,7 @@ import {
   commissionHelperText,
   unitOptionsForCommissionType,
 } from '../utils/commissionTypeUnit.js';
+import { computeSegmentExplicitKeys } from '../utils/segmentExplicitKeys.js';
 import { groupNseFoMarketWatch } from '../utils/nseFnOSectors.js';
 import io from 'socket.io-client';
 import { WALLET_LEDGER_GAME_OPTIONS } from '../constants/walletLedgerGames.js';
@@ -404,6 +405,7 @@ const AdminDashboard = () => {
         { path: `${basePath}/market-control`, icon: TrendingUp, label: 'Market Control' },
         { path: `${basePath}/broker-certificates`, icon: Award, label: 'Broker Certificates' },
         { path: `${basePath}/system-settings`, icon: Settings, label: 'Default Settings' },
+        { path: `${basePath}/platform-charges`, icon: Coins, label: 'Platform Charges' },
         { path: `${basePath}/delivery-pledge`, icon: Layers, label: 'Delivery Pledge' },
         { path: `${basePath}/patti-sharing`, icon: ArrowRightLeft, label: 'Patti Sharing' },
         { path: `${basePath}/game-settings`, icon: Gamepad2, label: 'Game Settings' },
@@ -629,6 +631,7 @@ const AdminDashboard = () => {
           {isSuperAdmin && <Route path="control-hierarchy-wallet" element={<ControlHierarchyWallet />} />}
           {isSuperAdmin && <Route path="broker-certificates" element={<BrokerCertificatesManagement />} />}
           {isSuperAdmin && <Route path="system-settings" element={<SystemDefaultSettings />} />}
+          {isSuperAdmin && <Route path="platform-charges" element={<PlatformChargesManagement />} />}
           {isSuperAdmin && <Route path="delivery-pledge" element={<DeliveryPledgeManagement />} />}
           {isSuperAdmin && <Route path="patti-sharing" element={<PattiSharingManagement />} />}
           {isSuperAdmin && <Route path="game-settings" element={<GameSettingsManagement />} />}
@@ -1392,6 +1395,7 @@ const AdminManagement = () => {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showChargesModal, setShowChargesModal] = useState(false);
+  const [showPermissionsModal, setShowPermissionsModal] = useState(false);
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showRestrictModal, setShowRestrictModal] = useState(false);
   const [showUsersModal, setShowUsersModal] = useState(false);
@@ -2035,6 +2039,19 @@ const AdminManagement = () => {
                   >
                     <Layers size={16} /> Hierarchy
                   </button>
+                  {isSuperAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedAdmin(adm);
+                        setShowPermissionsModal(true);
+                      }}
+                      className="px-3 py-2 bg-yellow-600 hover:bg-yellow-700 rounded text-sm flex items-center gap-1"
+                      title="Capability toggles (brokerage, charges, leverage, …)"
+                    >
+                      <Shield size={16} /> Permissions
+                    </button>
+                  )}
                   <button
                     onClick={() => { setSelectedAdmin(adm); setShowIndividualPattiModal(true); }}
                     className="px-3 py-2 bg-pink-600 hover:bg-pink-700 rounded text-sm flex items-center gap-1"
@@ -2177,6 +2194,15 @@ const AdminManagement = () => {
           viewerRole={admin?.role}
           token={admin.token}
           onClose={() => { setShowChargesModal(false); setSelectedAdmin(null); }}
+          onSuccess={() => { fetchAdmins(); }}
+        />
+      )}
+
+      {showPermissionsModal && selectedAdmin && isSuperAdmin && (
+        <AdminPermissionsModal
+          admin={selectedAdmin}
+          token={admin.token}
+          onClose={() => { setShowPermissionsModal(false); setSelectedAdmin(null); }}
           onSuccess={() => { fetchAdmins(); }}
         />
       )}
@@ -4366,9 +4392,117 @@ const AdminPasswordResetModal = ({ admin: targetAdmin, token, onClose }) => {
 };
 
 
+/** Toggle list: hierarchy capability permissions (brokerage, charges, leverage, …). */
+const ADMIN_HIERARCHY_PERMISSION_TOGGLES = [
+  { key: 'canChangeBrokerage', label: 'Can Change Brokerage', desc: 'Allow modifying brokerage rates' },
+  { key: 'canChangeCharges', label: 'Can Change Charges', desc: 'Allow modifying fees and charges' },
+  { key: 'canChangeLeverage', label: 'Can Change Leverage', desc: 'Allow modifying leverage settings' },
+  { key: 'canChangeLotSettings', label: 'Can Change Lot Settings', desc: 'Allow modifying lot limits' },
+  { key: 'canChangeTradingSettings', label: 'Can Change Trading Settings', desc: 'Allow modifying trading rules' },
+  { key: 'canChangeQuantitySettings', label: 'Can Change Quantity Settings', desc: 'Allow modifying quantity limits' },
+  { key: 'canCreateUsers', label: 'Can Create Users', desc: 'Allow creating new users' },
+  { key: 'canManageFunds', label: 'Can Manage Funds', desc: 'Allow adding/withdrawing funds' },
+];
+
+// Super Admin — hierarchy row: edit child admin capability toggles only
+const AdminPermissionsModal = ({ admin: targetAdmin, token, onClose, onSuccess }) => {
+  const [permissions, setPermissions] = useState({
+    canChangeBrokerage: targetAdmin.permissions?.canChangeBrokerage ?? false,
+    canChangeCharges: targetAdmin.permissions?.canChangeCharges ?? false,
+    canChangeLeverage: targetAdmin.permissions?.canChangeLeverage ?? false,
+    canChangeLotSettings: targetAdmin.permissions?.canChangeLotSettings ?? false,
+    canChangeTradingSettings: targetAdmin.permissions?.canChangeTradingSettings ?? false,
+    canChangeQuantitySettings: targetAdmin.permissions?.canChangeQuantitySettings ?? false,
+    canCreateUsers: targetAdmin.permissions?.canCreateUsers !== false,
+    canManageFunds: targetAdmin.permissions?.canManageFunds !== false,
+  });
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage({ type: '', text: '' });
+    try {
+      await axios.put(
+        `/api/admin/manage/admins/${targetAdmin._id}/permissions`,
+        { permissions },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setMessage({ type: 'success', text: 'Permissions updated successfully' });
+      onSuccess();
+      setTimeout(onClose, 1200);
+    } catch (error) {
+      setMessage({ type: 'error', text: error.response?.data?.message || 'Error updating permissions' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-800 rounded-lg w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto border border-dark-600">
+        <div className="flex justify-between mb-4">
+          <h2 className="text-xl font-bold flex items-center gap-2 text-yellow-400">
+            <Shield size={22} /> Permissions
+          </h2>
+          <button type="button" onClick={onClose} aria-label="Close">
+            <X size={24} />
+          </button>
+        </div>
+        <div className="bg-dark-700 rounded p-3 mb-4">
+          <div className="font-bold">{targetAdmin.name || targetAdmin.username}</div>
+          <div className="text-xs text-purple-400 font-mono">{targetAdmin.adminCode}</div>
+          <div className="text-xs text-gray-500 mt-1">Control what this admin can change for their team</div>
+        </div>
+        {message.text && (
+          <div className={`p-3 rounded mb-4 ${message.type === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+            {message.text}
+          </div>
+        )}
+        <form onSubmit={handleSave} className="space-y-4">
+          <div className="bg-dark-700/50 rounded-lg p-4">
+            <div className="grid grid-cols-1 gap-2">
+              {ADMIN_HIERARCHY_PERMISSION_TOGGLES.map((perm) => (
+                <div key={perm.key} className="flex items-center justify-between p-2 bg-dark-800 rounded">
+                  <div>
+                    <div className="text-sm font-medium">{perm.label}</div>
+                    <div className="text-xs text-gray-500">{perm.desc}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPermissions({ ...permissions, [perm.key]: !permissions[perm.key] })}
+                    className={`w-12 h-6 rounded-full transition shrink-0 ${permissions[perm.key] ? 'bg-green-600' : 'bg-dark-500'}`}
+                  >
+                    <div
+                      className={`w-5 h-5 bg-white rounded-full transition transform ${permissions[perm.key] ? 'translate-x-6' : 'translate-x-0.5'}`}
+                    />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 bg-dark-600 hover:bg-dark-500 py-2 rounded-lg">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 py-2 rounded-lg font-medium"
+            >
+              {loading ? 'Saving…' : 'Save Permissions'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 // Admin Settings Modal - All Settings (General, Segment Permissions, Script Settings)
 const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onSuccess }) => {
-  const [activeTab, setActiveTab] = useState('general');
+  const [activeTab, setActiveTab] = useState(viewerRole === 'SUPER_ADMIN' ? 'segments' : 'general');
   const segmentKeys = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
 
   // General settings state
@@ -4412,6 +4546,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
   // Segment permissions state
   const [segDefs, setSegDefs] = useState({});
+  const [systemSegBaseline, setSystemSegBaseline] = useState({});
   const [expandedSeg, setExpandedSeg] = useState('NSEFUT');
 
   // Script settings state
@@ -4445,6 +4580,9 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
           const normalized = {};
           Object.keys(sp).forEach(k => { normalized[k] = { ...sp[k] }; });
           setSegDefs(normalized);
+        }
+        if (data.adminSegmentDefaults && typeof data.adminSegmentDefaults === 'object') {
+          setSystemSegBaseline({ ...data.adminSegmentDefaults });
         }
         if (data.scriptSettings) {
           const ss = data.scriptSettings;
@@ -4545,27 +4683,34 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
     setLoading(true);
     setMessage({ type: '', text: '' });
     try {
-      // Save general default settings
-      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/default-settings`, {
-        defaultSettings: adminSettings
-      }, { headers: { Authorization: `Bearer ${token}` } });
-      // Save permissions
-      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/permissions`, { permissions }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      // Save leverage settings
-      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/leverage`, {
-        maxLeverageFromParent: Math.max(adminSettings.leverage.intraday, adminSettings.leverage.carryForward),
-        intradayLeverage: adminSettings.leverage.intraday,
-        carryForwardLeverage: adminSettings.leverage.carryForward
-      }, { headers: { Authorization: `Bearer ${token}` } });
+      if (viewerRole !== 'SUPER_ADMIN') {
+        await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/default-settings`, {
+          defaultSettings: adminSettings
+        }, { headers: { Authorization: `Bearer ${token}` } });
+        await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/permissions`, { permissions }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/leverage`, {
+          maxLeverageFromParent: Math.max(adminSettings.leverage.intraday, adminSettings.leverage.carryForward),
+          intradayLeverage: adminSettings.leverage.intraday,
+          carryForwardLeverage: adminSettings.leverage.carryForward
+        }, { headers: { Authorization: `Bearer ${token}` } });
+      }
       // Save segment permissions and script settings
+      const segmentExplicitKeys = computeSegmentExplicitKeys(segDefs, systemSegBaseline);
       await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/segment-settings`, {
         segmentPermissions: segDefs,
-        scriptSettings: scriptDefs
+        scriptSettings: scriptDefs,
+        segmentExplicitKeys,
       }, { headers: { Authorization: `Bearer ${token}` } });
 
-      setMessage({ type: 'success', text: 'All settings updated successfully' });
+      setMessage({
+        type: 'success',
+        text:
+          viewerRole === 'SUPER_ADMIN'
+            ? 'Segment and script settings updated successfully'
+            : 'All settings updated successfully',
+      });
       onSuccess();
       setTimeout(onClose, 1500);
     } catch (error) {
@@ -4589,7 +4734,11 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
         <div className="bg-dark-700 rounded p-3 mb-4">
           <div className="font-bold">{targetAdmin.name || targetAdmin.username}</div>
           <div className="text-xs text-purple-400 font-mono">{targetAdmin.adminCode}</div>
-          <div className="text-xs text-gray-500 mt-1">Override default settings for this specific admin</div>
+          <div className="text-xs text-gray-500 mt-1">
+            {viewerRole === 'SUPER_ADMIN'
+              ? 'Segment & script overrides for this admin (general defaults are edited elsewhere)'
+              : 'Override default settings for this specific admin'}
+          </div>
         </div>
         {message.text && (
           <div className={`p-3 rounded mb-4 ${message.type === 'success' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
@@ -4599,9 +4748,11 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
 
         {/* Tabs */}
         <div className="flex gap-2 mb-5 border-b border-dark-600 pb-3">
-          <button type="button" onClick={() => setActiveTab('general')} className={`px-4 py-2 rounded-t font-medium text-sm ${activeTab === 'general' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}>
-            General Settings
-          </button>
+          {viewerRole !== 'SUPER_ADMIN' && (
+            <button type="button" onClick={() => setActiveTab('general')} className={`px-4 py-2 rounded-t font-medium text-sm ${activeTab === 'general' ? 'bg-purple-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}>
+              General Settings
+            </button>
+          )}
           <button type="button" onClick={() => setActiveTab('segments')} className={`px-4 py-2 rounded-t font-medium text-sm ${activeTab === 'segments' ? 'bg-cyan-600 text-white' : 'bg-dark-700 text-gray-400 hover:bg-dark-600'}`}>
             Segment Permissions
           </button>
@@ -4613,7 +4764,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
         <form onSubmit={handleSave}>
 
           {/* ===== GENERAL SETTINGS TAB ===== */}
-          {activeTab === 'general' && (
+          {viewerRole !== 'SUPER_ADMIN' && activeTab === 'general' && (
             <div className="space-y-5">
               {/* Brokerage Settings */}
               <div className="bg-dark-700/50 rounded-lg p-4">
@@ -4716,20 +4867,11 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                 </div>
               </div>
 
-              {/* Permissions */}
+              {viewerRole !== 'SUPER_ADMIN' && (
               <div className="bg-dark-700/50 rounded-lg p-4">
                 <h3 className="text-sm font-semibold text-yellow-400 mb-3 flex items-center gap-2"><Shield size={16} /> Permissions</h3>
                 <div className="grid grid-cols-1 gap-2">
-                  {[
-                    { key: 'canChangeBrokerage', label: 'Can Change Brokerage', desc: 'Allow modifying brokerage rates' },
-                    { key: 'canChangeCharges', label: 'Can Change Charges', desc: 'Allow modifying fees and charges' },
-                    { key: 'canChangeLeverage', label: 'Can Change Leverage', desc: 'Allow modifying leverage settings' },
-                    { key: 'canChangeLotSettings', label: 'Can Change Lot Settings', desc: 'Allow modifying lot limits' },
-                    { key: 'canChangeTradingSettings', label: 'Can Change Trading Settings', desc: 'Allow modifying trading rules' },
-                    { key: 'canChangeQuantitySettings', label: 'Can Change Quantity Settings', desc: 'Allow modifying quantity limits' },
-                    { key: 'canCreateUsers', label: 'Can Create Users', desc: 'Allow creating new users' },
-                    { key: 'canManageFunds', label: 'Can Manage Funds', desc: 'Allow adding/withdrawing funds' }
-                  ].map(perm => (
+                  {ADMIN_HIERARCHY_PERMISSION_TOGGLES.map(perm => (
                     <div key={perm.key} className="flex items-center justify-between p-2 bg-dark-800 rounded">
                       <div>
                         <div className="text-sm font-medium">{perm.label}</div>
@@ -4743,6 +4885,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                   ))}
                 </div>
               </div>
+              )}
             </div>
           )}
 
@@ -5235,7 +5378,7 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
           <div className="flex gap-3 pt-5">
             <button type="button" onClick={onClose} className="flex-1 bg-dark-600 py-2 rounded">Cancel</button>
             <button type="submit" disabled={loading} className="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded font-medium">
-              {loading ? 'Saving...' : 'Save All Settings'}
+              {loading ? 'Saving...' : viewerRole === 'SUPER_ADMIN' ? 'Save segment & script settings' : 'Save All Settings'}
             </button>
           </div>
         </form>
@@ -21336,6 +21479,334 @@ const SecuritySettings = () => {
   );
 };
 
+// Platform daily fee — Super Admin configuration & reporting
+const PlatformChargesManagement = () => {
+  const { admin, loading: authLoading } = useAuth();
+  const [effective, setEffective] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
+  const [form, setForm] = useState({
+    enabled: false,
+    dailyAmountInr: 25,
+    graceDays: 15,
+  });
+  const [reportFilter, setReportFilter] = useState({
+    day: '',
+    from: '',
+    to: '',
+  });
+  const [report, setReport] = useState(null);
+
+  const loadAll = async () => {
+    if (!admin?.token) return;
+    try {
+      setLoading(true);
+      const [{ data: cfg }, { data: rep }] = await Promise.all([
+        axios.get('/api/admin/manage/platform-charges/settings', {
+          headers: { Authorization: `Bearer ${admin.token}` },
+        }),
+        axios.get('/api/admin/manage/platform-charges/report', {
+          headers: { Authorization: `Bearer ${admin.token}` },
+          params: { limit: 100 },
+        }),
+      ]);
+      const eff = cfg.effective || {};
+      setEffective(eff);
+      setForm({
+        enabled: !!eff.enabled,
+        dailyAmountInr: eff.dailyAmountInr ?? 25,
+        graceDays: eff.graceDays ?? 15,
+      });
+      setReport(rep);
+      setMessage({ type: '', text: '' });
+    } catch (error) {
+      const detail =
+        error.response?.data?.message ||
+        (error.response?.status === 403 ? 'Super Admin access required' : null) ||
+        error.message ||
+        'Unknown error';
+      setMessage({ type: 'error', text: detail });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!admin?.token) {
+      setLoading(false);
+      setMessage({ type: 'error', text: 'Super Admin login required.' });
+      return;
+    }
+    loadAll();
+  }, [admin?.token, authLoading]);
+
+  const saveSettings = async () => {
+    if (!admin?.token) return;
+    try {
+      setSaving(true);
+      await axios.put(
+        '/api/admin/manage/platform-charges/settings',
+        {
+          enabled: form.enabled,
+          dailyAmountInr: Number(form.dailyAmountInr),
+          graceDays: parseInt(String(form.graceDays), 10),
+        },
+        { headers: { Authorization: `Bearer ${admin.token}` } }
+      );
+      setMessage({ type: 'success', text: 'Platform charge settings saved.' });
+      await loadAll();
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error.response?.data?.message || error.message || 'Save failed',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const loadReport = async () => {
+    if (!admin?.token) return;
+    try {
+      setLoading(true);
+      const params = { limit: 100 };
+      if (reportFilter.day?.trim()) params.day = reportFilter.day.trim();
+      else {
+        if (reportFilter.from?.trim()) params.from = reportFilter.from.trim();
+        if (reportFilter.to?.trim()) params.to = reportFilter.to.trim();
+      }
+      const { data } = await axios.get('/api/admin/manage/platform-charges/report', {
+        headers: { Authorization: `Bearer ${admin.token}` },
+        params,
+      });
+      setReport(data);
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error.response?.data?.message || error.message || 'Report load failed',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runNow = async () => {
+    if (!admin?.token) return;
+    if (!window.confirm('Run platform charges for today IST now? (Idempotent per user per day.)')) return;
+    try {
+      setRunning(true);
+      const { data } = await axios.post(
+        '/api/admin/manage/platform-charges/run',
+        {},
+        { headers: { Authorization: `Bearer ${admin.token}` } }
+      );
+      setMessage({
+        type: 'success',
+        text: `Run finished — charged: ${data.summary?.charged ?? 0}, failed: ${data.summary?.failedInsufficient ?? 0}`,
+      });
+      await loadReport();
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error.response?.data?.message || error.message || 'Run failed',
+      });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  if (loading && !effective && !report) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-gray-400">Loading platform charges...</div>
+      </div>
+    );
+  }
+
+  const chargedInfo = report?.totalsByStatus?.CHARGED;
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-2xl font-bold flex items-center gap-3">
+            <Coins className="text-yellow-400" size={28} /> Platform charges
+          </h2>
+          <p className="text-gray-400 mt-1 max-w-2xl">
+            Daily fee debits each real user&apos;s main wallet (cash) at <strong>00:00:01 IST</strong> and credits the
+            active Super Admin wallet. First <strong>N</strong> IST calendar days from signup are free; billing starts on
+            day <strong>N + 1</strong>.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={runNow}
+            disabled={running || saving}
+            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg font-semibold disabled:opacity-50"
+          >
+            {running ? 'Running…' : 'Run now (IST today)'}
+          </button>
+        </div>
+      </div>
+
+      {message.text && (
+        <div
+          className={`mb-4 px-4 py-3 rounded-lg ${
+            message.type === 'success' ? 'bg-green-700/80' : 'bg-red-700/80'
+          }`}
+        >
+          {message.text}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div className="bg-dark-700 rounded-xl p-5 border border-dark-600">
+          <h3 className="text-lg font-semibold mb-4">Configuration</h3>
+          <label className="flex items-center gap-2 mb-4 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.enabled}
+              onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))}
+            />
+            <span>Enable daily platform charge</span>
+          </label>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Daily amount (₹)</label>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={form.dailyAmountInr}
+                onChange={(e) => setForm((f) => ({ ...f, dailyAmountInr: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-600"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Grace period (IST calendar days)</label>
+              <input
+                type="number"
+                min={0}
+                max={3650}
+                step={1}
+                value={form.graceDays}
+                onChange={(e) => setForm((f) => ({ ...f, graceDays: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-600"
+              />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={saveSettings}
+            disabled={saving}
+            className="mt-4 px-6 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save settings'}
+          </button>
+        </div>
+
+        <div className="bg-dark-700 rounded-xl p-5 border border-dark-600">
+          <h3 className="text-lg font-semibold mb-2">Report summary</h3>
+          <p className="text-gray-400 text-sm mb-4">
+            Successful charges in current filter:{' '}
+            <strong className="text-white">{chargedInfo?.count ?? 0}</strong> users,{' '}
+            <strong className="text-white">₹{(chargedInfo?.totalAmount ?? 0).toLocaleString('en-IN')}</strong>
+          </p>
+          <div className="flex flex-wrap gap-2 mb-3">
+            <input
+              type="text"
+              placeholder="Day YYYY-MM-DD"
+              value={reportFilter.day}
+              onChange={(e) => setReportFilter((r) => ({ ...r, day: e.target.value }))}
+              className="px-3 py-2 rounded-lg bg-dark-800 border border-dark-600 text-sm flex-1 min-w-[140px]"
+            />
+            <input
+              type="text"
+              placeholder="From YYYY-MM-DD"
+              value={reportFilter.from}
+              onChange={(e) => setReportFilter((r) => ({ ...r, from: e.target.value }))}
+              className="px-3 py-2 rounded-lg bg-dark-800 border border-dark-600 text-sm flex-1 min-w-[140px]"
+            />
+            <input
+              type="text"
+              placeholder="To YYYY-MM-DD"
+              value={reportFilter.to}
+              onChange={(e) => setReportFilter((r) => ({ ...r, to: e.target.value }))}
+              className="px-3 py-2 rounded-lg bg-dark-800 border border-dark-600 text-sm flex-1 min-w-[140px]"
+            />
+            <button
+              type="button"
+              onClick={loadReport}
+              className="px-4 py-2 bg-dark-600 hover:bg-dark-500 rounded-lg text-sm font-semibold"
+            >
+              Apply filter
+            </button>
+          </div>
+          <p className="text-xs text-gray-500">
+            Rows loaded: {report?.rows?.length ?? 0} (limit {report?.limit ?? 100}). Total matching:{' '}
+            {report?.totalMatching ?? '—'}
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-dark-700 rounded-xl border border-dark-600 overflow-hidden">
+        <div className="px-5 py-3 border-b border-dark-600 font-semibold">Recent ledger rows</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-dark-800 text-gray-400">
+              <tr>
+                <th className="text-left p-3">IST day</th>
+                <th className="text-left p-3">User</th>
+                <th className="text-right p-3">Amount</th>
+                <th className="text-left p-3">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(report?.rows || []).map((row) => (
+                <tr key={row._id} className="border-t border-dark-600">
+                  <td className="p-3 whitespace-nowrap">{row.chargeDayKey}</td>
+                  <td className="p-3">
+                    {row.user?.username || row.user?.userId || '—'}{' '}
+                    <span className="text-gray-500">{row.user?.adminCode ? `(${row.user.adminCode})` : ''}</span>
+                  </td>
+                  <td className="p-3 text-right">₹{Number(row.amount || 0).toLocaleString('en-IN')}</td>
+                  <td className="p-3">
+                    <span
+                      className={
+                        row.status === 'CHARGED'
+                          ? 'text-green-400'
+                          : row.status === 'FAILED'
+                            ? 'text-red-400'
+                            : ''
+                      }
+                    >
+                      {row.status}
+                    </span>
+                    {row.failureReason ? (
+                      <span className="text-gray-500 text-xs ml-2">{row.failureReason}</span>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+              {!report?.rows?.length && (
+                <tr>
+                  <td colSpan={4} className="p-6 text-center text-gray-500">
+                    No rows yet. Enable charges and wait for the IST cron, or use &quot;Run now&quot;.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Referral Distribution Settings (Super Admin only)
 const ReferralDistributionSettings = () => {
   const { admin, loading: authLoading } = useAuth();
@@ -22317,6 +22788,7 @@ const MySegmentSettings = () => {
   const [selectedScriptSegment, setSelectedScriptSegment] = useState(null);
   const [selectedScript, setSelectedScript] = useState(null);
   const [scriptSearchTerm, setScriptSearchTerm] = useState('');
+  const [systemSegBaseline, setSystemSegBaseline] = useState({});
   const mySettingsFetchGenRef = useRef(0);
 
   const segments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
@@ -22354,6 +22826,9 @@ const MySegmentSettings = () => {
       });
       setSegmentPermissions(normalized);
       setScriptSettings(normalizeMongoMapOfObjects(data.scriptSettings || {}));
+      if (data.adminSegmentDefaults && typeof data.adminSegmentDefaults === 'object') {
+        setSystemSegBaseline({ ...data.adminSegmentDefaults });
+      }
     } catch (error) {
       if (myId === mySettingsFetchGenRef.current) {
         setMessage({ type: 'error', text: 'Failed to load settings' });
@@ -22411,8 +22886,9 @@ const MySegmentSettings = () => {
     setSaving(true);
     setMessage({ type: '', text: '' });
     try {
+      const segmentExplicitKeys = computeSegmentExplicitKeys(segmentPermissions, systemSegBaseline);
       await axios.put('/api/admin/my-settings',
-        { segmentPermissions, scriptSettings },
+        { segmentPermissions, scriptSettings, segmentExplicitKeys },
         { headers: { Authorization: `Bearer ${admin.token}` } }
       );
       setMessage({ type: 'success', text: 'Settings saved successfully! New users will inherit these settings.' });
@@ -23766,7 +24242,8 @@ const AllUsersManagement = () => {
   const [selectedScriptSegment, setSelectedScriptSegment] = useState(null);
   const [selectedScript, setSelectedScript] = useState(null);
   const [editFormData, setEditFormData] = useState(null);
-  
+  const [segmentDefaultsBaseline, setSegmentDefaultsBaseline] = useState({});
+
   const defaultSegmentOptions = ['MCX', 'NSEINDEX', 'NSESTOCK', 'BSE', 'EQ', 'NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTOFUT', 'CRYPTOOPT'];
   
   const defaultSegmentSettings = {
@@ -24017,7 +24494,7 @@ const AllUsersManagement = () => {
     }
   };
 
-  const openEditModal = (user) => {
+  const openEditModal = async (user) => {
     setSelectedUser(user);
     const userSegmentKeys = Object.keys(user.segmentPermissions || {});
     const allSegments = Array.from(new Set([
@@ -24041,6 +24518,14 @@ const AllUsersManagement = () => {
     setExpandedSegment(null);
     setSelectedScriptSegment(null);
     setSelectedScript(null);
+    try {
+      const { data } = await axios.get('/api/admin/segment-defaults-baseline', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setSegmentDefaultsBaseline(data.adminSegmentDefaults || {});
+    } catch {
+      setSegmentDefaultsBaseline({});
+    }
     setShowEditModal(true);
   };
 
@@ -24059,13 +24544,18 @@ const AllUsersManagement = () => {
 
   const handleSaveUserSettings = async () => {
     if (!selectedUser || !editFormData) return;
-    
+
     setSaving(true);
     try {
-      await axios.put(`/api/admin/manage/users/${selectedUser._id}/settings`, 
+      const segmentExplicitKeys = computeSegmentExplicitKeys(
+        editFormData.segmentPermissions,
+        segmentDefaultsBaseline
+      );
+      await axios.put(`/api/admin/manage/users/${selectedUser._id}/settings`,
         {
           segmentPermissions: editFormData.segmentPermissions,
-          scriptSettings: editFormData.scriptSettings
+          scriptSettings: editFormData.scriptSettings,
+          segmentExplicitKeys,
         },
         { headers: { Authorization: `Bearer ${admin.token}` } }
       );
@@ -24101,14 +24591,17 @@ const AllUsersManagement = () => {
 
   const handleCopySettings = async () => {
     if (!selectedUser || !targetUserId) return;
-    
+
     setCopying(true);
     try {
-      await axios.post(`/api/admin/manage/users/${targetUserId}/copy-settings`, 
+      await axios.post(`/api/admin/manage/users/${targetUserId}/copy-settings`,
         {
           sourceUserId: selectedUser._id,
           segmentPermissions: selectedUser.segmentPermissions,
-          scriptSettings: selectedUser.scriptSettings
+          scriptSettings: selectedUser.scriptSettings,
+          ...(selectedUser.segmentExplicitKeys != null && typeof selectedUser.segmentExplicitKeys === 'object'
+            ? { segmentExplicitKeys: selectedUser.segmentExplicitKeys }
+            : {}),
         },
         { headers: { Authorization: `Bearer ${admin.token}` } }
       );
@@ -26536,6 +27029,7 @@ const UserManagement = () => {
   const [selectedScriptSegment, setSelectedScriptSegment] = useState(null);
   const [selectedScript, setSelectedScript] = useState(null);
   const [editFormData, setEditFormData] = useState(null);
+  const [segmentDefaultsBaseline, setSegmentDefaultsBaseline] = useState({});
 
   const { currentPage, setCurrentPage, totalPages, paginatedData: paginatedUsers, totalItems } = usePagination(
     users, 20, searchTerm, ['username', 'fullName', 'email', 'phone']
@@ -26725,7 +27219,7 @@ const UserManagement = () => {
     }
   };
 
-  const openSettingsModal = (user) => {
+  const openSettingsModal = async (user) => {
     setSelectedUser(user);
     const userSegmentKeys = Object.keys(user.segmentPermissions || {});
     const allSegments = Array.from(new Set([
@@ -26748,6 +27242,14 @@ const UserManagement = () => {
     });
     setSelectedScriptSegment(null);
     setSelectedScript(null);
+    try {
+      const { data } = await axios.get('/api/admin/segment-defaults-baseline', {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      setSegmentDefaultsBaseline(data.adminSegmentDefaults || {});
+    } catch {
+      setSegmentDefaultsBaseline({});
+    }
     setShowSettingsModal(true);
   };
 
@@ -26766,13 +27268,18 @@ const UserManagement = () => {
 
   const handleSaveUserSettings = async () => {
     if (!selectedUser || !editFormData) return;
-    
+
     setSaving(true);
     try {
-      await axios.put(`/api/admin/users/${selectedUser._id}/settings`, 
+      const segmentExplicitKeys = computeSegmentExplicitKeys(
+        editFormData.segmentPermissions,
+        segmentDefaultsBaseline
+      );
+      await axios.put(`/api/admin/users/${selectedUser._id}/settings`,
         {
           segmentPermissions: editFormData.segmentPermissions,
-          scriptSettings: editFormData.scriptSettings
+          scriptSettings: editFormData.scriptSettings,
+          segmentExplicitKeys,
         },
         { headers: { Authorization: `Bearer ${admin.token}` } }
       );
@@ -26791,7 +27298,7 @@ const UserManagement = () => {
   // Save only a single script's settings (merge with existing)
   const handleSaveScriptSettings = async (symbol) => {
     if (!selectedUser || !editFormData || !editFormData.scriptSettings?.[symbol]) return;
-    
+
     setSaving(true);
     try {
       await axios.put(`/api/admin/manage/users/${selectedUser._id}/script-settings/${encodeURIComponent(symbol)}`, 
@@ -26808,14 +27315,17 @@ const UserManagement = () => {
 
   const handleCopySettings = async () => {
     if (!selectedUser || !targetUserId) return;
-    
+
     setCopying(true);
     try {
-      await axios.post(`/api/admin/manage/users/${targetUserId}/copy-settings`, 
+      await axios.post(`/api/admin/manage/users/${targetUserId}/copy-settings`,
         {
           sourceUserId: selectedUser._id,
           segmentPermissions: selectedUser.segmentPermissions,
-          scriptSettings: selectedUser.scriptSettings
+          scriptSettings: selectedUser.scriptSettings,
+          ...(selectedUser.segmentExplicitKeys != null && typeof selectedUser.segmentExplicitKeys === 'object'
+            ? { segmentExplicitKeys: selectedUser.segmentExplicitKeys }
+            : {}),
         },
         { headers: { Authorization: `Bearer ${admin.token}` } }
       );

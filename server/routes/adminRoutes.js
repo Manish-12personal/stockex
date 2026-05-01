@@ -2,6 +2,8 @@ import express from 'express';
 import {
   alignSegmentDefaultsMap,
   preserveAllowLimitPendingOrdersFromExisting,
+  plainSegmentDefaultsMap,
+  sanitizeSegmentExplicitKeysForSave,
 } from '../utils/commissionTypeUnit.js';
 import bcrypt from 'bcryptjs';
 import Admin from '../models/Admin.js';
@@ -761,12 +763,25 @@ router.put('/users/:id', protectAdmin, async (req, res) => {
   }
 });
 
+// Super Admin segment defaults (baseline for explicit-key computation in admin UI)
+router.get('/segment-defaults-baseline', protectAdmin, async (req, res) => {
+  try {
+    const sysLean = await SystemSettings.findOne({ settingsType: 'global' })
+      .select('adminSegmentDefaults')
+      .lean();
+    const adminSegmentDefaults = plainSegmentDefaultsMap(sysLean?.adminSegmentDefaults || {});
+    res.json({ adminSegmentDefaults });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Save admin's own segment permissions and script settings
 // These settings cascade to all users created under this admin
 router.put('/my-settings', protectAdmin, async (req, res) => {
   try {
-    const { segmentPermissions, scriptSettings } = req.body;
-    
+    const { segmentPermissions, scriptSettings, segmentExplicitKeys } = req.body;
+
     const updateFields = {};
     if (segmentPermissions) {
       let plain =
@@ -784,14 +799,20 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
     if (scriptSettings) {
       updateFields.scriptSettings = scriptSettings;
     }
-    
+    if (segmentExplicitKeys !== undefined) {
+      const sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+      if (sanitized !== undefined) updateFields.segmentExplicitKeys = sanitized;
+    }
+
     if (Object.keys(updateFields).length === 0) {
       return res.status(400).json({ message: 'No settings provided' });
     }
-    
+
     await Admin.updateOne({ _id: req.admin._id }, { $set: updateFields });
-    
-    const updatedAdmin = await Admin.findById(req.admin._id).select('segmentPermissions scriptSettings');
+
+    const updatedAdmin = await Admin.findById(req.admin._id).select(
+      'segmentPermissions segmentExplicitKeys scriptSettings'
+    );
     res.json({ message: 'Admin settings saved successfully', settings: updatedAdmin });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -801,23 +822,44 @@ router.put('/my-settings', protectAdmin, async (req, res) => {
 // Get admin's own segment permissions and script settings
 router.get('/my-settings', protectAdmin, async (req, res) => {
   try {
-    const adminDoc = await Admin.findById(req.admin._id).select('segmentPermissions scriptSettings').lean();
+    const adminDoc = await Admin.findById(req.admin._id)
+      .select('segmentPermissions segmentExplicitKeys scriptSettings')
+      .lean();
     if (!adminDoc) {
       return res.status(404).json({ message: 'Admin not found' });
     }
 
     let segmentPermissions = adminDoc.segmentPermissions || {};
+    let segmentExplicitKeys = adminDoc.segmentExplicitKeys;
     let scriptSettings = adminDoc.scriptSettings || {};
 
     // Mongoose Map fields do not JSON-serialize; lean() yields plain objects — guard Maps anyway.
     if (segmentPermissions instanceof Map) {
       segmentPermissions = Object.fromEntries(segmentPermissions);
     }
+    if (segmentExplicitKeys instanceof Map) {
+      segmentExplicitKeys = Object.fromEntries(segmentExplicitKeys);
+    }
     if (scriptSettings instanceof Map) {
       scriptSettings = Object.fromEntries(scriptSettings);
     }
 
-    res.json({ segmentPermissions, scriptSettings });
+    let adminSegmentDefaults = {};
+    try {
+      const sysLean = await SystemSettings.findOne({ settingsType: 'global' })
+        .select('adminSegmentDefaults')
+        .lean();
+      adminSegmentDefaults = plainSegmentDefaultsMap(sysLean?.adminSegmentDefaults || {});
+    } catch {
+      adminSegmentDefaults = {};
+    }
+
+    res.json({
+      segmentPermissions,
+      segmentExplicitKeys: segmentExplicitKeys || {},
+      scriptSettings,
+      adminSegmentDefaults,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -834,8 +876,8 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
     const user = await User.findOne(query);
     if (!user) return res.status(404).json({ message: 'User not found' });
     
-    const { segmentPermissions, scriptSettings } = req.body;
-    
+    const { segmentPermissions, scriptSettings, segmentExplicitKeys } = req.body;
+
     const updateFields = {};
     if (segmentPermissions) {
       let plain =
@@ -852,7 +894,11 @@ router.put('/users/:id/settings', protectAdmin, async (req, res) => {
     if (scriptSettings) {
       updateFields.scriptSettings = scriptSettings;
     }
-    
+    if (segmentExplicitKeys !== undefined) {
+      const sanitized = sanitizeSegmentExplicitKeysForSave(segmentExplicitKeys);
+      if (sanitized !== undefined) updateFields.segmentExplicitKeys = sanitized;
+    }
+
     // Use updateOne to avoid segmentPermissions validation error
     await User.updateOne({ _id: user._id }, { $set: updateFields });
     

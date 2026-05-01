@@ -627,6 +627,11 @@ const adminSchema = new mongoose.Schema({
     },
     default: {}
   },
+
+  /** Per segment key: field names explicitly saved for this admin (others inherit Super Admin defaults at merge). Omit field = legacy full overlay. */
+  segmentExplicitKeys: {
+    type: mongoose.Schema.Types.Mixed,
+  },
   
   // Script Settings - Admin sets these, they cascade to all users under this admin
   // Override segment settings for specific scripts (e.g., GOLD, NIFTY, etc.)

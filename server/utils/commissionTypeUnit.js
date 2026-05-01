@@ -108,6 +108,19 @@ export function plainSegmentDefaultsMap(val) {
   return out;
 }
 
+/** Client payload → DB-safe segmentExplicitKeys. `undefined` means omit field (no update). */
+export function sanitizeSegmentExplicitKeysForSave(raw) {
+  if (raw === undefined) return undefined;
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const plain = raw instanceof Map ? Object.fromEntries(raw) : raw;
+  const out = {};
+  for (const [seg, keys] of Object.entries(plain)) {
+    if (!Array.isArray(keys)) continue;
+    out[seg] = keys.filter((k) => typeof k === 'string' && k.length > 0);
+  }
+  return out;
+}
+
 /** Align every segment slice in a defaults map (plain object). */
 export function alignSegmentDefaultsMap(segmentDefaults) {
   if (!segmentDefaults || typeof segmentDefaults !== 'object') return segmentDefaults;

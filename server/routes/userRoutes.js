@@ -60,6 +60,7 @@ import GamesWalletLedger from '../models/GamesWalletLedger.js';
 import WalletLedger from '../models/WalletLedger.js';
 import { sendOTP, verifyOTP } from '../services/otpService.js';
 import WalletTransferService from '../services/walletTransferService.js';
+import { buildUserPlatformChargeStatus } from '../services/platformChargeService.js';
 import { getMarketData } from '../services/zerodhaWebSocket.js';
 import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
 import {
@@ -84,6 +85,7 @@ import {
   sumBracketSideTicketsInDay,
 } from '../utils/gameStakeSideLimits.js';
 import { plainSegmentDefaultsMap } from '../utils/commissionTypeUnit.js';
+import TradeService from '../services/tradeService.js';
 
 const router = express.Router();
 
@@ -103,6 +105,17 @@ function pickPositiveCryptoSpreadInrFromDefaults(asdPlain) {
     if (Number.isFinite(v) && v > 0) return v;
   }
   return 0;
+}
+
+function inferInstrumentTypeForUserSettingsSegment(segment) {
+  const u = String(segment || '').toUpperCase();
+  if (
+    u.endsWith('OPT') ||
+    ['NSEOPT', 'MCXOPT', 'BSE-OPT', 'FOREXOPT', 'CRYPTOOPT'].includes(u)
+  ) {
+    return 'OPTIONS';
+  }
+  return undefined;
 }
 
 /** (Reserved) nudge throttling was removed so every /game-results read forces missing GameResult backfill. */
@@ -819,6 +832,19 @@ router.get('/wallet', protectUser, async (req, res) => {
   }
 });
 
+router.get('/platform-charge-status', protectUser, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select(
+      'wallet createdAt isDemo isActive username userId'
+    );
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    const status = await buildUserPlatformChargeStatus(user);
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Wallet-to-wallet transfer
 router.post('/wallet-transfer', protectUser, async (req, res) => {
   try {
@@ -1465,23 +1491,24 @@ router.get('/games/recent-winners', protectUser, async (req, res) => {
 router.get('/settings', protectUser, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select('marginSettings rmsSettings settings segmentPermissions')
-      .lean(); // Use lean() to get plain JS object instead of Mongoose document
-    
+      .select('marginSettings rmsSettings settings segmentPermissions segmentExplicitKeys')
+      .populate({ path: 'admin', select: 'segmentPermissions segmentExplicitKeys' })
+      .lean();
+
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
-    // Default segment settings for all Market Watch segments
-    const defaultSegment = { 
-      enabled: false, 
-      maxExchangeLots: 100, 
-      commissionType: 'PER_LOT', 
-      commissionLot: 0, 
-      maxLots: 50, 
-      minLots: 1, 
-      orderLots: 10, 
-      exposureIntraday: 1, 
+
+    // Default segment settings for all Market Watch segments (fills gaps for trading UI)
+    const defaultSegment = {
+      enabled: false,
+      maxExchangeLots: 100,
+      commissionType: 'PER_LOT',
+      commissionLot: 0,
+      maxLots: 50,
+      minLots: 1,
+      orderLots: 10,
+      exposureIntraday: 1,
       exposureCarryForward: 1,
       allowClientIntradayOnly: true,
       defaultIntradayOnly: false,
@@ -1495,14 +1522,37 @@ router.get('/settings', protectUser, async (req, res) => {
       cryptoPricePerLotInr: 0,
       cryptoLotSizeLots: 1,
       cryptoLotSizeQuantity: 0,
-      optionBuy: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 },
-      optionSell: { allowed: true, commissionType: 'PER_LOT', commission: 0, strikeSelection: 50, maxExchangeLots: 100 }
+      optionBuy: {
+        allowed: true,
+        commissionType: 'PER_LOT',
+        commission: 0,
+        strikeSelection: 50,
+        maxExchangeLots: 100,
+      },
+      optionSell: {
+        allowed: true,
+        commissionType: 'PER_LOT',
+        commission: 0,
+        strikeSelection: 50,
+        maxExchangeLots: 100,
+      },
     };
-    
-    const allSegments = ['NSEFUT', 'NSEOPT', 'MCXFUT', 'MCXOPT', 'NSE-EQ', 'BSE-FUT', 'BSE-OPT', 'CRYPTO', 'FOREXFUT', 'FOREXOPT', 'CRYPTOFUT', 'CRYPTOOPT'];
-    
-    // Build segment permissions with defaults for missing segments
-    const userSegments = user.segmentPermissions || {};
+
+    const allSegments = [
+      'NSEFUT',
+      'NSEOPT',
+      'MCXFUT',
+      'MCXOPT',
+      'NSE-EQ',
+      'BSE-FUT',
+      'BSE-OPT',
+      'CRYPTO',
+      'FOREXFUT',
+      'FOREXOPT',
+      'CRYPTOFUT',
+      'CRYPTOOPT',
+    ];
+
     const segmentPermissions = {};
 
     let adminSegmentDefaultsPlain = {};
@@ -1515,42 +1565,36 @@ router.get('/settings', protectUser, async (req, res) => {
       adminSegmentDefaultsPlain = {};
     }
 
-    const legacyForex = userSegments.FOREX || userSegments.forex;
+    for (const segment of allSegments) {
+      let merged = await TradeService.getUserSegmentSettings(
+        user,
+        segment,
+        inferInstrumentTypeForUserSettingsSegment(segment)
+      );
+      merged = { ...defaultSegment, ...merged };
 
-    allSegments.forEach((segment) => {
-      let perm = userSegments[segment];
-      if (!perm && legacyForex && (segment === 'FOREXFUT' || segment === 'FOREXOPT')) {
-        perm = legacyForex;
-      }
-      const fromAdminDefaults = adminSegmentDefaultsPlain[segment] || {};
-      const base = {
-        ...defaultSegment,
-        ...fromAdminDefaults,
-      };
       if (CRYPTO_SPREAD_SEGMENT_CHAIN.includes(segment)) {
         const chainUsd = pickPositiveCryptoSpreadUsdFromDefaults(adminSegmentDefaultsPlain);
         const chainInr = pickPositiveCryptoSpreadInrFromDefaults(adminSegmentDefaultsPlain);
-        if (!(Number(base.cryptoSpreadUsdPerSide) > 0) && chainUsd > 0) {
-          base.cryptoSpreadUsdPerSide = chainUsd;
+        if (!(Number(merged.cryptoSpreadUsdPerSide) > 0) && chainUsd > 0) {
+          merged = { ...merged, cryptoSpreadUsdPerSide: chainUsd };
         }
-        if (!(Number(base.cryptoSpreadInr) > 0) && chainInr > 0) {
-          base.cryptoSpreadInr = chainInr;
+        if (!(Number(merged.cryptoSpreadInr) > 0) && chainInr > 0) {
+          merged = { ...merged, cryptoSpreadInr: chainInr };
         }
       }
-      let merged = perm ? { ...base, ...perm } : { ...base };
-      // User/Admin segment slices often persist schema defaults (0). Treat non-positive spread as "unset"
-      // so Super Admin SystemSettings defaults still flow to the trading UI for crypto/forex spreads.
-      if (perm) {
-        const bu = Number(base.cryptoSpreadUsdPerSide);
-        const mu = Number(merged.cryptoSpreadUsdPerSide);
-        if (!(mu > 0) && bu > 0) merged.cryptoSpreadUsdPerSide = bu;
-        const bi = Number(base.cryptoSpreadInr);
-        const mi = Number(merged.cryptoSpreadInr);
-        if (!(mi > 0) && bi > 0) merged.cryptoSpreadInr = bi;
-      }
+
+      const fromAdminDefaults = adminSegmentDefaultsPlain[segment] || {};
+      const bu = Number(fromAdminDefaults.cryptoSpreadUsdPerSide);
+      const mu = Number(merged.cryptoSpreadUsdPerSide);
+      if (!(mu > 0) && bu > 0) merged = { ...merged, cryptoSpreadUsdPerSide: bu };
+      const bi = Number(fromAdminDefaults.cryptoSpreadInr);
+      const mi = Number(merged.cryptoSpreadInr);
+      if (!(mi > 0) && bi > 0) merged = { ...merged, cryptoSpreadInr: bi };
+
       segmentPermissions[segment] = merged;
-    });
-    
+    }
+
     res.json({
       marginSettings: user.marginSettings || {},
       rmsSettings: user.rmsSettings || {},

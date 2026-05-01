@@ -424,7 +424,7 @@ class TradingService {
   // TradePro Trading Engine - 16-step validation pipeline
   static async placeOrder(userId, orderData) {
     // ==================== STEP 1: USER ACTIVE CHECK ====================
-    const user = await User.findById(userId).populate('admin', 'segmentPermissions');
+    const user = await User.findById(userId).populate('admin', 'segmentPermissions segmentExplicitKeys');
     if (!user) throw new Error('User not found');
     
     if (!user.isActive) {
@@ -1939,7 +1939,7 @@ class TradingService {
 
     if (isUsdSpotExit && (bidPrice > 0 || askPrice > 0)) {
       try {
-        const u = await User.findById(trade.user).populate('admin', 'segmentPermissions').lean();
+        const u = await User.findById(trade.user).populate('admin', 'segmentPermissions segmentExplicitKeys').lean();
         if (u?.admin?.segmentPermissions) {
           u.parentSegmentPermissions = u.admin.segmentPermissions;
         }

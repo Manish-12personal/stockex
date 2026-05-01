@@ -317,26 +317,66 @@ class TradeService {
   static _sliceFromUserPermissions(user, segmentKey) {
     const sp = user.segmentPermissions;
     if (!sp) return null;
-    if (sp instanceof Map) return TradeService._normalizeSegmentSlice(sp.get(segmentKey));
+
+    const normalizeKey = (slice) => TradeService._normalizeSegmentSlice(slice);
+
+    if (sp instanceof Map) {
+      let slice = sp.get(segmentKey);
+      if (!slice && (segmentKey === 'FOREXFUT' || segmentKey === 'FOREXOPT')) slice = sp.get('FOREX');
+      if (!slice && (segmentKey === 'CRYPTOFUT' || segmentKey === 'CRYPTOOPT')) slice = sp.get('CRYPTO');
+      return normalizeKey(slice);
+    }
+
     const plain = sp.toObject ? sp.toObject() : sp;
     if (!plain || typeof plain !== 'object') return null;
-    return TradeService._normalizeSegmentSlice(
-      plain[segmentKey] || plain[String(segmentKey).toUpperCase()]
-    );
+    let slice =
+      plain[segmentKey] || plain[String(segmentKey).toUpperCase()] || null;
+    if (!slice && (segmentKey === 'FOREXFUT' || segmentKey === 'FOREXOPT')) {
+      slice = plain.FOREX || plain.forex || null;
+    }
+    if (!slice && (segmentKey === 'CRYPTOFUT' || segmentKey === 'CRYPTOOPT')) {
+      slice = plain.CRYPTO || plain.crypto || null;
+    }
+    return normalizeKey(slice);
+  }
+
+  /**
+   * When `explicitMap` is missing/null → undefined (legacy: apply full hierarchy/user overlay).
+   * When present → per-segment string[] of field names to apply from that layer; missing segment → [].
+   */
+  static _explicitKeysForSegment(explicitMapMaybe, segmentKey) {
+    if (explicitMapMaybe === undefined || explicitMapMaybe === null) return undefined;
+    let plain = explicitMapMaybe;
+    if (plain instanceof Map) plain = Object.fromEntries(plain);
+    if (!plain || typeof plain !== 'object') return undefined;
+    const arr = plain[segmentKey];
+    if (Array.isArray(arr)) return arr;
+    return [];
   }
 
   /**
    * Super Admin defaults (adminSegmentDefaults) → Hierarchy (parent Admin) → User.segmentPermissions.
    * exposureIntraday / exposureCarryForward: explicit `> 0` in a layer overrides; `0` keeps lower layers.
+   * Optional explicit key lists: only those keys are taken from hier/user slices (unsaved fields inherit below).
    */
-  static _mergeSegmentStack(systemSlicePlain, hierPlain, userPlain) {
+  static _mergeSegmentStack(
+    systemSlicePlain,
+    hierPlain,
+    hierExplicitKeysMaybe,
+    userPlain,
+    userExplicitKeysMaybe
+  ) {
     const fb = TradeService._SEGMENT_MERGE_FALLBACK;
     let m = { ...fb, ...(systemSlicePlain && typeof systemSlicePlain === 'object' ? systemSlicePlain : {}) };
 
-    const applyOverlay = (overlay) => {
+    const applyOverlay = (overlay, explicitKeysMaybe) => {
       const o = TradeService._normalizeSegmentSlice(overlay);
       if (!o) return;
-      for (const k of Object.keys(o)) {
+      const legacyFullOverlay = explicitKeysMaybe === undefined || explicitKeysMaybe === null;
+      const keysToVisit = legacyFullOverlay ? Object.keys(o) : explicitKeysMaybe;
+
+      for (const k of keysToVisit) {
+        if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
         const vv = o[k];
         if (k === 'exposureIntraday' || k === 'exposureCarryForward') {
           const num = Number(vv);
@@ -355,8 +395,8 @@ class TradeService {
       }
     };
 
-    applyOverlay(hierPlain);
-    applyOverlay(userPlain);
+    applyOverlay(hierPlain, hierExplicitKeysMaybe);
+    applyOverlay(userPlain, userExplicitKeysMaybe);
 
     const ei = Number(m.exposureIntraday);
     const ec = Number(m.exposureCarryForward);
@@ -379,7 +419,16 @@ class TradeService {
     const hierSlice = TradeService._sliceFromHierarchy(user, segmentKey, segment);
     const userSlice = TradeService._sliceFromUserPermissions(user, segmentKey);
 
-    return TradeService._mergeSegmentStack(systemSlicePlain, hierSlice, userSlice);
+    const hierExplicitArr = TradeService._explicitKeysForSegment(user.admin?.segmentExplicitKeys, segmentKey);
+    const userExplicitArr = TradeService._explicitKeysForSegment(user.segmentExplicitKeys, segmentKey);
+
+    return TradeService._mergeSegmentStack(
+      systemSlicePlain,
+      hierSlice,
+      hierExplicitArr,
+      userSlice,
+      userExplicitArr
+    );
   }
   
   // Get user's script-specific settings
@@ -738,7 +787,7 @@ class TradeService {
     await this.checkMarketOpen(tradeData.segment);
     
     // 2. Get user and admin
-    const user = await User.findById(userId).populate('admin', 'segmentPermissions');
+    const user = await User.findById(userId).populate('admin', 'segmentPermissions segmentExplicitKeys');
     if (!user) throw new Error('User not found');
     
     const admin = await Admin.findOne({ adminCode: user.adminCode });

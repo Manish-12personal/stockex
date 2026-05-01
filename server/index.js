@@ -39,6 +39,7 @@ import GameSettings from './models/GameSettings.js';
 import { runInstrumentAvailabilityTicks } from './services/instrumentAvailabilityJobs.js';
 import { startInstrumentExpiryMonitoring } from './services/instrumentExpiryService.js';
 import { autoSquareIntradayOnlyTrades } from './services/eodAutoSquareOffService.js';
+import { runDailyPlatformCharges } from './services/platformChargeService.js';
 import cron from 'node-cron';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -357,3 +358,19 @@ cron.schedule('30 15 * * 1-5', async () => {
 });
 
 console.log('[Cron] Scheduled auto-square for intraday-only trades at 3:30 PM IST (Mon-Fri)');
+
+// Platform daily fee — 00:00:01 IST every calendar day
+cron.schedule(
+  '1 0 0 * * *',
+  async () => {
+    try {
+      console.log('[Cron] Platform charges — IST midnight tick');
+      const summary = await runDailyPlatformCharges();
+      console.log('[Cron] Platform charges summary:', summary);
+    } catch (error) {
+      console.error('[Cron] Platform charges error:', error);
+    }
+  },
+  { timezone: 'Asia/Kolkata' }
+);
+console.log('[Cron] Scheduled platform charges at 00:00:01 IST daily');

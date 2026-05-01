@@ -53,7 +53,9 @@ const walletLedgerSchema = new mongoose.Schema({
       'WALLET_TRANSFER_CREDIT', // Inter-wallet mesh transfer (credit leg)
       'GAME_PROFIT',        // Game profit share distributed through hierarchy
       'REFERRAL_COMMISSION', // Credit to referrer from Super Admin's share of referred user's profit distribution
-      'REFERRAL_COMMISSION_TRANSFER' // Debit from Super Admin pool for referral transfer out
+      'REFERRAL_COMMISSION_TRANSFER', // Debit from Super Admin pool for referral transfer out
+      'PLATFORM_CHARGE_DEBIT',       // User main wallet — daily platform fee
+      'PLATFORM_CHARGE_CREDIT'       // Super Admin wallet — daily platform fee collection
     ],
     required: true
   },
@@ -128,6 +130,9 @@ const walletLedgerSchema = new mongoose.Schema({
     transferId: { type: String },
     sourceWallet: { type: String },
     targetWallet: { type: String },
+    /** PLATFORM_CHARGE_* — IST calendar day charged */
+    chargeDayKey: { type: String },
+    sourceUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
 }, { timestamps: true });
 
