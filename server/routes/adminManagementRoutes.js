@@ -1047,6 +1047,108 @@ router.get('/admins/:id/segment-settings', protectAdmin, async (req, res) => {
   }
 });
 
+const INDIVIDUAL_PATTI_SEGMENT_KEYS = ['EQUITY', 'FNO', 'MCX', 'CRYPTO', 'CURRENCY', 'FOREX'];
+
+function clampSharePct(n, fallback = 50) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.min(100, Math.max(0, Math.round(x)));
+}
+
+function normalizeIndividualPattiSegments(rawSegments) {
+  const out = {};
+  for (const key of INDIVIDUAL_PATTI_SEGMENT_KEYS) {
+    const raw = rawSegments?.[key] || {};
+    const enabled = raw.enabled !== false;
+    let adminPct = Number(raw.adminPercentage);
+    if (!Number.isFinite(adminPct)) {
+      const legacyParent = Number(raw.parentPercentage);
+      adminPct = Number.isFinite(legacyParent)
+        ? clampSharePct(100 - legacyParent)
+        : 50;
+    } else {
+      adminPct = clampSharePct(adminPct);
+    }
+    out[key] = { enabled, adminPercentage: adminPct };
+  }
+  return out;
+}
+
+function deriveBrokerPctFromPattiSegments(segments) {
+  if (!segments || typeof segments !== 'object') return null;
+  const vals = Object.values(segments)
+    .filter((s) => s?.enabled !== false)
+    .map((s) => Number(s.brokerPercentage))
+    .filter((n) => Number.isFinite(n));
+  if (!vals.length) return null;
+  return clampSharePct(vals.reduce((a, b) => a + b, 0) / vals.length);
+}
+
+function verifyAdminHierarchyForChild(parentAdmin, childAdmin) {
+  if (parentAdmin.role === 'SUPER_ADMIN') return true;
+  if (!parentAdmin.canManage(childAdmin.role)) return false;
+  if (childAdmin.parentId && childAdmin.parentId.toString() !== parentAdmin._id.toString()) {
+    const isInHierarchy = childAdmin.hierarchyPath?.some(
+      (id) => id.toString() === parentAdmin._id.toString()
+    );
+    if (!isInHierarchy) return false;
+  }
+  return true;
+}
+
+router.get('/admins/:id/patti-sharing', protectAdmin, async (req, res) => {
+  try {
+    const targetAdmin = await Admin.findById(req.params.id).select(
+      'pattiSharing name adminCode role hierarchyPath parentId'
+    );
+    if (!targetAdmin) return res.status(404).json({ message: 'Admin not found' });
+    if (!verifyAdminHierarchyForChild(req.admin, targetAdmin)) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    const raw = targetAdmin.pattiSharing || {};
+    const segments = normalizeIndividualPattiSegments(raw.segments || {});
+    res.json({
+      enabled: !!raw.enabled,
+      appliedTo: raw.appliedTo || 'ALL_TRADES',
+      segments,
+      notes: raw.notes || '',
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+router.put('/admins/:id/patti-sharing', protectAdmin, async (req, res) => {
+  try {
+    const childAdmin = await Admin.findById(req.params.id);
+    if (!childAdmin) return res.status(404).json({ message: 'Admin not found' });
+    if (!verifyAdminHierarchyForChild(req.admin, childAdmin)) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    const { enabled, appliedTo, segments, notes } = req.body || {};
+    childAdmin.pattiSharing = childAdmin.pattiSharing || {};
+    if (typeof enabled === 'boolean') childAdmin.pattiSharing.enabled = enabled;
+    if (appliedTo === 'ALL_TRADES' || appliedTo === 'SPECIFIC_CLIENTS') {
+      childAdmin.pattiSharing.appliedTo = appliedTo;
+    }
+    if (segments && typeof segments === 'object') {
+      childAdmin.pattiSharing.segments = normalizeIndividualPattiSegments(segments);
+    }
+    if (typeof notes === 'string') childAdmin.pattiSharing.notes = notes;
+    await childAdmin.save();
+    const segmentsOut = normalizeIndividualPattiSegments(childAdmin.pattiSharing.segments || {});
+    res.json({
+      message: 'Patti sharing updated',
+      enabled: !!childAdmin.pattiSharing.enabled,
+      appliedTo: childAdmin.pattiSharing.appliedTo || 'ALL_TRADES',
+      segments: segmentsOut,
+      notes: childAdmin.pattiSharing.notes || '',
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Admin wallet transfer - Transfer funds between different wallets of an admin
 router.post('/admins/:id/wallet-transfer', protectAdmin, async (req, res) => {
   try {
@@ -6043,10 +6145,18 @@ router.post('/patti-sharing', protectAdmin, superAdminOnly, async (req, res) => 
       return res.status(404).json({ message: 'Broker not found' });
     }
 
+    const derivedPct = deriveBrokerPctFromPattiSegments(segments);
+    const bp =
+      brokerPercentage !== undefined && brokerPercentage !== null
+        ? clampSharePct(brokerPercentage)
+        : derivedPct !== null
+          ? derivedPct
+          : 50;
+
     const pattiSharing = new PattiSharing({
       broker,
-      brokerPercentage: brokerPercentage || 50,
-      superAdminPercentage: 100 - (brokerPercentage || 50),
+      brokerPercentage: bp,
+      superAdminPercentage: 100 - bp,
       appliedTo: appliedTo || 'ALL_CLIENTS',
       specificClients: specificClients || [],
       segments: segments || {},
@@ -6078,14 +6188,20 @@ router.put('/patti-sharing/:id', protectAdmin, superAdminOnly, async (req, res) 
       return res.status(404).json({ message: 'Patti sharing not found' });
     }
 
-    if (brokerPercentage !== undefined) {
-      pattiSharing.brokerPercentage = brokerPercentage;
-      pattiSharing.superAdminPercentage = 100 - brokerPercentage;
+    if (segments !== undefined) {
+      pattiSharing.segments = segments;
+    }
+    const derivedAfter = deriveBrokerPctFromPattiSegments(pattiSharing.segments);
+    if (brokerPercentage !== undefined && brokerPercentage !== null) {
+      pattiSharing.brokerPercentage = clampSharePct(brokerPercentage);
+      pattiSharing.superAdminPercentage = 100 - pattiSharing.brokerPercentage;
+    } else if (segments !== undefined && derivedAfter !== null) {
+      pattiSharing.brokerPercentage = derivedAfter;
+      pattiSharing.superAdminPercentage = 100 - derivedAfter;
     }
     if (isActive !== undefined) pattiSharing.isActive = isActive;
     if (appliedTo !== undefined) pattiSharing.appliedTo = appliedTo;
     if (specificClients !== undefined) pattiSharing.specificClients = specificClients;
-    if (segments !== undefined) pattiSharing.segments = segments;
     if (notes !== undefined) pattiSharing.notes = notes;
 
     await pattiSharing.save();

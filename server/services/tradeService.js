@@ -12,6 +12,7 @@ import {
   adminReceivesHierarchyBrokerage,
   resolveHierarchyBrokerageRecipient,
 } from '../utils/adminBrokerageEligibility.js';
+import { resolvePattiSplitForTrade, splitByChildPercent } from './pattiTradeSettlement.js';
 
 class TradeService {
   
@@ -1089,15 +1090,12 @@ class TradeService {
       description: `${trade.symbol} ${trade.side} P&L${isMcx ? ' (MCX)' : ''}`
     });
     
-    // Update admin P&L (B_BOOK) and distribute brokerage through hierarchy
+    // Update admin P&L (B_BOOK) — patti split vs parent; brokerage when not prepaid-at-open
     if (trade.bookType === 'B_BOOK' && admin) {
-      admin.tradingPnL.realized += trade.adminPnL;
-      admin.tradingPnL.todayRealized += trade.adminPnL;
-      admin.stats.totalPnL += trade.adminPnL;
-      await admin.save();
+      await this.applyBBookAdminPnLSplit(trade, admin, user, trade.adminPnL);
 
       if (!user.isDemo && (charges.brokerage || 0) > 0) {
-        await this.distributeBrokerage(trade, charges.brokerage, admin, user);
+        await this.distributeBrokerageWithPatti(trade, charges.brokerage, admin, user);
       }
     }
 
@@ -1106,6 +1104,73 @@ class TradeService {
     return trade;
   }
   
+  /** Split B_BOOK counterparty P&L between book admin and parent using patti % (same as brokerage when patti applies). */
+  static async applyBBookAdminPnLSplit(trade, directAdmin, user, totalAdminPnL) {
+    if (!directAdmin || !Number.isFinite(totalAdminPnL) || totalAdminPnL === 0) return;
+
+    const split = await resolvePattiSplitForTrade(directAdmin, user, trade);
+    if (!split.parentAdmin || split.childPct >= 100) {
+      directAdmin.tradingPnL.realized += totalAdminPnL;
+      directAdmin.tradingPnL.todayRealized += totalAdminPnL;
+      directAdmin.stats.totalPnL += totalAdminPnL;
+      await directAdmin.save();
+      return;
+    }
+
+    const { child, parent } = splitByChildPercent(totalAdminPnL, split.childPct);
+    directAdmin.tradingPnL.realized += child;
+    directAdmin.tradingPnL.todayRealized += child;
+    directAdmin.stats.totalPnL += child;
+    await directAdmin.save();
+
+    const pa = await Admin.findById(split.parentAdmin._id);
+    if (pa && pa.status === 'ACTIVE') {
+      pa.tradingPnL.realized += parent;
+      pa.tradingPnL.todayRealized += parent;
+      pa.stats.totalPnL += parent;
+      await pa.save();
+    }
+  }
+
+  /** Book admin + parent split when patti resolves; else legacy hierarchy distribution. */
+  static async distributeBrokerageWithPatti(trade, totalBrokerage, directAdmin, user) {
+    if (!totalBrokerage || totalBrokerage <= 0 || user?.isDemo || !directAdmin) return;
+
+    const split = await resolvePattiSplitForTrade(directAdmin, user, trade);
+    if (!split.parentAdmin || split.childPct >= 100) {
+      await this.distributeBrokerage(trade, totalBrokerage, directAdmin, user);
+      return;
+    }
+
+    const { child, parent } = splitByChildPercent(totalBrokerage, split.childPct);
+    if (child > 0) {
+      await this.creditBrokerageToAdmin(
+        directAdmin,
+        child,
+        trade,
+        `Book admin ${split.childPct}% (${split.source})`
+      );
+    }
+    if (parent > 0) {
+      const pa = await Admin.findById(split.parentAdmin._id);
+      if (pa && pa.status === 'ACTIVE') {
+        await this.creditBrokerageToAdmin(
+          pa,
+          parent,
+          trade,
+          `Parent ${100 - split.childPct}% (${split.source})`
+        );
+      } else {
+        await this.creditBrokerageToAdmin(
+          directAdmin,
+          parent,
+          trade,
+          `Parent share (${100 - split.childPct}%) — parent inactive, credited to book admin`
+        );
+      }
+    }
+  }
+
   // Distribute brokerage through MLM hierarchy
   // Handles cases where hierarchy levels are missing (e.g., user directly under Admin)
   static async distributeBrokerage(trade, totalBrokerage, directAdmin, user) {

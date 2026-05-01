@@ -692,6 +692,14 @@ const adminSchema = new mongoose.Schema({
     allowCrypto: { type: Boolean, default: true }
   },
 
+  // Hierarchy patti: per-segment share for this admin vs parent (parent % = 100 − this admin %)
+  pattiSharing: {
+    enabled: { type: Boolean, default: false },
+    appliedTo: { type: String, enum: ['ALL_TRADES', 'SPECIFIC_CLIENTS'], default: 'ALL_TRADES' },
+    notes: { type: String, default: '' },
+    segments: { type: mongoose.Schema.Types.Mixed, default: {} }
+  },
+
   // Soft delete - timestamp when admin was deleted (moved to archive)
   deletedAt: {
     type: Date,

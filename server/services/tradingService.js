@@ -1269,9 +1269,9 @@ class TradingService {
       const brk = trade.commission || 0;
       if (brk > 0) {
         try {
-          await TradeService.distributeBrokerage(trade, brk, admin, user);
+          await TradeService.distributeBrokerageWithPatti(trade, brk, admin, user);
         } catch (distErr) {
-          console.error('[placeOrder] distributeBrokerage at open:', distErr?.message || distErr);
+          console.error('[placeOrder] distributeBrokerageWithPatti at open:', distErr?.message || distErr);
         }
       }
     }
@@ -1390,9 +1390,9 @@ class TradingService {
         (trade.commission || 0) > 0
       ) {
         try {
-          await TradeService.distributeBrokerage(trade, trade.commission, adm, usr);
+          await TradeService.distributeBrokerageWithPatti(trade, trade.commission, adm, usr);
         } catch (e) {
-          console.error('[executePendingOrder] distributeBrokerage at open:', e?.message || e);
+          console.error('[executePendingOrder] distributeBrokerageWithPatti at open:', e?.message || e);
         }
       }
       return trade;
@@ -1703,14 +1703,10 @@ class TradingService {
 
     // Distribute brokerage through MLM hierarchy (B_BOOK only)
     if (trade.bookType === 'B_BOOK' && admin) {
-      // Update admin P&L
-      admin.tradingPnL.realized += trade.adminPnL;
-      admin.tradingPnL.todayRealized += trade.adminPnL;
-      admin.stats.totalPnL += trade.adminPnL;
-      await admin.save();
+      await TradeService.applyBBookAdminPnLSplit(trade, admin, user, trade.adminPnL);
 
       if (!user.isDemo && (charges.brokerage || 0) > 0) {
-        await TradeService.distributeBrokerage(trade, charges.brokerage, admin, user);
+        await TradeService.distributeBrokerageWithPatti(trade, charges.brokerage, admin, user);
       }
     }
 

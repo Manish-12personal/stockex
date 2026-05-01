@@ -3015,20 +3015,21 @@ const AdminManagement = () => {
 
 // Individual Patti Sharing Modal - Configure patti sharing for individual admin/broker/sub-broker
 const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
+  const defaultIndividualSegments = () => ({
+    EQUITY: { enabled: true, adminPercentage: 50 },
+    FNO: { enabled: true, adminPercentage: 50 },
+    MCX: { enabled: true, adminPercentage: 50 },
+    CRYPTO: { enabled: true, adminPercentage: 50 },
+    CURRENCY: { enabled: true, adminPercentage: 50 },
+    FOREX: { enabled: true, adminPercentage: 50 }
+  });
+
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pattiConfig, setPattiConfig] = useState({
     enabled: targetAdmin.pattiSharing?.enabled || false,
-    parentPercentage: targetAdmin.pattiSharing?.parentPercentage || 50,
     appliedTo: targetAdmin.pattiSharing?.appliedTo || 'ALL_TRADES',
-    segments: targetAdmin.pattiSharing?.segments || {
-      EQUITY: { enabled: true, parentPercentage: 50 },
-      FNO: { enabled: true, parentPercentage: 50 },
-      MCX: { enabled: true, parentPercentage: 50 },
-      CRYPTO: { enabled: true, parentPercentage: 50 },
-      CURRENCY: { enabled: true, parentPercentage: 50 },
-      FOREX: { enabled: true, parentPercentage: 50 }
-    },
+    segments: targetAdmin.pattiSharing?.segments || defaultIndividualSegments(),
     notes: targetAdmin.pattiSharing?.notes || ''
   });
   const [error, setError] = useState('');
@@ -3047,16 +3048,8 @@ const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
       if (data) {
         setPattiConfig({
           enabled: data.enabled || false,
-          parentPercentage: data.parentPercentage || 50,
           appliedTo: data.appliedTo || 'ALL_TRADES',
-          segments: data.segments || {
-            EQUITY: { enabled: true, parentPercentage: 50 },
-            FNO: { enabled: true, parentPercentage: 50 },
-            MCX: { enabled: true, parentPercentage: 50 },
-            CRYPTO: { enabled: true, parentPercentage: 50 },
-            CURRENCY: { enabled: true, parentPercentage: 50 },
-            FOREX: { enabled: true, parentPercentage: 50 }
-          },
+          segments: data.segments || defaultIndividualSegments(),
           notes: data.notes || ''
         });
       }
@@ -3073,7 +3066,13 @@ const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
     setSuccess('');
 
     try {
-      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/patti-sharing`, pattiConfig, {
+      const payload = {
+        enabled: pattiConfig.enabled,
+        appliedTo: pattiConfig.appliedTo,
+        segments: pattiConfig.segments,
+        notes: pattiConfig.notes
+      };
+      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/patti-sharing`, payload, {
         headers: { Authorization: `Bearer ${admin.token}` }
       });
       setSuccess('Patti sharing configuration saved successfully');
@@ -3099,6 +3098,11 @@ const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
       }
     }));
   };
+
+  const parentShareLabel =
+    targetAdmin.role === 'ADMIN' ? 'Super Admin' :
+    targetAdmin.role === 'BROKER' ? 'Admin' :
+    'Broker';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -3145,22 +3149,6 @@ const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
 
               {pattiConfig.enabled && (
                 <>
-                  {/* Parent Percentage */}
-                  <div>
-                    <label className="block text-sm text-gray-400 mb-2">
-                      Parent Share Percentage ({targetAdmin.role === 'ADMIN' ? 'Super Admin' : targetAdmin.role === 'BROKER' ? 'Admin' : 'Broker'} share)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={pattiConfig.parentPercentage}
-                      onChange={(e) => setPattiConfig(prev => ({ ...prev, parentPercentage: Number(e.target.value) }))}
-                      className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Percentage of brokerage shared with parent</p>
-                  </div>
-
                   {/* Applied To */}
                   <div>
                     <label className="block text-sm text-gray-400 mb-2">Apply To</label>
@@ -3176,29 +3164,44 @@ const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
 
                   {/* Segment-wise Configuration */}
                   <div className="bg-dark-700 rounded-lg p-4">
-                    <h3 className="text-sm font-semibold mb-3">Segment-wise Configuration</h3>
+                    <h3 className="text-sm font-semibold mb-1">Segment-wise configuration</h3>
+                    <p className="text-xs text-gray-500 mb-3">
+                      Set this {targetAdmin.role.toLowerCase()}&apos;s share per segment. {parentShareLabel} gets the remainder (100% − this share).
+                    </p>
                     <div className="space-y-3">
-                      {Object.entries(pattiConfig.segments).map(([segment, config]) => (
-                        <div key={segment} className="flex items-center gap-3 p-3 bg-dark-600 rounded">
-                          <input
-                            type="checkbox"
-                            checked={config.enabled}
-                            onChange={(e) => updateSegmentConfig(segment, 'enabled', e.target.checked)}
-                            className="w-4 h-4"
-                          />
-                          <span className="flex-1 text-sm">{segment}</span>
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            value={config.parentPercentage}
-                            onChange={(e) => updateSegmentConfig(segment, 'parentPercentage', Number(e.target.value))}
-                            disabled={!config.enabled}
-                            className="w-20 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm"
-                          />
-                          <span className="text-xs text-gray-400">%</span>
-                        </div>
-                      ))}
+                      {Object.entries(pattiConfig.segments).map(([segment, config]) => {
+                        const adminPct = Number.isFinite(Number(config.adminPercentage))
+                          ? Math.min(100, Math.max(0, Number(config.adminPercentage)))
+                          : 50;
+                        const parentPct = 100 - adminPct;
+                        return (
+                          <div key={segment} className="flex flex-wrap items-center gap-3 p-3 bg-dark-600 rounded">
+                            <input
+                              type="checkbox"
+                              checked={config.enabled}
+                              onChange={(e) => updateSegmentConfig(segment, 'enabled', e.target.checked)}
+                              className="w-4 h-4"
+                            />
+                            <span className="flex-1 text-sm min-w-[80px]">{segment}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-400 whitespace-nowrap">This admin %</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={adminPct}
+                                onChange={(e) => updateSegmentConfig(segment, 'adminPercentage', Number(e.target.value))}
+                                disabled={!config.enabled}
+                                className="w-20 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm"
+                              />
+                              <span className="text-xs text-gray-400">%</span>
+                            </div>
+                            <span className="text-xs text-yellow-400 whitespace-nowrap">
+                              {parentShareLabel}: {parentPct}%
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -3239,7 +3242,7 @@ const IndividualPattiSharingModal = ({ admin, targetAdmin, onClose }) => {
           </button>
           <button
             onClick={handleSave}
-            disabled={saving || !pattiConfig.enabled}
+            disabled={saving}
             className="flex-1 px-4 py-2 bg-pink-600 hover:bg-pink-700 rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? 'Saving...' : 'Save Configuration'}
@@ -19187,6 +19190,27 @@ const DeliveryPledgeManagement = () => {
   );
 };
 
+const PATTI_BROKER_SEGMENT_KEYS = ['EQUITY', 'FNO', 'MCX', 'CRYPTO', 'CURRENCY'];
+
+function mergeBrokerPattiSegments(raw) {
+  const o = {};
+  PATTI_BROKER_SEGMENT_KEYS.forEach((k) => {
+    o[k] = { enabled: true, brokerPercentage: 50, ...(raw?.[k] || {}) };
+  });
+  return o;
+}
+
+function deriveBrokerPctFromPattiFormSegments(segments) {
+  const entries = Object.entries(segments || {}).filter(([, v]) => v?.enabled !== false);
+  if (!entries.length) return 50;
+  const sum = entries.reduce((acc, [, v]) => {
+    const n = Number(v.brokerPercentage);
+    const pct = Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : 50;
+    return acc + pct;
+  }, 0);
+  return Math.round(sum / entries.length);
+}
+
 // Patti Sharing Management (Super Admin only)
 const PattiSharingManagement = () => {
   const { admin } = useAuth();
@@ -19201,13 +19225,7 @@ const PattiSharingManagement = () => {
     brokerPercentage: 50,
     appliedTo: 'ALL_CLIENTS',
     specificClients: [],
-    segments: {
-      EQUITY: { enabled: true, brokerPercentage: 50 },
-      FNO: { enabled: true, brokerPercentage: 50 },
-      MCX: { enabled: true, brokerPercentage: 50 },
-      CRYPTO: { enabled: true, brokerPercentage: 50 },
-      CURRENCY: { enabled: true, brokerPercentage: 50 }
-    },
+    segments: mergeBrokerPattiSegments({}),
     notes: ''
   });
 
@@ -19254,12 +19272,14 @@ const PattiSharingManagement = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      const brokerPercentage = deriveBrokerPctFromPattiFormSegments(formData.segments);
+      const payload = { ...formData, brokerPercentage };
       if (editingPatti) {
-        await axios.put(`/api/admin/manage/patti-sharing/${editingPatti._id}`, formData, {
+        await axios.put(`/api/admin/manage/patti-sharing/${editingPatti._id}`, payload, {
           headers: { Authorization: `Bearer ${admin.token}` }
         });
       } else {
-        await axios.post('/api/admin/manage/patti-sharing', formData, {
+        await axios.post('/api/admin/manage/patti-sharing', payload, {
           headers: { Authorization: `Bearer ${admin.token}` }
         });
       }
@@ -19302,13 +19322,7 @@ const PattiSharingManagement = () => {
       brokerPercentage: patti.brokerPercentage,
       appliedTo: patti.appliedTo,
       specificClients: patti.specificClients?.map(c => c._id) || [],
-      segments: patti.segments || {
-        EQUITY: { enabled: true, brokerPercentage: 50 },
-        FNO: { enabled: true, brokerPercentage: 50 },
-        MCX: { enabled: true, brokerPercentage: 50 },
-        CRYPTO: { enabled: true, brokerPercentage: 50 },
-        CURRENCY: { enabled: true, brokerPercentage: 50 }
-      },
+      segments: mergeBrokerPattiSegments(patti.segments),
       notes: patti.notes || ''
     });
     if (patti.broker._id) fetchBrokerClients(patti.broker._id);
@@ -19323,13 +19337,7 @@ const PattiSharingManagement = () => {
       brokerPercentage: 50,
       appliedTo: 'ALL_CLIENTS',
       specificClients: [],
-      segments: {
-        EQUITY: { enabled: true, brokerPercentage: 50 },
-        FNO: { enabled: true, brokerPercentage: 50 },
-        MCX: { enabled: true, brokerPercentage: 50 },
-        CRYPTO: { enabled: true, brokerPercentage: 50 },
-        CURRENCY: { enabled: true, brokerPercentage: 50 }
-      },
+      segments: mergeBrokerPattiSegments({}),
       notes: ''
     });
     setBrokerClients([]);
@@ -19380,7 +19388,7 @@ const PattiSharingManagement = () => {
         <div className="text-sm text-gray-300 space-y-1">
           <p>• <span className="text-green-400">When client profits:</span> Broker pays their % to client, SuperAdmin pays the rest</p>
           <p>• <span className="text-red-400">When client loses:</span> Broker receives their % of loss, SuperAdmin receives the rest</p>
-          <p>• Example: If Broker % is 30%, SuperAdmin % is 70%. Client profits ₹10,000 → Broker pays ₹3,000, SuperAdmin pays ₹7,000</p>
+          <p>• Example: MCX broker 40% → SuperAdmin 60% automatically (no separate parent field)</p>
         </div>
       </div>
 
@@ -19407,7 +19415,7 @@ const PattiSharingManagement = () => {
                   
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
                     <div className="bg-dark-700 rounded p-3">
-                      <span className="text-xs text-gray-500 block">Broker Share</span>
+                      <span className="text-xs text-gray-500 block">Broker Share (avg)</span>
                       <span className="text-xl font-bold text-purple-400">{patti.brokerPercentage}%</span>
                     </div>
                     <div className="bg-dark-700 rounded p-3">
@@ -19491,36 +19499,15 @@ const PattiSharingManagement = () => {
                 </div>
               )}
 
-              {/* Global Percentage */}
-              <div className="bg-dark-700 rounded-lg p-4">
-                <label className="block text-sm font-medium mb-3">Default Sharing Percentage</label>
-                <div className="flex items-center gap-4">
-                  <div className="flex-1">
-                    <span className="text-xs text-purple-400 block mb-1">Broker %</span>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={formData.brokerPercentage}
-                      onChange={e => setFormData(prev => ({ ...prev, brokerPercentage: parseInt(e.target.value) }))}
-                      className="w-full"
-                    />
-                  </div>
-                  <div className="text-center w-20">
-                    <span className="text-2xl font-bold text-purple-400">{formData.brokerPercentage}%</span>
-                  </div>
-                  <div className="text-center w-20">
-                    <span className="text-2xl font-bold text-yellow-400">{100 - formData.brokerPercentage}%</span>
-                    <span className="text-xs text-yellow-400 block">SuperAdmin</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Segment-wise Percentages */}
+              {/* Segment-wise broker % — SuperAdmin share is remainder per segment */}
               <div>
-                <label className="block text-sm font-medium mb-3">Segment-wise Sharing (Optional)</label>
+                <label className="block text-sm font-medium mb-1">Segment-wise broker share</label>
+                <p className="text-xs text-gray-500 mb-3">Set broker % per segment. SuperAdmin gets 100% − broker % for that segment.</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {['EQUITY', 'FNO', 'MCX', 'CURRENCY'].map(segment => (
+                  {PATTI_BROKER_SEGMENT_KEYS.map(segment => {
+                    const bp = formData.segments[segment]?.brokerPercentage ?? 50;
+                    const sa = 100 - bp;
+                    return (
                     <div key={segment} className={`bg-dark-700 rounded-lg p-3 ${!formData.segments[segment]?.enabled && 'opacity-50'}`}>
                       <div className="flex items-center justify-between mb-2">
                         <label className="flex items-center gap-2 cursor-pointer">
@@ -19532,20 +19519,24 @@ const PattiSharingManagement = () => {
                           />
                           <span className="font-medium text-sm">{segment}</span>
                         </label>
-                        <span className="text-xs text-purple-400">{formData.segments[segment]?.brokerPercentage || 50}%</span>
+                        <span className="text-xs text-yellow-400">SA {sa}%</span>
                       </div>
-                      {formData.segments[segment]?.enabled && (
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-purple-400">Broker {bp}%</span>
+                      </div>
+                      {formData.segments[segment]?.enabled !== false && (
                         <input
                           type="range"
                           min="0"
                           max="100"
-                          value={formData.segments[segment]?.brokerPercentage || 50}
+                          value={formData.segments[segment]?.brokerPercentage ?? 50}
                           onChange={e => updateSegmentPercentage(segment, parseInt(e.target.value))}
                           className="w-full"
                         />
                       )}
                     </div>
-                  ))}
+                  );
+                  })}
                 </div>
               </div>
 
