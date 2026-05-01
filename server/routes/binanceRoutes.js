@@ -10,13 +10,16 @@ const BINANCE_API_KEY = process.env.BINANCE_API_KEY || '';
 // Authenticated axios instance for higher rate limits
 const binanceAxios = axios.create({
   baseURL: BINANCE_API,
-  headers: BINANCE_API_KEY ? { 'X-MBX-APIKEY': BINANCE_API_KEY } : {}
+  timeout: 20000,
+  headers: BINANCE_API_KEY ? { 'X-MBX-APIKEY': BINANCE_API_KEY } : {},
 });
 
 /** Global api.binance.com spot klines do not support *INR; map display pairs to USDT. */
 function resolveBinanceSpotKlineSymbol(raw) {
   const u = String(raw || '').toUpperCase().trim();
   if (!u) return '';
+  // Binance migrated spot MATIC → POL (legacy symbols still stored in DB / bookmarks)
+  if (u === 'MATICUSDT' || u === 'MATIC') return 'POLUSDT';
   if (u.endsWith('INR') && u.length > 3) return `${u.slice(0, -3)}USDT`;
   if (u.endsWith('USDT') || u.endsWith('BUSD') || u.endsWith('FDUSD')) return u;
   return `${u}USDT`;
@@ -25,44 +28,69 @@ function resolveBinanceSpotKlineSymbol(raw) {
 // Popular crypto symbols to track
 const CRYPTO_SYMBOLS = [
   'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT',
-  'DOGEUSDT', 'SOLUSDT', 'DOTUSDT', 'MATICUSDT', 'LTCUSDT',
-  'AVAXUSDT', 'LINKUSDT', 'ATOMUSDT', 'UNIUSDT', 'XLMUSDT'
+  'DOGEUSDT', 'SOLUSDT', 'DOTUSDT', 'POLUSDT', 'LTCUSDT',
+  'AVAXUSDT', 'LINKUSDT', 'ATOMUSDT', 'UNIUSDT', 'XLMUSDT',
 ];
+
+function tickerRow(ticker) {
+  const symbol = ticker.symbol.replace('USDT', '');
+  return {
+    symbol,
+    pair: ticker.symbol,
+    exchange: 'BINANCE',
+    ltp: parseFloat(ticker.lastPrice),
+    open: parseFloat(ticker.openPrice),
+    high: parseFloat(ticker.highPrice),
+    low: parseFloat(ticker.lowPrice),
+    close: parseFloat(ticker.prevClosePrice),
+    change: parseFloat(ticker.priceChange),
+    changePercent: parseFloat(ticker.priceChangePercent).toFixed(2),
+    volume: parseFloat(ticker.volume),
+    quoteVolume: parseFloat(ticker.quoteVolume),
+    lastUpdated: new Date(),
+  };
+}
 
 // Get real-time prices for all crypto
 router.get('/prices', async (req, res) => {
   try {
-    // Fetch 24hr ticker for all symbols
-    const response = await binanceAxios.get('/ticker/24hr', {
-      params: {
-        symbols: JSON.stringify(CRYPTO_SYMBOLS)
-      }
-    });
+    let rows = [];
+    try {
+      const response = await binanceAxios.get('/ticker/24hr', {
+        params: { symbols: JSON.stringify(CRYPTO_SYMBOLS) },
+      });
+      rows = Array.isArray(response.data) ? response.data : [];
+    } catch (batchErr) {
+      console.warn(
+        'Binance batch /ticker/24hr failed, retrying per-symbol:',
+        batchErr.response?.data?.msg || batchErr.message,
+      );
+      const settled = await Promise.allSettled(
+        CRYPTO_SYMBOLS.map((sym) =>
+          binanceAxios.get('/ticker/24hr', { params: { symbol: sym } }),
+        ),
+      );
+      rows = settled
+        .filter((r) => r.status === 'fulfilled')
+        .map((r) => r.value.data);
+    }
 
     const cryptoData = {};
-    response.data.forEach(ticker => {
-      const symbol = ticker.symbol.replace('USDT', '');
-      cryptoData[ticker.symbol] = {
-        symbol: symbol,
-        pair: ticker.symbol,
-        exchange: 'BINANCE',
-        ltp: parseFloat(ticker.lastPrice),
-        open: parseFloat(ticker.openPrice),
-        high: parseFloat(ticker.highPrice),
-        low: parseFloat(ticker.lowPrice),
-        close: parseFloat(ticker.prevClosePrice),
-        change: parseFloat(ticker.priceChange),
-        changePercent: parseFloat(ticker.priceChangePercent).toFixed(2),
-        volume: parseFloat(ticker.volume),
-        quoteVolume: parseFloat(ticker.quoteVolume),
-        lastUpdated: new Date()
-      };
+    rows.forEach((ticker) => {
+      if (!ticker?.symbol) return;
+      const row = tickerRow(ticker);
+      cryptoData[ticker.symbol] = row;
     });
+
+    if (Object.keys(cryptoData).length === 0) {
+      throw new Error('No Binance ticker rows returned');
+    }
 
     res.json(cryptoData);
   } catch (error) {
-    console.error('Binance price fetch error:', error.message);
-    res.status(500).json({ message: error.message });
+    const detail = error.response?.data?.msg || error.message;
+    console.error('Binance price fetch error:', detail);
+    res.status(500).json({ message: detail });
   }
 });
 
@@ -126,8 +154,9 @@ router.get('/candles/:symbol', async (req, res) => {
 
     res.json(candles);
   } catch (error) {
-    console.error('Binance candle fetch error:', error.message);
-    res.status(500).json({ message: error.message });
+    const detail = error.response?.data?.msg || error.message;
+    console.error('Binance candle fetch error:', detail);
+    res.status(500).json({ message: detail });
   }
 });
 

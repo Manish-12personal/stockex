@@ -602,6 +602,15 @@ const UserDashboard = () => {
         delete pending[k];
       }
       setMarketData((prev) => ({ ...prev, ...batch }));
+      const cryptoSlice = {};
+      for (const row of Object.values(batch)) {
+        if (row?.exchange === 'BINANCE' && row.pair) {
+          cryptoSlice[row.pair] = row;
+        }
+      }
+      if (Object.keys(cryptoSlice).length > 0) {
+        setCryptoData((prev) => ({ ...prev, ...cryptoSlice }));
+      }
       const vals = Object.values(batch);
       const clientReceiveTime = Date.now();
       const nifty = vals.find((d) => d.symbol === 'NIFTY 50' || d.symbol === 'NIFTY');
@@ -761,7 +770,7 @@ const UserDashboard = () => {
               { symbol: 'SOL', name: 'Solana', exchange: 'BINANCE', pair: 'SOLUSDT', isCrypto: true },
               { symbol: 'DOGE', name: 'Dogecoin', exchange: 'BINANCE', pair: 'DOGEUSDT', isCrypto: true },
               { symbol: 'ADA', name: 'Cardano', exchange: 'BINANCE', pair: 'ADAUSDT', isCrypto: true },
-              { symbol: 'MATIC', name: 'Polygon', exchange: 'BINANCE', pair: 'MATICUSDT', isCrypto: true },
+              { symbol: 'POL', name: 'Polygon', exchange: 'BINANCE', pair: 'POLUSDT', isCrypto: true },
               { symbol: 'LTC', name: 'Litecoin', exchange: 'BINANCE', pair: 'LTCUSDT', isCrypto: true },
               { symbol: 'AVAX', name: 'Avalanche', exchange: 'BINANCE', pair: 'AVAXUSDT', isCrypto: true },
             ];
@@ -1731,7 +1740,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
               { symbol: 'DOGE', name: 'Dogecoin', exchange: 'BINANCE', pair: 'DOGEUSDT', isCrypto: true },
               { symbol: 'SOL', name: 'Solana', exchange: 'BINANCE', pair: 'SOLUSDT', isCrypto: true },
               { symbol: 'DOT', name: 'Polkadot', exchange: 'BINANCE', pair: 'DOTUSDT', isCrypto: true },
-              { symbol: 'MATIC', name: 'Polygon', exchange: 'BINANCE', pair: 'MATICUSDT', isCrypto: true },
+              { symbol: 'POL', name: 'Polygon', exchange: 'BINANCE', pair: 'POLUSDT', isCrypto: true },
               { symbol: 'LTC', name: 'Litecoin', exchange: 'BINANCE', pair: 'LTCUSDT', isCrypto: true },
               { symbol: 'AVAX', name: 'Avalanche', exchange: 'BINANCE', pair: 'AVAXUSDT', isCrypto: true },
               { symbol: 'LINK', name: 'Chainlink', exchange: 'BINANCE', pair: 'LINKUSDT', isCrypto: true },
@@ -1805,9 +1814,15 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
   const fetchCryptoData = async () => {
     try {
       const { data } = await axios.get('/api/binance/prices');
-      setCryptoData(data);
+      if (data && typeof data === 'object') {
+        setCryptoData(data);
+        setMarketData((prev) => ({ ...prev, ...data }));
+      }
     } catch (error) {
-      // Silent fail
+      console.warn(
+        'Crypto REST prices unavailable:',
+        error.response?.data?.message || error.message,
+      );
     }
   };
 
@@ -2188,7 +2203,7 @@ const InstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuySell, u
                   { symbol: 'SOL', name: 'Solana', exchange: 'BINANCE', pair: 'SOLUSDT', isCrypto: true },
                   { symbol: 'DOGE', name: 'Dogecoin', exchange: 'BINANCE', pair: 'DOGEUSDT', isCrypto: true },
                   { symbol: 'ADA', name: 'Cardano', exchange: 'BINANCE', pair: 'ADAUSDT', isCrypto: true },
-                  { symbol: 'MATIC', name: 'Polygon', exchange: 'BINANCE', pair: 'MATICUSDT', isCrypto: true },
+                  { symbol: 'POL', name: 'Polygon', exchange: 'BINANCE', pair: 'POLUSDT', isCrypto: true },
                   { symbol: 'LTC', name: 'Litecoin', exchange: 'BINANCE', pair: 'LTCUSDT', isCrypto: true },
                   { symbol: 'AVAX', name: 'Avalanche', exchange: 'BINANCE', pair: 'AVAXUSDT', isCrypto: true },
                 ].map(crypto => {
@@ -5344,7 +5359,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
               { symbol: 'DOGE', name: 'Dogecoin', exchange: 'BINANCE', pair: 'DOGEUSDT', isCrypto: true },
               { symbol: 'SOL', name: 'Solana', exchange: 'BINANCE', pair: 'SOLUSDT', isCrypto: true },
               { symbol: 'DOT', name: 'Polkadot', exchange: 'BINANCE', pair: 'DOTUSDT', isCrypto: true },
-              { symbol: 'MATIC', name: 'Polygon', exchange: 'BINANCE', pair: 'MATICUSDT', isCrypto: true },
+              { symbol: 'POL', name: 'Polygon', exchange: 'BINANCE', pair: 'POLUSDT', isCrypto: true },
               { symbol: 'LTC', name: 'Litecoin', exchange: 'BINANCE', pair: 'LTCUSDT', isCrypto: true },
               { symbol: 'AVAX', name: 'Avalanche', exchange: 'BINANCE', pair: 'AVAXUSDT', isCrypto: true },
               { symbol: 'LINK', name: 'Chainlink', exchange: 'BINANCE', pair: 'LINKUSDT', isCrypto: true },
@@ -5555,9 +5570,14 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
     const fetchCryptoData = async () => {
       try {
         const { data } = await axios.get('/api/binance/prices');
-        setCryptoData(data || {});
+        if (data && typeof data === 'object') {
+          setCryptoData(data);
+        }
       } catch (error) {
-        // Silent fail
+        console.warn(
+          'Crypto REST prices unavailable (mobile):',
+          error.response?.data?.message || error.message,
+        );
       }
     };
     fetchCryptoData();
@@ -5733,7 +5753,7 @@ const MobileInstrumentsPanel = ({ selectedInstrument, onSelectInstrument, onBuyS
                 { symbol: 'SOL', name: 'Solana', exchange: 'BINANCE', pair: 'SOLUSDT', isCrypto: true },
                 { symbol: 'DOGE', name: 'Dogecoin', exchange: 'BINANCE', pair: 'DOGEUSDT', isCrypto: true },
                 { symbol: 'ADA', name: 'Cardano', exchange: 'BINANCE', pair: 'ADAUSDT', isCrypto: true },
-                { symbol: 'MATIC', name: 'Polygon', exchange: 'BINANCE', pair: 'MATICUSDT', isCrypto: true },
+                { symbol: 'POL', name: 'Polygon', exchange: 'BINANCE', pair: 'POLUSDT', isCrypto: true },
               ].map(crypto => {
                 const priceData = cryptoData[crypto.pair] || marketData[crypto.pair] || { ltp: 0, changePercent: 0 };
                 return (

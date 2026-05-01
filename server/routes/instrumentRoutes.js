@@ -1462,7 +1462,7 @@ router.post('/admin/seed-crypto', protectAdmin, superAdminOnly, async (req, res)
       { symbol: 'DOGE', name: 'Dogecoin', pair: 'DOGEUSDT', lotSize: 100 },
       { symbol: 'SOL', name: 'Solana', pair: 'SOLUSDT', lotSize: 0.1 },
       { symbol: 'DOT', name: 'Polkadot', pair: 'DOTUSDT', lotSize: 1 },
-      { symbol: 'MATIC', name: 'Polygon', pair: 'MATICUSDT', lotSize: 10 },
+      { symbol: 'POL', name: 'Polygon', pair: 'POLUSDT', lotSize: 10 },
       { symbol: 'LTC', name: 'Litecoin', pair: 'LTCUSDT', lotSize: 0.1 },
       { symbol: 'AVAX', name: 'Avalanche', pair: 'AVAXUSDT', lotSize: 0.1 },
       { symbol: 'LINK', name: 'Chainlink', pair: 'LINKUSDT', lotSize: 1 },

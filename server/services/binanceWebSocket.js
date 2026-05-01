@@ -16,8 +16,8 @@ const BINANCE_API_SECRET = process.env.BINANCE_API_SECRET || '';
 // Crypto symbols to track
 const CRYPTO_SYMBOLS = [
   'btcusdt', 'ethusdt', 'bnbusdt', 'xrpusdt', 'adausdt',
-  'dogeusdt', 'solusdt', 'dotusdt', 'maticusdt', 'ltcusdt',
-  'avaxusdt', 'linkusdt', 'atomusdt', 'uniusdt', 'xlmusdt'
+  'dogeusdt', 'solusdt', 'dotusdt', 'polusdt', 'ltcusdt',
+  'avaxusdt', 'linkusdt', 'atomusdt', 'uniusdt', 'xlmusdt',
 ];
 
 // Initialize Binance WebSocket with Socket.IO instance
