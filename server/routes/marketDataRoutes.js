@@ -1,6 +1,7 @@
 import express from 'express';
 import axios from 'axios';
 import { fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
+import { coinGeckoConfigured, fetchOhlcCandlesUsd } from '../services/coingeckoService.js';
 
 const router = express.Router();
 
@@ -47,10 +48,8 @@ function mockPeriodMsForInterval(interval) {
 // Get BTC historical data with interval parameter (5m, 15m, 30m, 1h)
 router.get('/btc-history', async (req, res) => {
   try {
-    // Parse interval parameter (default 5m)
     const intervalParam = req.query.interval || '5m';
-    
-    // Map frontend interval to Binance interval
+
     const intervalMap = {
       '5m': '5m',
       '5minute': '5m',
@@ -61,38 +60,81 @@ router.get('/btc-history', async (req, res) => {
       '1h': '1h',
       '1hour': '1h',
       '60m': '1h',
-      '60minute': '1h'
+      '60minute': '1h',
     };
     const binanceInterval = intervalMap[intervalParam] || '5m';
-    
-    // Fetch from Binance API
+
+    if (coinGeckoConfigured()) {
+      let raw;
+      try {
+        raw = await fetchOhlcCandlesUsd('BTCUSDT', binanceInterval);
+      } catch (e) {
+        console.warn('[btc-history] CoinGecko:', e?.response?.data || e?.message || e);
+        return res.status(502).json({
+          success: false,
+          message: 'Failed to fetch BTC historical data from CoinGecko',
+          data: [],
+        });
+      }
+      const data = (Array.isArray(raw) ? raw : [])
+        .slice(-100)
+        .map((c) => ({
+          time: c.time,
+          timestamp: new Date(c.time * 1000).toISOString(),
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volume ?? 0,
+        }));
+      console.log(
+        `BTC History (CoinGecko): Returning ${data.length} candles (interval: ${binanceInterval})`,
+      );
+      return res.json({ success: true, interval: binanceInterval, source: 'coingecko', data });
+    }
+
     const response = await axios.get('https://api.binance.com/api/v3/klines', {
       params: {
         symbol: 'BTCUSDT',
         interval: binanceInterval,
-        limit: 100 // Last 100 candles
-      }
+        limit: 100,
+      },
+      timeout: 20000,
+      validateStatus: (s) => s < 500,
     });
 
-    // Format Binance data to our format
-    const data = response.data.map(candle => ({
-      time: Math.floor(candle[0] / 1000), // Convert milliseconds to seconds for lightweight-charts
+    if (response.status !== 200 || !Array.isArray(response.data)) {
+      const msg =
+        response.data?.msg ||
+        response.statusText ||
+        `HTTP ${response.status}`;
+      console.warn('[btc-history] Binance:', msg);
+      return res.status(502).json({
+        success: false,
+        message: 'BTC historical data unavailable from this region',
+        data: [],
+      });
+    }
+
+    const data = response.data.map((candle) => ({
+      time: Math.floor(candle[0] / 1000),
       timestamp: new Date(candle[0]).toISOString(),
       open: parseFloat(candle[1]),
       high: parseFloat(candle[2]),
       low: parseFloat(candle[3]),
       close: parseFloat(candle[4]),
-      volume: parseFloat(candle[5])
+      volume: parseFloat(candle[5]),
     }));
 
     console.log(`BTC History: Returning ${data.length} candles (interval: ${binanceInterval})`);
-    res.json({ success: true, interval: binanceInterval, data });
+    res.json({ success: true, interval: binanceInterval, source: 'binance', data });
   } catch (error) {
-    console.error('Error fetching BTC history:', error);
-    res.status(500).json({ 
-      success: false, 
+    const st = error?.response?.status;
+    console.warn('[btc-history]', st || error?.message || error);
+    res.status(500).json({
+      success: false,
       message: 'Failed to fetch BTC historical data',
-      data: [] 
+      data: [],
     });
   }
 });

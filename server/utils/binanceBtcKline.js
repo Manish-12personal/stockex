@@ -5,11 +5,25 @@ import {
   fetchBtcSimpleUsd,
   fetchBtcUsdPricesInRangeMs,
   pickUsdPriceNearestMs,
-  openCloseFromUsdPricesInWindow,
+  openCloseFromUsdPricesApprox,
 } from '../services/coingeckoService.js';
 
 const cache = new Map();
 const CACHE_MS = 3600000;
+
+let binance429LogAt = 0;
+function warnBinanceBtcKline(scope, err) {
+  const msg = err?.message || String(err);
+  if (/status code 429|\b429\b/i.test(msg)) {
+    const t = Date.now();
+    if (t - binance429LogAt > 120_000) {
+      binance429LogAt = t;
+      console.warn(`[binanceBtcKline] ${scope} rate limited (429)`);
+    }
+    return;
+  }
+  console.warn(`[binanceBtcKline] ${scope}`, msg);
+}
 
 /**
  * Absolute UTC ms for IST calendar day + seconds since 00:00 IST.
@@ -81,7 +95,7 @@ export async function fetchBtcUsdt1mCloseAtIstRef(istDayKey, secSinceMidnightIST
     }
     return close;
   } catch (e) {
-    console.warn('[binanceBtcKline]', e?.message || e);
+    warnBinanceBtcKline('1m IST ref', e);
     return null;
   }
 }
@@ -105,7 +119,7 @@ export async function fetchBtcFifteenMinuteIstWindowOhlc(istDayKey, openRefSec, 
   try {
     if (coinGeckoConfigured()) {
       const pts = await fetchBtcUsdPricesInRangeMs(t0 - 120_000, t1 + 120_000);
-      const oc = openCloseFromUsdPricesInWindow(pts, t0, t1);
+      const oc = openCloseFromUsdPricesApprox(pts, t0, t1);
       if (oc != null) {
         const ohlc = {
           open: oc.open,
@@ -150,7 +164,7 @@ export async function fetchBtcFifteenMinuteIstWindowOhlc(istDayKey, openRefSec, 
     cache.set(cacheKey, { t: now, ohlc });
     return ohlc;
   } catch (e) {
-    console.warn('[binanceBtcKline] 15m ist window', e?.message || e);
+    warnBinanceBtcKline('15m ist window', e);
   }
   return null;
 }
@@ -193,7 +207,7 @@ export async function fetchBtcUsdtSpotRest() {
       return p;
     }
   } catch (e) {
-    console.warn('[binanceBtcKline] spot rest', e?.message || e);
+    warnBinanceBtcKline('spot rest', e);
   }
   return null;
 }

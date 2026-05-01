@@ -1,5 +1,6 @@
 import express from 'express';
 import axios from 'axios';
+import { coinGeckoConfigured } from '../services/coingeckoService.js';
 
 const router = express.Router();
 
@@ -79,17 +80,21 @@ router.get('/usdinr', async (req, res) => {
     }
 
     let implied = {};
-    try {
-      implied = await fetchBinanceImpliedInrPerUsdtByBase();
-    } catch (e) {
-      console.warn('[usdinr] implied INR fetch:', e?.message || e);
+    if (!coinGeckoConfigured()) {
+      try {
+        implied = await fetchBinanceImpliedInrPerUsdtByBase();
+      } catch (e) {
+        console.warn('[usdinr] implied INR fetch:', e?.message || e);
+      }
     }
 
     let next = null;
-    try {
-      next = await fetchBinanceUsdtInr();
-    } catch (e) {
-      // USDTINR may be unavailable in some regions — fall through
+    if (!coinGeckoConfigured()) {
+      try {
+        next = await fetchBinanceUsdtInr();
+      } catch {
+        // USDTINR may be unavailable in some regions — fall through
+      }
     }
     if (!next) {
       try {

@@ -172,16 +172,52 @@ export async function fetchBtcSimpleUsd() {
 }
 
 /** `[[ms, price], ...]` — CoinGecko `market_chart/range` (`from`/`to` in unix seconds). */
+const btcRangeCache = new Map();
+const BTC_RANGE_CACHE_MS = 90_000;
+let btcRangeChain = Promise.resolve();
+let btcRange429LogAt = 0;
+
 export async function fetchBtcUsdPricesInRangeMs(fromMs, toMs) {
   const from = Math.floor(fromMs / 1000);
   const to = Math.floor(toMs / 1000);
   if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return [];
-  const { data } = await axios.get(`${CG_BASE}/coins/bitcoin/market_chart/range`, {
-    params: { vs_currency: 'usd', from, to },
-    headers: cgAuthHeaders(),
-    timeout: 18000,
-  });
-  return Array.isArray(data?.prices) ? data.prices : [];
+
+  const ck = `${from}|${to}`;
+  const hit = btcRangeCache.get(ck);
+  const now = Date.now();
+  if (hit && now - hit.t < BTC_RANGE_CACHE_MS) return hit.pts;
+
+  const run = async () => {
+    try {
+      const { data } = await axios.get(`${CG_BASE}/coins/bitcoin/market_chart/range`, {
+        params: { vs_currency: 'usd', from, to },
+        headers: cgAuthHeaders(),
+        timeout: 18000,
+      });
+      const pts = Array.isArray(data?.prices) ? data.prices : [];
+      btcRangeCache.set(ck, { t: Date.now(), pts });
+      return pts;
+    } catch (e) {
+      const st = e?.response?.status;
+      if (st === 429) {
+        const last = btcRange429LogAt;
+        if (Date.now() - last > 120_000) {
+          btcRange429LogAt = Date.now();
+          console.warn('[coingecko] BTC market_chart/range rate limited (429) — backing off');
+        }
+      } else {
+        console.warn('[coingecko] BTC market_chart/range:', e?.response?.data || e?.message || e);
+      }
+      return [];
+    }
+  };
+
+  const done = btcRangeChain.then(run, run);
+  btcRangeChain = done.then(
+    () => {},
+    () => {},
+  );
+  return done;
 }
 
 export function pickUsdPriceNearestMs(targetMs, pricePoints) {
@@ -199,6 +235,16 @@ export function pickUsdPriceNearestMs(targetMs, pricePoints) {
     }
   }
   return best;
+}
+
+/** If no samples strictly inside [t0,t1], approximate open/close by nearest timestamps. */
+export function openCloseFromUsdPricesApprox(pricePoints, t0Ms, t1Ms) {
+  const strict = openCloseFromUsdPricesInWindow(pricePoints, t0Ms, t1Ms);
+  if (strict) return strict;
+  const o = pickUsdPriceNearestMs(t0Ms, pricePoints);
+  const c = pickUsdPriceNearestMs(t1Ms, pricePoints);
+  if (o != null && c != null) return { open: o, close: c };
+  return null;
 }
 
 /** First / last USD sample whose timestamps fall inside [t0Ms, t1Ms] (inclusive). */
