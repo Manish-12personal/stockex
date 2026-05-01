@@ -3841,6 +3841,7 @@ const TradingPanel = ({
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showSettingsInfo, setShowSettingsInfo] = useState(false);
+  const [tradeConfirmOpen, setTradeConfirmOpen] = useState(false);
   
   // Crypto: amount-mode = USD notional (converted to ₹ for wallet/API); units = base qty; lots = stepped lots
   const [cryptoAmount, setCryptoAmount] = useState('150');
@@ -4048,6 +4049,42 @@ const TradingPanel = ({
                 ? parseInt(lots || 0) * lotSize  // Other FnO lots mode: lots * lotSize
                 : parseInt(lots || 0));  // Other segments: direct quantity
 
+  const buildMarginPreviewBody = (sideLower) => {
+    const usdSpotLots = isUsdSpot && isCryptoOnly && cryptoInputMode === 'lots'
+      ? roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0)
+      : null;
+    const body = {
+      symbol: instrument.symbol,
+      tradingSymbol: instrument.tradingSymbol || instrument.symbol,
+      exchange: instrument.exchange,
+      token: instrument.token != null ? String(instrument.token) : undefined,
+      segment: isForex
+        ? (instrument.displaySegment || forexWatchlistSegmentFromInstrument(instrument))
+        : (instrument.displaySegment || instrument.segment),
+      instrumentType: instrument.instrumentType,
+      optionType: instrument.optionType || null,
+      strikePrice: instrument.strike || null,
+      category: instrument.category,
+      productType,
+      side: String(sideLower || orderType).toUpperCase(),
+      quantity: totalQuantity,
+      lotSize: isUsdSpot ? 1 : lotSize,
+      price: isUsdSpot ? Number(livePrice) : parseFloat(price),
+      leverage: 1,
+      isCrypto: isCryptoOnly,
+      isForex: isForex
+    };
+    if (!isUsdSpot) {
+      body.lots = parseInt(lots, 10);
+    } else if (usdSpotLots != null) {
+      body.lots = usdSpotLots;
+      body.cryptoLotStepOrder = true;
+    } else {
+      body.cryptoLotStepOrder = false;
+    }
+    return body;
+  };
+
   // Fetch margin preview when inputs change
   useEffect(() => {
     const fetchMarginPreview = async () => {
@@ -4060,38 +4097,7 @@ const TradingPanel = ({
       }
 
       try {
-        const usdSpotLots = isUsdSpot && isCryptoOnly && cryptoInputMode === 'lots'
-          ? roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0)
-          : null;
-        const body = {
-          symbol: instrument.symbol,
-          tradingSymbol: instrument.tradingSymbol || instrument.symbol,
-          exchange: instrument.exchange,
-          token: instrument.token != null ? String(instrument.token) : undefined,
-          segment: isForex
-            ? (instrument.displaySegment || forexWatchlistSegmentFromInstrument(instrument))
-            : (instrument.displaySegment || instrument.segment),
-          instrumentType: instrument.instrumentType,
-          optionType: instrument.optionType || null,
-          strikePrice: instrument.strike || null,
-          category: instrument.category,
-          productType,
-          side: orderType.toUpperCase(),
-          quantity: totalQuantity,
-          lotSize: isUsdSpot ? 1 : lotSize,
-          price: isUsdSpot ? Number(livePrice) : parseFloat(price),
-          leverage: 1,
-          isCrypto: isCryptoOnly,
-          isForex: isForex
-        };
-        if (!isUsdSpot) {
-          body.lots = parseInt(lots, 10);
-        } else if (usdSpotLots != null) {
-          body.lots = usdSpotLots;
-          body.cryptoLotStepOrder = true;
-        } else {
-          body.cryptoLotStepOrder = false;
-        }
+        const body = buildMarginPreviewBody(orderType);
         const { data } = await axios.post('/api/trading/margin-preview', body, {
           headers: { Authorization: `Bearer ${user?.token}` }
         });
@@ -4105,17 +4111,43 @@ const TradingPanel = ({
     return () => clearTimeout(debounce);
   }, [instrument, lots, price, productType, orderType, user, totalQuantity, lotSize, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice, cryptoInputMode, cryptoLotInput]);
 
-  // Place order
-  const handlePlaceOrder = async () => {
+  // Place order (optional explicitSide when confirming from modal with opposite side vs current stripe highlight)
+  const handlePlaceOrder = async (explicitSide) => {
+    const sideLower =
+      explicitSide === 'buy' || explicitSide === 'sell'
+        ? explicitSide
+        : orderType;
+
     // Check market status for MARKET orders
     if (orderMode === 'MARKET' && !marketStatus.open) {
       setError(marketStatus.reason || 'Market is closed');
       return;
     }
 
-    // Validate funds
-    if (marginPreview && !marginPreview.canPlace) {
-      setError(`Insufficient funds. Need ₹${marginPreview.shortfall?.toLocaleString()} more`);
+    let previewGate = marginPreview;
+    if (
+      (explicitSide === 'buy' || explicitSide === 'sell') &&
+      explicitSide !== orderType &&
+      user?.token
+    ) {
+      try {
+        const body = buildMarginPreviewBody(explicitSide);
+        const { data } = await axios.post('/api/trading/margin-preview', body, {
+          headers: { Authorization: `Bearer ${user?.token}` },
+        });
+        previewGate = data;
+      } catch (err) {
+        console.error('Margin preview error:', err);
+      }
+    }
+
+    if (previewGate?.lotsError) {
+      setError(previewGate.lotsError);
+      return;
+    }
+
+    if (previewGate && !previewGate.canPlace) {
+      setError(`Insufficient funds. Need ₹${previewGate.shortfall?.toLocaleString()} more`);
       return;
     }
 
@@ -4144,7 +4176,7 @@ const TradingPanel = ({
         category: instrument.category,
         productType,
         orderType: orderMode,
-        side: orderType.toUpperCase(),
+        side: sideLower.toUpperCase(),
         quantity: isUsdSpot ? cryptoUnits : totalQuantity,
         lotSize: isUsdSpot ? baseQtyPerCryptoLot : lotSize,
         price: isUsdSpot ? livePrice : parseFloat(price),
@@ -4269,8 +4301,62 @@ const TradingPanel = ({
     return '';
   };
 
+  const confirmTickTimeLabel = (() => {
+    const t = liveData?.lastTradeTime ?? liveData?.last_trade_time ?? liveData?.lastUpdated;
+    if (t == null || t === '') return '—';
+    try {
+      return new Date(t).toLocaleString();
+    } catch {
+      return '—';
+    }
+  })();
+
+  const confirmAvgPriceNum =
+    marginPreview?.tradeValue != null &&
+    totalQuantity > 0 &&
+    Number.isFinite(Number(marginPreview.tradeValue) / totalQuantity)
+      ? Number(marginPreview.tradeValue) / totalQuantity
+      : null;
+
+  const confirmMinVolumeLabel =
+    !isUsdSpot && marginPreview?.minLots != null && Number(lotSize) > 0
+      ? `${marginPreview.minLots * Number(lotSize)} qty (min ${marginPreview.minLots} lot)`
+      : isUsdSpot && isCryptoOnly && cryptoInputMode === 'lots'
+        ? `${CRYPTO_LOT_MIN_STEP} lot min`
+        : !isUsdSpot && marginPreview?.minLots != null
+          ? `${marginPreview.minLots} lot(s)`
+          : '—';
+
+  const confirmVolumeStepLabel =
+    isUsdSpot && isCryptoOnly && cryptoInputMode === 'lots'
+      ? `${CRYPTO_LOT_MIN_STEP} lot`
+      : !isUsdSpot && inputMode === 'quantity'
+        ? '1 qty'
+        : !isUsdSpot
+          ? '1 lot'
+          : '—';
+
+  const confirmVolumeDisp =
+    liveData?.volume != null && liveData.volume !== ''
+      ? Number(liveData.volume).toLocaleString('en-IN')
+      : '—';
+
+  const fmtPx = (v) =>
+    v != null && v !== '' && !Number.isNaN(Number(v))
+      ? `${priceSymbol}${Number(v).toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`
+      : '—';
+
+  const closeConfirmAndPlace = async (side) => {
+    setTradeConfirmOpen(false);
+    setOrderType(side);
+    await handlePlaceOrder(side);
+  };
+
   return (
-    <aside className="w-full h-full bg-dark-800 border-l border-dark-600 flex flex-col overflow-hidden">
+    <aside className="relative w-full h-full bg-dark-800 border-l border-dark-600 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-dark-600">
         <div className="flex items-center gap-2">
@@ -4389,7 +4475,11 @@ const TradingPanel = ({
       {/* Buy/Sell Toggle with Live Bid/Ask Prices - Indian Standard: SELL left, BUY right */}
       <div className="flex border-b border-dark-600">
         <button
-          onClick={() => setOrderType('sell')}
+          type="button"
+          onClick={() => {
+            setOrderType('sell');
+            setTradeConfirmOpen(true);
+          }}
           className={`flex-1 py-2 font-semibold transition ${
             orderType === 'sell' ? 'bg-red-600 text-white' : 'bg-dark-700 text-gray-400'
           }`}
@@ -4399,7 +4489,11 @@ const TradingPanel = ({
           <div className="text-xs">SELL</div>
         </button>
         <button
-          onClick={() => setOrderType('buy')}
+          type="button"
+          onClick={() => {
+            setOrderType('buy');
+            setTradeConfirmOpen(true);
+          }}
           className={`flex-1 py-2 font-semibold transition ${
             orderType === 'buy' ? 'bg-green-600 text-white' : 'bg-dark-700 text-gray-400'
           }`}
@@ -4888,7 +4982,8 @@ const TradingPanel = ({
       {/* Submit Button */}
       <div className="p-4 border-t border-dark-600">
         <button
-          onClick={handlePlaceOrder}
+          type="button"
+          onClick={() => handlePlaceOrder()}
           disabled={loading || (marginPreview && !marginPreview.canPlace)}
           className={`w-full py-3 rounded-lg font-semibold transition ${
             orderType === 'buy' 
@@ -4902,6 +4997,98 @@ const TradingPanel = ({
           {productType} • {orderMode}
         </div>
       </div>
+
+      {tradeConfirmOpen && (
+        <div
+          className="absolute inset-0 z-[70] flex items-center justify-center p-3 bg-black/80"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="trade-confirm-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setTradeConfirmOpen(false);
+          }}
+        >
+          <div
+            className="bg-dark-800 border border-dark-600 rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-dark-600">
+              <h3 id="trade-confirm-title" className="font-bold text-sm text-white">
+                Confirm order · {instrument?.symbol}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setTradeConfirmOpen(false)}
+                className="text-gray-400 hover:text-white p-1 rounded"
+                aria-label="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto space-y-2 text-sm flex-1">
+              {marginPreview == null && (
+                <div className="text-xs text-amber-400/95 mb-2">Loading margin preview…</div>
+              )}
+              {[
+                ['Breakup lot', marginPreview?.breakupQuantity != null ? String(marginPreview.breakupQuantity) : '—'],
+                ['Max lot', marginPreview?.maxLots != null ? String(marginPreview.maxLots) : '—'],
+                ['Lot size', marginPreview?.lotSize != null ? String(marginPreview.lotSize) : String(lotSize ?? '—')],
+                ['Time', confirmTickTimeLabel],
+                ['Volume', confirmVolumeDisp],
+                [
+                  'Avg. price',
+                  confirmAvgPriceNum != null
+                    ? `${priceSymbol}${confirmAvgPriceNum.toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}`
+                    : '—',
+                ],
+                ['Min volume', confirmMinVolumeLabel],
+                ['Volume step', confirmVolumeStepLabel],
+                [
+                  'Trade margin',
+                  marginPreview?.marginRequired != null
+                    ? `₹${Number(marginPreview.marginRequired).toLocaleString('en-IN', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}`
+                    : '—',
+                ],
+                ['Allow trades', marginPreview == null ? '…' : marginPreview.canPlace ? 'Yes' : 'No'],
+                ['High', fmtPx(liveData?.high)],
+                ['Low', fmtPx(liveData?.low)],
+              ].map(([label, val]) => (
+                <div key={label} className="flex justify-between gap-3 border-b border-dark-700/80 pb-2 last:border-0">
+                  <span className="text-gray-400">{label}</span>
+                  <span className="text-white text-right font-medium tabular-nums">{val}</span>
+                </div>
+              ))}
+              {marginPreview?.lotsError && (
+                <div className="text-xs text-red-400 pt-1">⚠️ {marginPreview.lotsError}</div>
+              )}
+            </div>
+            <div className="p-4 border-t border-dark-600 flex gap-3">
+              <button
+                type="button"
+                onClick={() => closeConfirmAndPlace('sell')}
+                disabled={loading || marginPreview == null}
+                className="flex-1 py-3 rounded-lg font-semibold bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white"
+              >
+                {loading ? '…' : 'SELL'}
+              </button>
+              <button
+                type="button"
+                onClick={() => closeConfirmAndPlace('buy')}
+                disabled={loading || marginPreview == null}
+                className="flex-1 py-3 rounded-lg font-semibold bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white"
+              >
+                {loading ? '…' : 'BUY'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 };
