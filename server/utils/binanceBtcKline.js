@@ -1,12 +1,5 @@
 import axios from 'axios';
 import { startOfISTDayFromKey } from './istDate.js';
-import {
-  coinGeckoConfigured,
-  fetchBtcSimpleUsd,
-  fetchBtcUsdPricesInRangeMs,
-  pickUsdPriceNearestMs,
-  openCloseFromUsdPricesApprox,
-} from '../services/coingeckoService.js';
 
 const cache = new Map();
 const CACHE_MS = 3600000;
@@ -75,15 +68,6 @@ export async function fetchBtcUsdt1mCloseAtIstRef(istDayKey, secSinceMidnightIST
   if (hit && now - hit.t < CACHE_MS) return hit.price;
 
   try {
-    if (coinGeckoConfigured()) {
-      const pts = await fetchBtcUsdPricesInRangeMs(targetMs - 360000, targetMs + 360000);
-      const close = pickUsdPriceNearestMs(targetMs, pts);
-      if (close != null && Number.isFinite(close)) {
-        cache.set(cacheKey, { t: now, price: close });
-      }
-      return close;
-    }
-
     const startTime = Math.max(0, targetMs - 180000);
     const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
       params: { symbol: 'BTCUSDT', interval: '1m', startTime: Math.floor(startTime), limit: 10 },
@@ -117,21 +101,6 @@ export async function fetchBtcFifteenMinuteIstWindowOhlc(istDayKey, openRefSec, 
   if (hit && now - hit.t < CACHE_MS) return hit.ohlc;
 
   try {
-    if (coinGeckoConfigured()) {
-      const pts = await fetchBtcUsdPricesInRangeMs(t0 - 120_000, t1 + 120_000);
-      const oc = openCloseFromUsdPricesApprox(pts, t0, t1);
-      if (oc != null) {
-        const ohlc = {
-          open: oc.open,
-          close: oc.close,
-          openSource: 'coingecko_market_chart_range',
-        };
-        cache.set(cacheKey, { t: now, ohlc });
-        return ohlc;
-      }
-      return null;
-    }
-
     const startTime = Math.floor(t0) - 120_000;
     const endTime = Math.floor(t1) + 120_000;
     const { data } = await axios.get('https://api.binance.com/api/v3/klines', {
@@ -151,9 +120,8 @@ export async function fetchBtcFifteenMinuteIstWindowOhlc(istDayKey, openRefSec, 
 
     if (rows.length === 0) return null;
 
-    // 1m bar [O, O+60s) overlaps [t0, t1) (IST round in absolute ms) ↔ Zerodha-style 15m built from 1m legs
     const inRange = rows.filter(
-      (x) => x.openMs < t1 && x.openMs + 60000 > t0
+      (x) => x.openMs < t1 && x.openMs + 60000 > t0,
     );
     if (inRange.length === 0) return null;
     inRange.sort((a, b) => a.openMs - b.openMs);
@@ -186,16 +154,6 @@ export async function fetchBtcUsdtSpotRest() {
     return spotRestCache.price;
   }
   try {
-    if (coinGeckoConfigured()) {
-      const p = await fetchBtcSimpleUsd();
-      if (Number.isFinite(p) && p > 0) {
-        spotRestCache.t = now;
-        spotRestCache.price = p;
-        return p;
-      }
-      return null;
-    }
-
     const { data } = await axios.get('https://api.binance.com/api/v3/ticker/price', {
       params: { symbol: 'BTCUSDT' },
       timeout: 10000,

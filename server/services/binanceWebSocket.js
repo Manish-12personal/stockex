@@ -1,26 +1,12 @@
 import WebSocket from 'ws';
 import TradingService from './tradingService.js';
-import {
-  coinGeckoConfigured,
-  fetchAggregatedPricesObject,
-} from './coingeckoService.js';
 
 let io = null;
 let ws = null;
 let cryptoData = {};
 let reconnectAttempts = 0;
 let pingInterval = null;
-let coingeckoPollInterval = null;
 const MAX_RECONNECT_ATTEMPTS = 10;
-
-/** CoinGecko REST poll — Binance WS disabled when API key set. Clamped 2000–60000 ms. */
-function coingeckoPollIntervalMs() {
-  const raw = process.env.COINGECKO_POLL_INTERVAL_MS?.trim();
-  if (!raw) return 5000;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return 5000;
-  return Math.min(60000, Math.max(2000, Math.round(n)));
-}
 
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY || '';
 
@@ -30,70 +16,8 @@ const CRYPTO_SYMBOLS = [
   'avaxusdt', 'linkusdt', 'atomusdt', 'uniusdt', 'xlmusdt',
 ];
 
-/** Thin synthetic bid/ask so USD spot pending-order logic still runs */
-function syntheticBidAsk(ltp) {
-  const spread = Math.max(ltp * 0.00005, 0.01);
-  return { bid: ltp - spread / 2, ask: ltp + spread / 2 };
-}
-
-async function emitCoinGeckoTicksOnce() {
-  if (!io) return;
-  try {
-    const batch = await fetchAggregatedPricesObject();
-    for (const tickData of Object.values(batch)) {
-      const pair = tickData.pair;
-      const symbol = tickData.symbol;
-      const ltp = Number(tickData.ltp);
-      if (!pair || !Number.isFinite(ltp) || ltp <= 0) continue;
-
-      const { bid, ask } = syntheticBidAsk(ltp);
-      const enriched = {
-        ...tickData,
-        token: pair,
-        bid,
-        ask,
-      };
-
-      cryptoData[pair] = enriched;
-      cryptoData[symbol] = enriched;
-
-      io.emit('crypto_tick', { [pair]: enriched, [symbol]: enriched });
-      io.emit('market_tick', { [pair]: enriched, [symbol]: enriched });
-
-      TradingService.processPendingOrdersForUsdSpotTick({
-        pair,
-        symbol,
-        bid,
-        ask,
-        ltp,
-      }).catch((err) =>
-        console.error('processPendingOrdersForUsdSpotTick:', err?.message || err),
-      );
-    }
-  } catch (e) {
-    console.warn('[crypto feed] CoinGecko poll failed:', e?.message || e);
-  }
-}
-
-function startCoinGeckoPoll() {
-  if (coingeckoPollInterval) clearInterval(coingeckoPollInterval);
-  emitCoinGeckoTicksOnce();
-  const ms = coingeckoPollIntervalMs();
-  coingeckoPollInterval = setInterval(emitCoinGeckoTicksOnce, ms);
-}
-
 export const initBinanceWebSocket = (socketIO) => {
   io = socketIO;
-
-  if (coinGeckoConfigured()) {
-    const pollMs = coingeckoPollIntervalMs();
-    console.log(
-      `[crypto feed] CoinGecko mode — Binance WebSocket disabled (geo-safe); polling every ${pollMs}ms`,
-    );
-    startCoinGeckoPoll();
-    return;
-  }
-
   console.log('Binance WebSocket service initialized');
   connectWebSocket();
 };
@@ -217,10 +141,7 @@ export const getCryptoPrice = (symbol) => {
   return cryptoData[pair] || cryptoData[symbol.toUpperCase()] || null;
 };
 
-export const isConnected = () =>
-  coinGeckoConfigured()
-    ? true
-    : ws && ws.readyState === WebSocket.OPEN;
+export const isConnected = () => ws && ws.readyState === WebSocket.OPEN;
 
 export default {
   initBinanceWebSocket,

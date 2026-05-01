@@ -1,7 +1,6 @@
 import express from 'express';
 import axios from 'axios';
 import { fetchNifty50HistoricalFromKite } from '../utils/kiteNiftyQuote.js';
-import { coinGeckoConfigured, fetchOhlcCandlesUsd } from '../services/coingeckoService.js';
 
 const router = express.Router();
 
@@ -63,35 +62,6 @@ router.get('/btc-history', async (req, res) => {
       '60minute': '1h',
     };
     const binanceInterval = intervalMap[intervalParam] || '5m';
-
-    if (coinGeckoConfigured()) {
-      let raw;
-      try {
-        raw = await fetchOhlcCandlesUsd('BTCUSDT', binanceInterval);
-      } catch (e) {
-        console.warn('[btc-history] CoinGecko:', e?.response?.data || e?.message || e);
-        return res.status(502).json({
-          success: false,
-          message: 'Failed to fetch BTC historical data from CoinGecko',
-          data: [],
-        });
-      }
-      const data = (Array.isArray(raw) ? raw : [])
-        .slice(-100)
-        .map((c) => ({
-          time: c.time,
-          timestamp: new Date(c.time * 1000).toISOString(),
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.volume ?? 0,
-        }));
-      console.log(
-        `BTC History (CoinGecko): Returning ${data.length} candles (interval: ${binanceInterval})`,
-      );
-      return res.json({ success: true, interval: binanceInterval, source: 'coingecko', data });
-    }
 
     const response = await axios.get('https://api.binance.com/api/v3/klines', {
       params: {

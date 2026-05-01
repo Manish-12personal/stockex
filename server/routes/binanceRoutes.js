@@ -1,12 +1,5 @@
 import express from 'express';
 import axios from 'axios';
-import {
-  coinGeckoConfigured,
-  fetchAggregatedPricesObject,
-  fetchSimplePriceForBaseSymbol,
-  fetchOhlcCandlesUsd,
-  searchCoinsQuery,
-} from '../services/coingeckoService.js';
 
 const router = express.Router();
 
@@ -56,20 +49,6 @@ function tickerRow(ticker) {
 }
 
 router.get('/prices', async (req, res) => {
-  if (coinGeckoConfigured()) {
-    try {
-      const cryptoData = await fetchAggregatedPricesObject();
-      if (Object.keys(cryptoData).length > 0) {
-        return res.json(cryptoData);
-      }
-    } catch (cgErr) {
-      console.warn(
-        'CoinGecko /prices failed, falling back to Binance:',
-        cgErr.response?.data || cgErr.message,
-      );
-    }
-  }
-
   try {
     let rows = [];
     try {
@@ -113,18 +92,6 @@ router.get('/prices', async (req, res) => {
 router.get('/price/:symbol', async (req, res) => {
   const { symbol } = req.params;
 
-  if (coinGeckoConfigured()) {
-    try {
-      const row = await fetchSimplePriceForBaseSymbol(symbol);
-      return res.json(row);
-    } catch (cgErr) {
-      console.warn(
-        'CoinGecko /price failed, falling back to Binance:',
-        cgErr.response?.data || cgErr.message,
-      );
-    }
-  }
-
   try {
     const pair = resolveBinanceSpotKlineSymbol(symbol);
 
@@ -157,20 +124,6 @@ router.get('/candles/:symbol', async (req, res) => {
   const { symbol } = req.params;
   const { interval = '15m', limit: _limit = 500 } = req.query;
 
-  if (coinGeckoConfigured()) {
-    try {
-      const candles = await fetchOhlcCandlesUsd(symbol, interval);
-      if (candles.length > 0) {
-        return res.json(candles);
-      }
-    } catch (cgErr) {
-      console.warn(
-        'CoinGecko /candles failed, falling back to Binance:',
-        cgErr.response?.data || cgErr.message,
-      );
-    }
-  }
-
   try {
     const pair = resolveBinanceSpotKlineSymbol(symbol);
 
@@ -200,15 +153,6 @@ router.get('/candles/:symbol', async (req, res) => {
 });
 
 router.get('/depth/:symbol', async (req, res) => {
-  if (coinGeckoConfigured()) {
-    return res.json({
-      bids: [],
-      asks: [],
-      source: 'coingecko',
-      note: 'Order book unavailable when using CoinGecko quotes.',
-    });
-  }
-
   try {
     const { symbol } = req.params;
     const { limit = 20 } = req.query;
@@ -234,18 +178,6 @@ router.get('/depth/:symbol', async (req, res) => {
 
 router.get('/search', async (req, res) => {
   const { query } = req.query;
-
-  if (coinGeckoConfigured()) {
-    try {
-      const rows = await searchCoinsQuery(query || '');
-      return res.json(rows);
-    } catch (cgErr) {
-      console.warn(
-        'CoinGecko /search failed, falling back to Binance:',
-        cgErr.response?.data || cgErr.message,
-      );
-    }
-  }
 
   try {
     const response = await binanceAxios.get('/exchangeInfo');
