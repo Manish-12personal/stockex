@@ -21,6 +21,10 @@ import {
   tradeIsCryptoOnly,
 } from '../utils/tradingUsdSpot.js';
 import { creditReferralTradingReward } from './referralService.js';
+import {
+  buildInstrumentDenyContext,
+  assertHierarchyInstrumentNotDenied,
+} from './instrumentRestrictionService.js';
 
 /** Read one segment entry from User.segmentPermissions (Map or plain object after lean). */
 function getUserSegmentPerm(user, segmentKey) {
@@ -424,7 +428,11 @@ class TradingService {
   // TradePro Trading Engine - 16-step validation pipeline
   static async placeOrder(userId, orderData) {
     // ==================== STEP 1: USER ACTIVE CHECK ====================
-    const user = await User.findById(userId).populate('admin', 'segmentPermissions segmentExplicitKeys');
+    const user = await User.findById(userId).populate({
+      path: 'admin',
+      select:
+        'segmentPermissions segmentExplicitKeys restrictions hierarchyPath role adminCode parentId createdBy',
+    });
     if (!user) throw new Error('User not found');
     
     if (!user.isActive) {
@@ -493,6 +501,9 @@ class TradingService {
         );
       }
     }
+
+    const denyCtx = buildInstrumentDenyContext(orderData, instrument || null);
+    await assertHierarchyInstrumentNotDenied(user, denyCtx);
 
     // POSITION NETTING: Check if there's an existing opposite position for same symbol
     // If user has BUY position and places SELL order (or vice versa), net the positions

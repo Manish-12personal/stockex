@@ -27,6 +27,7 @@ import {
   creditSuperAdminForBtcJackpotStake,
   rollbackBtcJackpotStakeCredit,
 } from '../utils/btcJackpotPool.js';
+import { assertHierarchyGameNotDeniedForUserId } from '../services/gameRestrictionService.js';
 
 const router = express.Router();
 
@@ -151,6 +152,12 @@ router.post('/bid', protectUser, async (req, res) => {
     }
     if (settings?.gamesEnabled === false || settings?.maintenanceMode === true) {
       return res.status(400).json({ message: 'Games are currently unavailable' });
+    }
+
+    try {
+      await assertHierarchyGameNotDeniedForUserId(userId, 'btcJackpot');
+    } catch (e) {
+      return res.status(403).json({ message: e.message });
     }
 
     const win = evaluateBtcJackpotBiddingWindow(gc);

@@ -139,6 +139,35 @@ async function ensureCryptoDerivativesTabIfEmpty(displaySegment) {
   }
 }
 
+/** MCX deny-picker / tabs: seed minimal commodity futures if DB has almost no MCX rows (same idea as FOREX/Binance ensures). */
+async function ensureMcxRestrictionPickerSeedIfEmpty() {
+  const n = await Instrument.countDocuments({ exchange: 'MCX' });
+  if (n >= 5) return;
+
+  const mcxSeed = [
+    { token: '53523', symbol: 'GOLDM', name: 'Gold Mini', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 10, isFeatured: true, sortOrder: 1, isEnabled: true },
+    { token: '53524', symbol: 'GOLD', name: 'Gold', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 100, isFeatured: true, sortOrder: 2, isEnabled: true },
+    { token: '53525', symbol: 'SILVERM', name: 'Silver Mini', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 5, sortOrder: 3, isEnabled: true },
+    { token: '53526', symbol: 'SILVER', name: 'Silver', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 30, sortOrder: 4, isEnabled: true },
+    { token: '53527', symbol: 'CRUDEOIL', name: 'Crude Oil', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 100, isFeatured: true, sortOrder: 5, isEnabled: true },
+    { token: '53528', symbol: 'CRUDEOILM', name: 'Crude Oil Mini', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 10, sortOrder: 6, isEnabled: true },
+    { token: '53529', symbol: 'NATURALGAS', name: 'Natural Gas', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 1250, sortOrder: 7, isEnabled: true },
+    { token: '53530', symbol: 'COPPER', name: 'Copper', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 2500, sortOrder: 8, isEnabled: true },
+    { token: '53531', symbol: 'ZINC', name: 'Zinc', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 5000, sortOrder: 9, isEnabled: true },
+    { token: '53532', symbol: 'ALUMINIUM', name: 'Aluminium', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 5000, sortOrder: 10, isEnabled: true },
+    { token: '53533', symbol: 'LEAD', name: 'Lead', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 5000, sortOrder: 11, isEnabled: true },
+    { token: '53534', symbol: 'NICKEL', name: 'Nickel', exchange: 'MCX', segment: 'MCX', displaySegment: 'MCXFUT', instrumentType: 'FUTURES', category: 'MCX', lotSize: 1500, sortOrder: 12, isEnabled: true }
+  ];
+
+  for (const inst of mcxSeed) {
+    await Instrument.updateOne(
+      { token: inst.token },
+      { $setOnInsert: inst },
+      { upsert: true }
+    );
+  }
+}
+
 const router = express.Router();
 
 // ==================== PUBLIC ROUTES ====================
@@ -628,6 +657,107 @@ router.get('/admin', protectAdmin, async (req, res) => {
         featured: featuredCount
       }
     });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * Super Admin → Restrictions: cascading dropdown data for hierarchical instrument deny-list.
+ * - Without displaySegment: returns distinct displaySegment tabs for the exchange.
+ * - With displaySegment: returns instruments for exchange + tab (includes expired when includeExpired=1).
+ */
+router.get('/admin/restriction-deny-picker', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const exchangeRaw = String(req.query.exchange || '').trim().toUpperCase();
+    const displaySegmentRaw = String(req.query.displaySegment || '').trim();
+    const allowedUiExchanges = ['NSE', 'BSE', 'NFO', 'MCX', 'CDS', 'BFO', 'BINANCE', 'CRYPTO', 'FOREX'];
+    if (!exchangeRaw || !allowedUiExchanges.includes(exchangeRaw)) {
+      return res.status(400).json({ message: 'Missing or invalid exchange' });
+    }
+
+    const dbExchange = exchangeRaw === 'CRYPTO' ? 'BINANCE' : exchangeRaw;
+
+    if (!displaySegmentRaw) {
+      if (dbExchange === 'FOREX') {
+        await ensureForexSpotTabIfEmpty();
+        await ensureForexOptionsTabIfEmpty();
+      }
+      if (dbExchange === 'BINANCE') {
+        await ensureCryptoDerivativesTabIfEmpty('CRYPTOFUT');
+        await ensureCryptoDerivativesTabIfEmpty('CRYPTOOPT');
+      }
+      if (dbExchange === 'MCX') {
+        await ensureMcxRestrictionPickerSeedIfEmpty();
+      }
+      const segments = await Instrument.distinct('displaySegment', { exchange: dbExchange });
+      let cleaned = segments.filter(Boolean).sort((a, b) => String(a).localeCompare(String(b)));
+      if (dbExchange === 'MCX') {
+        const tabs = ['MCXFUT', 'MCXOPT'];
+        cleaned = [...new Set([...cleaned, ...tabs])].sort((a, b) => String(a).localeCompare(String(b)));
+      }
+      return res.json({ segments: cleaned });
+    }
+
+    const limit = Math.min(parseInt(req.query.limit, 10) || 5000, 8000);
+    const includeExpired = req.query.includeExpired === '1' || req.query.includeExpired === 'true';
+
+    let query = {};
+
+    if (displaySegmentRaw === 'FOREXFUT' || displaySegmentRaw === 'FOREXOPT') {
+      if (displaySegmentRaw === 'FOREXFUT') await ensureForexSpotTabIfEmpty();
+      if (displaySegmentRaw === 'FOREXOPT') await ensureForexOptionsTabIfEmpty();
+      const forexOr =
+        displaySegmentRaw === 'FOREXOPT'
+          ? [
+              { displaySegment: 'FOREXOPT' },
+              { displaySegment: 'FOREX', exchange: 'FOREX', instrumentType: 'OPTIONS' },
+            ]
+          : [
+              { displaySegment: 'FOREXFUT' },
+              { displaySegment: 'FOREX', exchange: 'FOREX', instrumentType: { $ne: 'OPTIONS' } },
+              { displaySegment: 'FOREX', exchange: 'FOREX', instrumentType: { $exists: false } },
+            ];
+      query.$and = [{ exchange: 'FOREX' }, { $or: forexOr }];
+    } else {
+      if (displaySegmentRaw === 'CRYPTOFUT' || displaySegmentRaw === 'CRYPTOOPT') {
+        await ensureCryptoDerivativesTabIfEmpty(displaySegmentRaw);
+      }
+      if (dbExchange === 'MCX' && (displaySegmentRaw === 'MCXFUT' || displaySegmentRaw === 'MCXOPT')) {
+        await ensureMcxRestrictionPickerSeedIfEmpty();
+      }
+      if (dbExchange === 'MCX' && displaySegmentRaw === 'MCXFUT') {
+        query.$and = [
+          { exchange: 'MCX' },
+          {
+            $or: [
+              { displaySegment: 'MCXFUT' },
+              { instrumentType: { $in: ['FUTURES', 'COMMODITY', 'FUT'] } },
+            ],
+          },
+        ];
+      } else if (dbExchange === 'MCX' && displaySegmentRaw === 'MCXOPT') {
+        query.$and = [
+          { exchange: 'MCX' },
+          {
+            $or: [{ displaySegment: 'MCXOPT' }, { instrumentType: 'OPTIONS' }],
+          },
+        ];
+      } else {
+        query.exchange = dbExchange;
+        query.displaySegment = displaySegmentRaw;
+      }
+    }
+
+    if (!includeExpired) addActiveDerivExpiryToQuery(query);
+
+    const instruments = await Instrument.find(query)
+      .select('symbol tradingSymbol segment displaySegment name token exchange instrumentType expiry')
+      .sort({ symbol: 1 })
+      .limit(limit)
+      .lean();
+
+    res.json({ instruments });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

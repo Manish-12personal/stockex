@@ -65,8 +65,28 @@ import {
   getPlatformChargeReport,
   runDailyPlatformCharges,
 } from '../services/platformChargeService.js';
+import { sanitizeInstrumentDenylist } from '../services/instrumentRestrictionService.js';
+import { sanitizeGameDenylist } from '../services/gameRestrictionService.js';
 
 const router = express.Router();
+
+function normalizeRestrictionsPayload(body) {
+  if (!body || typeof body !== 'object') return {};
+  const restrictions = { ...body };
+  restrictions.instrumentDenylist = sanitizeInstrumentDenylist(body.instrumentDenylist);
+  restrictions.gameDenylist = sanitizeGameDenylist(body.gameDenylist);
+  return restrictions;
+}
+
+/** Plain JSON for API clients (avoids Mongoose subdoc serialization quirks on deny arrays). */
+async function getRestrictionsResponsePayload(adminId) {
+  const row = await Admin.findById(adminId).select('restrictions updatedAt').lean();
+  if (!row) return { restrictions: {}, updatedAt: null };
+  return {
+    restrictions: row.restrictions ? JSON.parse(JSON.stringify(row.restrictions)) : {},
+    updatedAt: row.updatedAt ?? null,
+  };
+}
 
 // Generate JWT token
 const generateToken = (id) => {
@@ -499,11 +519,17 @@ router.put('/admins/:id/restrictions', protectAdmin, superAdminOnly, async (req,
     const admin = await Admin.findById(req.params.id);
     if (!admin) return res.status(404).json({ message: 'Admin not found' });
     if (admin.role === 'SUPER_ADMIN') return res.status(403).json({ message: 'Cannot modify Super Admin restrictions' });
-    
-    admin.restrictions = req.body;
+
+    admin.restrictions = normalizeRestrictionsPayload(req.body);
+    admin.markModified('restrictions');
     await admin.save();
-    
-    res.json({ message: 'Restrictions updated successfully', restrictions: admin.restrictions });
+
+    const payload = await getRestrictionsResponsePayload(admin._id);
+    res.json({
+      message: 'Restrictions updated successfully',
+      restrictions: payload.restrictions,
+      updatedAt: payload.updatedAt,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -550,11 +576,17 @@ router.put('/brokers/:id/restrictions', protectAdmin, async (req, res) => {
         return res.status(400).json({ message: `Max exposure cannot exceed parent's limit of ${parentRestrictions.maxExposure}` });
       }
     }
-    
-    broker.restrictions = req.body;
+
+    broker.restrictions = normalizeRestrictionsPayload(req.body);
+    broker.markModified('restrictions');
     await broker.save();
-    
-    res.json({ message: 'Restrictions updated successfully', restrictions: broker.restrictions });
+
+    const payload = await getRestrictionsResponsePayload(broker._id);
+    res.json({
+      message: 'Restrictions updated successfully',
+      restrictions: payload.restrictions,
+      updatedAt: payload.updatedAt,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -601,11 +633,17 @@ router.put('/subbrokers/:id/restrictions', protectAdmin, async (req, res) => {
         return res.status(400).json({ message: `Max exposure cannot exceed parent's limit of ${parentRestrictions.maxExposure}` });
       }
     }
-    
-    subBroker.restrictions = req.body;
+
+    subBroker.restrictions = normalizeRestrictionsPayload(req.body);
+    subBroker.markModified('restrictions');
     await subBroker.save();
-    
-    res.json({ message: 'Restrictions updated successfully', restrictions: subBroker.restrictions });
+
+    const payload = await getRestrictionsResponsePayload(subBroker._id);
+    res.json({
+      message: 'Restrictions updated successfully',
+      restrictions: payload.restrictions,
+      updatedAt: payload.updatedAt,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

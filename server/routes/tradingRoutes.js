@@ -6,6 +6,10 @@ import User from '../models/User.js';
 import Admin from '../models/Admin.js';
 import { protectUser as protect, protectAdmin } from '../middleware/auth.js';
 import { orderIsUsdSpot } from '../utils/tradingUsdSpot.js';
+import {
+  buildInstrumentDenyContext,
+  assertHierarchyInstrumentNotDenied,
+} from '../services/instrumentRestrictionService.js';
 
 const router = express.Router();
 
@@ -123,8 +127,15 @@ router.post('/margin-preview', protect, async (req, res) => {
       }
     }
     const instrumentDoc = orInst.length
-      ? await Instrument.findOne({ $or: orInst }).select('tradingDefaults').lean()
+      ? await Instrument.findOne({ $or: orInst }).select('tradingDefaults exchange segment displaySegment symbol category pair name').lean()
       : null;
+
+    const fullUser = await User.findById(req.user._id).populate({
+      path: 'admin',
+      select: 'restrictions hierarchyPath role adminCode',
+    });
+    await assertHierarchyInstrumentNotDenied(fullUser, buildInstrumentDenyContext(req.body, instrumentDoc));
+
     const rawScript = TradeService.getUserScriptSettings(req.user, symbol, category);
     const scriptSettings = TradeService.mergeScriptSettingsWithInstrument(instrumentDoc, rawScript);
 

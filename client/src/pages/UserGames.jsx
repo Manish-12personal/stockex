@@ -33,13 +33,15 @@ const GAME_SETTINGS_KEY = {
   'btcnumber': 'btcNumber',
 };
 
-/** False when global games off, maintenance, or this game is disabled in GameSettings */
+/** False when global games off, maintenance, game disabled in GameSettings, or hierarchy deny-list */
 function isFantasyGamePlayable(gameSettings, uiGameId) {
   if (!gameSettings) return true;
   if (gameSettings.gamesEnabled === false) return false;
   if (gameSettings.maintenanceMode === true) return false;
   const key = GAME_SETTINGS_KEY[uiGameId];
   if (!key) return true;
+  const denied = gameSettings.hierarchyDeniedGameKeys;
+  if (Array.isArray(denied) && denied.includes(key)) return false;
   const cfg = gameSettings.games?.[key];
   if (cfg && cfg.enabled === false) return false;
   return true;

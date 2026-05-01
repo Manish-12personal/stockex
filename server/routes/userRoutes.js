@@ -86,8 +86,22 @@ import {
 } from '../utils/gameStakeSideLimits.js';
 import { plainSegmentDefaultsMap } from '../utils/commissionTypeUnit.js';
 import TradeService from '../services/tradeService.js';
+import {
+  assertHierarchyGameNotDeniedForUserId,
+  getMergedGameDenylistForPrincipal,
+} from '../services/gameRestrictionService.js';
 
 const router = express.Router();
+
+async function rejectIfHierarchyGameDenied(res, userId, gameKey) {
+  try {
+    await assertHierarchyGameNotDeniedForUserId(userId, gameKey);
+    return false;
+  } catch (e) {
+    res.status(403).json({ message: e.message });
+    return true;
+  }
+}
 
 const CRYPTO_SPREAD_SEGMENT_CHAIN = ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'];
 
@@ -2211,6 +2225,12 @@ router.get('/phone-verification-settings', async (req, res) => {
 // PUBLIC: Get game settings for frontend (user-facing)
 router.get('/game-settings', protectUser, async (req, res) => {
   try {
+    const principal = await User.findById(req.user._id).populate({
+      path: 'admin',
+      select: 'restrictions hierarchyPath role adminCode',
+    });
+    const hierarchyDeniedGameKeys = await getMergedGameDenylistForPrincipal(principal);
+
     const settings = await GameSettings.getSettings();
     const settingsObj = settings.toObject();
     
@@ -2313,6 +2333,7 @@ router.get('/game-settings', protectUser, async (req, res) => {
         Number.isFinite(Number(settingsObj.gamePositionExpiryGraceSeconds))
           ? Number(settingsObj.gamePositionExpiryGraceSeconds)
           : 3600,
+      hierarchyDeniedGameKeys,
       games,
     });
   } catch (error) {
@@ -2352,6 +2373,8 @@ router.post('/game-bet/place', protectUser, async (req, res) => {
     if (!gameConfig?.enabled) {
       return res.status(400).json({ message: 'This game is currently disabled' });
     }
+
+    if (await rejectIfHierarchyGameDenied(res, userId, settingsKey)) return;
 
     const betAmount = parseFloat(amount);
     if (isNaN(betAmount) || betAmount <= 0) {
@@ -3534,6 +3557,8 @@ router.post('/nifty-number/bet', protectUser, async (req, res) => {
       return res.status(400).json({ message: 'Nifty Number game is currently disabled' });
     }
 
+    if (await rejectIfHierarchyGameDenied(res, userId, 'niftyNumber')) return;
+
     // Check betting time window (9:15:00 to 15:24:59 IST)
     // TEMPORARILY DISABLED FOR TESTING - uncomment below to enable
     /*
@@ -3704,6 +3729,7 @@ router.put('/nifty-number/bet/:id', protectUser, async (req, res) => {
 
     let gw;
     if (diff > 0) {
+      if (await rejectIfHierarchyGameDenied(res, userId, 'niftyNumber')) return;
       gw = await atomicGamesWalletUpdate(User, userId, { balance: -diff, usedMargin: diff });
       if (!gw) {
         return res.status(400).json({ message: `Insufficient balance. Need ₹${diff} more` });
@@ -3904,6 +3930,8 @@ router.post('/btc-number/bet', protectUser, async (req, res) => {
       return res.status(400).json({ message: 'BTC Number game is currently disabled' });
     }
 
+    if (await rejectIfHierarchyGameDenied(res, userId, 'btcNumber')) return;
+
     const betAmount = parseFloat(amount);
     if (isNaN(betAmount) || betAmount <= 0) {
       return res.status(400).json({ message: 'Invalid bet amount' });
@@ -4045,6 +4073,7 @@ router.put('/btc-number/bet/:id', protectUser, async (req, res) => {
 
     let gw;
     if (diff > 0) {
+      if (await rejectIfHierarchyGameDenied(res, userId, 'btcNumber')) return;
       gw = await atomicGamesWalletUpdate(User, userId, { balance: -diff, usedMargin: diff });
       if (!gw) {
         return res.status(400).json({ message: `Insufficient balance. Need ₹${diff} more` });
@@ -4218,6 +4247,8 @@ router.post('/nifty-bracket/trade', protectUser, async (req, res) => {
     if (!gameConfig?.enabled) {
       return res.status(400).json({ message: 'Nifty Bracket game is currently disabled' });
     }
+
+    if (await rejectIfHierarchyGameDenied(res, userId, 'niftyBracket')) return;
 
     if (!isNiftyBracketBiddingHoursBypassedForTesting()) {
       const bidStart = gameConfig.biddingStartTime != null && String(gameConfig.biddingStartTime).trim() !== ''
@@ -4966,6 +4997,8 @@ router.post('/nifty-jackpot/bid', protectUser, async (req, res) => {
     if (!gameConfig?.enabled) {
       return res.status(400).json({ message: 'Nifty Jackpot game is currently disabled' });
     }
+
+    if (await rejectIfHierarchyGameDenied(res, userId, 'niftyJackpot')) return;
 
     // Check bidding time window (default: 09:15 to 14:59 IST)
     const biddingStartTime = gameConfig?.biddingStartTime || '09:15';
