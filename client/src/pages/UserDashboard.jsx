@@ -4397,6 +4397,14 @@ const TradingPanel = ({
       ? Number(liveData.volume).toLocaleString('en-IN')
       : '—';
 
+  /** Prefer per-order qty cap from segment; else show order-lots (breakup) limit from segment/script. */
+  const confirmBreakupCapLabel =
+    marginPreview?.breakupQuantity != null && Number(marginPreview.breakupQuantity) > 0
+      ? `${Number(marginPreview.breakupQuantity)} qty/order`
+      : marginPreview?.perOrderLots != null && Number(marginPreview.perOrderLots) > 0
+        ? `${Number(marginPreview.perOrderLots)} lots/order`
+        : '—';
+
   const fmtPx = (v) =>
     v != null && v !== '' && !Number.isNaN(Number(v))
       ? `${priceSymbol}${Number(v).toLocaleString(isCryptoOnly ? 'en-US' : 'en-IN', {
@@ -5110,7 +5118,7 @@ const TradingPanel = ({
                 <div className="text-xs text-amber-400/95 mb-2">Loading margin preview…</div>
               )}
               {[
-                ['Breakup lot', marginPreview?.breakupQuantity != null ? String(marginPreview.breakupQuantity) : '—'],
+                ['Breakup / order lots', confirmBreakupCapLabel],
                 ['Max lot', marginPreview?.maxLots != null ? String(marginPreview.maxLots) : '—'],
                 ['Lot size', marginPreview?.lotSize != null ? String(marginPreview.lotSize) : String(lotSize ?? '—')],
                 ['Time', confirmTickTimeLabel],

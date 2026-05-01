@@ -624,6 +624,10 @@ const userSchema = new mongoose.Schema({
       maxLots: { type: Number, default: 50 },
       minLots: { type: Number, default: 1 },
       orderLots: { type: Number, default: 10 },
+      quantitySettings: {
+        breakupQuantity: { type: Number, default: 0 },
+        maxBid: { type: Number, default: 0 },
+      },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
       allowClientIntradayOnly: { type: Boolean, default: true },

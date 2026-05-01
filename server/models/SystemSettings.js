@@ -454,6 +454,10 @@ const systemSettingsSchema = new mongoose.Schema({
       maxLots: { type: Number, default: 50 },
       minLots: { type: Number, default: 1 },
       orderLots: { type: Number, default: 10 },
+      quantitySettings: {
+        breakupQuantity: { type: Number, default: 0 },
+        maxBid: { type: Number, default: 0 },
+      },
       exposureIntraday: { type: Number, default: 1 },
       exposureCarryForward: { type: Number, default: 1 },
       /** If false, users cannot enable “Intraday only” on dashboard; hierarchy/User can override. */

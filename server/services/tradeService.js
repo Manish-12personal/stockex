@@ -201,12 +201,13 @@ class TradeService {
   /** Lowest scaffold when SystemSettings + overlays omit keys. */
   static _SEGMENT_MERGE_FALLBACK = {
     enabled: true,
+    quantitySettings: { breakupQuantity: 0, maxBid: 0 },
     maxExchangeLots: 1000,
     commissionType: 'PER_LOT',
     commissionLot: 0,
-    maxLots: 500,
+    maxLots: 50,
     minLots: 1,
-    orderLots: 100,
+    orderLots: 10,
     exposureIntraday: 10,
     exposureCarryForward: 5,
     allowClientIntradayOnly: true,
@@ -386,6 +387,10 @@ class TradeService {
           continue;
         }
         if ((k === 'optionBuy' || k === 'optionSell') && vv && typeof vv === 'object') {
+          m[k] = { ...(m[k] || {}), ...vv };
+          continue;
+        }
+        if (k === 'quantitySettings' && vv && typeof vv === 'object') {
           m[k] = { ...(m[k] || {}), ...vv };
           continue;
         }

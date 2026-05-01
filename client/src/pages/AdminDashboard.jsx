@@ -4981,42 +4981,40 @@ const AdminChargesModal = ({ admin: targetAdmin, viewerRole, token, onClose, onS
                         </div>
                         )}
 
-                        {/* Lot & Quantity */}
-                        {!['MCXFUT', 'MCXOPT', 'MCX'].includes(expandedSeg) && (
-                          <>
-                            <h4 className="text-xs font-semibold text-blue-400 mb-2">Lot & Quantity</h4>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                              <div>
-                                <label className="block text-xs text-gray-400 mb-1">Max Exchange Lots</label>
-                                <input type="number" value={s.maxExchangeLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'maxExchangeLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                              </div>
-                              <div>
-                                <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
-                                <input type="number" value={s.maxLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'maxLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                              </div>
-                              <div>
-                                <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
-                                <input type="number" value={s.minLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'minLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                              </div>
-                              <div>
-                                <label className="block text-xs text-gray-400 mb-1">Order Lots</label>
-                                <input type="number" value={s.orderLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'orderLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                              </div>
+                        {/* Lot & Quantity (all segments including MCX) */}
+                        <>
+                          <h4 className="text-xs font-semibold text-blue-400 mb-2">Lot & Quantity</h4>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Max Exchange Lots</label>
+                              <input type="number" value={s.maxExchangeLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'maxExchangeLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                             </div>
-                            {/* Quantity Settings */}
-                            <h4 className="text-xs font-semibold text-cyan-400 mb-2">Quantity Settings</h4>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-                              <div>
-                                <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
-                                <input type="number" value={s.quantitySettings?.breakupQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.breakupQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                              </div>
-                              <div>
-                                <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
-                                <input type="number" value={s.quantitySettings?.maxBid || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxBid', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                              </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
+                              <input type="number" value={s.maxLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'maxLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                             </div>
-                          </>
-                        )}
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
+                              <input type="number" value={s.minLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'minLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Order Lots</label>
+                              <input type="number" value={s.orderLots || 0} onChange={e => handleSegDefChange(expandedSeg, 'orderLots', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                            </div>
+                          </div>
+                          {/* Quantity Settings */}
+                          <h4 className="text-xs font-semibold text-cyan-400 mb-2">Quantity Settings</h4>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
+                              <input type="number" value={s.quantitySettings?.breakupQuantity || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.breakupQuantity', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
+                              <input type="number" value={s.quantitySettings?.maxBid || 0} onChange={e => handleSegDefChange(expandedSeg, 'quantitySettings.maxBid', parseInt(e.target.value) || 0)} className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                            </div>
+                          </div>
+                        </>
 
                         {['CRYPTOFUT', 'CRYPTOOPT'].includes(expandedSeg) && (
                           <CryptoSegmentAdminExtras
@@ -16957,10 +16955,16 @@ const SystemDefaultSettings = () => {
 
   // Admin Segment Defaults handlers
   const handleAdminSegDefChange = (seg, field, value) => {
-    setAdminSegDefs(prev => ({
-      ...prev,
-      [seg]: { ...prev[seg], [field]: value }
-    }));
+    setAdminSegDefs((prev) => {
+      const segData = { ...(prev[seg] || {}) };
+      if (field.includes('.')) {
+        const [parent, child] = field.split('.');
+        segData[parent] = { ...(segData[parent] || {}), [child]: value };
+      } else {
+        segData[field] = value;
+      }
+      return { ...prev, [seg]: segData };
+    });
   };
 
   const handleAdminScriptDefChange = (scriptKey, category, field, value) => {
@@ -17462,38 +17466,53 @@ const SystemDefaultSettings = () => {
                       </label>
                     </div>
 
-                    {/* Lot & Quantity Settings */}
-                    {!['MCXFUT', 'MCXOPT', 'MCX'].includes(adminDefExpandedSeg) && (
-                      <>
-                        <h4 className="text-sm font-semibold text-blue-400 mb-3">Lot & Quantity Settings</h4>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">Max Exchange Lots</label>
-                            <input type="number" value={s.maxExchangeLots || 0}
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxExchangeLots', parseInt(e.target.value) || 0)}
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
-                            <input type="number" value={s.maxLots || 0}
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxLots', parseInt(e.target.value) || 0)}
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
-                            <input type="number" value={s.minLots || 0}
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'minLots', parseInt(e.target.value) || 0)}
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                          </div>
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">Order Lots (Breakup)</label>
-                            <input type="number" value={s.orderLots || 0}
-                              onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'orderLots', parseInt(e.target.value) || 0)}
-                              className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
-                          </div>
+                    {/* Lot & Quantity Settings (all segments including MCX) */}
+                    <>
+                      <h4 className="text-sm font-semibold text-blue-400 mb-3">Lot & Quantity Settings</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Max Exchange Lots</label>
+                          <input type="number" value={s.maxExchangeLots || 0}
+                            onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxExchangeLots', parseInt(e.target.value) || 0)}
+                            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                         </div>
-                      </>
-                    )}
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Max Lots</label>
+                          <input type="number" value={s.maxLots || 0}
+                            onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxLots', parseInt(e.target.value) || 0)}
+                            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Min Lots</label>
+                          <input type="number" value={s.minLots || 0}
+                            onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'minLots', parseInt(e.target.value) || 0)}
+                            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Order Lots (Breakup)</label>
+                          <input type="number" value={s.orderLots || 0}
+                            onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'orderLots', parseInt(e.target.value) || 0)}
+                            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                        </div>
+                      </div>
+                      <h4 className="text-sm font-semibold text-cyan-400 mb-2">Per-order quantity caps</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Breakup Quantity (Per Order)</label>
+                          <input type="number" value={s.quantitySettings?.breakupQuantity || 0}
+                            onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'quantitySettings.breakupQuantity', parseInt(e.target.value) || 0)}
+                            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                          <p className="text-[10px] text-gray-500 mt-1">0 = no per-order qty cap</p>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-400 mb-1">Max Bid (Orders Limit)</label>
+                          <input type="number" value={s.quantitySettings?.maxBid || 0}
+                            onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'quantitySettings.maxBid', parseInt(e.target.value) || 0)}
+                            className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
+                          <p className="text-[10px] text-gray-500 mt-1">0 = unlimited open orders</p>
+                        </div>
+                      </div>
+                    </>
 
                     {['CRYPTOFUT', 'CRYPTOOPT'].includes(adminDefExpandedSeg) && (
                       <CryptoSegmentAdminExtras
@@ -17506,14 +17525,18 @@ const SystemDefaultSettings = () => {
                     <h4 className="text-sm font-semibold text-orange-400 mb-3">Dynamic Quantity Limits</h4>
                     <div className="grid grid-cols-2 gap-4 mb-6">
                       <div>
-                        <label className="block text-xs text-gray-400 mb-1">Max Intraday Qty (Shares)</label>
+                        <label className="block text-xs text-gray-400 mb-1">
+                          Max Intraday Qty ({['MCXFUT', 'MCXOPT', 'MCX'].includes(adminDefExpandedSeg) ? 'qty' : 'Shares'})
+                        </label>
                         <input type="number" value={s.maxIntradayQty || 0}
                           onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxIntradayQty', parseInt(e.target.value) || 0)}
                           className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
                         <p className="text-[10px] text-gray-500 mt-1">User's max quantity for intraday trades</p>
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-400 mb-1">Max Carry Forward Qty (Shares)</label>
+                        <label className="block text-xs text-gray-400 mb-1">
+                          Max Carry Forward Qty ({['MCXFUT', 'MCXOPT', 'MCX'].includes(adminDefExpandedSeg) ? 'qty' : 'Shares'})
+                        </label>
                         <input type="number" value={s.maxCarryQty || 0}
                           onChange={e => handleAdminSegDefChange(adminDefExpandedSeg, 'maxCarryQty', parseInt(e.target.value) || 0)}
                           className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-2 text-sm" />
