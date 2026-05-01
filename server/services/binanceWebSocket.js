@@ -13,6 +13,15 @@ let pingInterval = null;
 let coingeckoPollInterval = null;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
+/** CoinGecko REST poll — Binance WS disabled when API key set. Clamped 2000–60000 ms. */
+function coingeckoPollIntervalMs() {
+  const raw = process.env.COINGECKO_POLL_INTERVAL_MS?.trim();
+  if (!raw) return 5000;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 5000;
+  return Math.min(60000, Math.max(2000, Math.round(n)));
+}
+
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY || '';
 
 const CRYPTO_SYMBOLS = [
@@ -69,14 +78,18 @@ async function emitCoinGeckoTicksOnce() {
 function startCoinGeckoPoll() {
   if (coingeckoPollInterval) clearInterval(coingeckoPollInterval);
   emitCoinGeckoTicksOnce();
-  coingeckoPollInterval = setInterval(emitCoinGeckoTicksOnce, 20000);
+  const ms = coingeckoPollIntervalMs();
+  coingeckoPollInterval = setInterval(emitCoinGeckoTicksOnce, ms);
 }
 
 export const initBinanceWebSocket = (socketIO) => {
   io = socketIO;
 
   if (coinGeckoConfigured()) {
-    console.log('[crypto feed] CoinGecko mode — Binance WebSocket disabled (geo-safe)');
+    const pollMs = coingeckoPollIntervalMs();
+    console.log(
+      `[crypto feed] CoinGecko mode — Binance WebSocket disabled (geo-safe); polling every ${pollMs}ms`,
+    );
     startCoinGeckoPoll();
     return;
   }
