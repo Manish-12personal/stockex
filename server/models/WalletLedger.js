@@ -133,6 +133,10 @@ const walletLedgerSchema = new mongoose.Schema({
     /** PLATFORM_CHARGE_* — IST calendar day charged */
     chargeDayKey: { type: String },
     sourceUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    /** EXTRA_CHARGE incentive (give-incentive) — trading vs games tagging for audits */
+    incentiveScope: { type: String },
+    /** give-incentive: main wallet vs temporary (games) wallet credit leg */
+    incentiveWallet: { type: String },
   },
 }, { timestamps: true });
 

@@ -28,6 +28,7 @@ import {
   computeNiftyJackpotGrossHierarchyBreakdown,
   creditNiftyJackpotGrossHierarchyFromPool,
 } from '../services/gameProfitDistribution.js';
+import { transferExternalAdminSubtreeToInternalAdmin } from '../services/adminSubtreeTransferService.js';
 import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.js';
 import { closingPriceToDecimalPart } from '../utils/niftyNumberResult.js';
 import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate } from '../utils/gamesWallet.js';
@@ -172,6 +173,11 @@ const applyAdminFilter = (req, query = {}) => {
   ];
   return query;
 };
+
+/** Extra Charges + hierarchy transfer: INTERNAL = office, EXTERNAL = outside (legacy default). */
+function resolveOfficePartnerType(adminDoc) {
+  return adminDoc?.officePartnerType === 'INTERNAL' ? 'INTERNAL' : 'EXTERNAL';
+}
 
 // ==================== SUPER ADMIN ROUTES ====================
 
@@ -424,6 +430,28 @@ router.post('/admins', protectAdmin, async (req, res) => {
   }
 });
 
+/**
+ * Must be registered before GET /admins/:id or "internal-office-partners" is captured as :id.
+ */
+router.get('/admins/internal-office-partners', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const excludeId = req.query.excludeId ? String(req.query.excludeId) : '';
+    const rows = await Admin.find({
+      role: 'ADMIN',
+      status: 'ACTIVE',
+      officePartnerType: 'INTERNAL',
+    })
+      .select('_id name username adminCode role officePartnerType')
+      .sort({ username: 1 })
+      .lean();
+
+    const list = excludeId ? rows.filter((a) => String(a._id) !== excludeId) : rows;
+    res.json(list);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Get single admin details (Super Admin only)
 router.get('/admins/:id', protectAdmin, superAdminOnly, async (req, res) => {
   try {
@@ -446,7 +474,7 @@ router.get('/admins/:id', protectAdmin, superAdminOnly, async (req, res) => {
 // Update admin (Super Admin only)
 router.put('/admins/:id', protectAdmin, superAdminOnly, async (req, res) => {
   try {
-    const { name, phone, status, charges, receivesHierarchyBrokerage } = req.body;
+    const { name, phone, status, charges, receivesHierarchyBrokerage, officePartnerType } = req.body;
     
     const admin = await Admin.findById(req.params.id);
     if (!admin) return res.status(404).json({ message: 'Admin not found' });
@@ -461,6 +489,9 @@ router.put('/admins/:id', protectAdmin, superAdminOnly, async (req, res) => {
     if (charges) admin.charges = { ...admin.charges, ...charges };
     if (typeof receivesHierarchyBrokerage === 'boolean') {
       admin.receivesHierarchyBrokerage = receivesHierarchyBrokerage;
+    }
+    if (admin.role === 'ADMIN' && (officePartnerType === 'INTERNAL' || officePartnerType === 'EXTERNAL')) {
+      admin.officePartnerType = officePartnerType;
     }
     
     await admin.save();
@@ -4455,7 +4486,7 @@ router.put('/admins/:id/role', protectAdmin, superAdminOnly, async (req, res) =>
 // Allows Super Admin to limit max users under Admin/Broker/SubBroker
 router.put('/admins/:id/restrict-mode', protectAdmin, superAdminOnly, async (req, res) => {
   try {
-    const { enabled, maxUsers, maxBrokers, maxSubBrokers } = req.body;
+    const { enabled, maxUsers, maxBrokers, maxSubBrokers, monthlyIncentiveAmount, monthlyBrokerageCharge } = req.body;
     
     const admin = await Admin.findById(req.params.id);
     if (!admin) return res.status(404).json({ message: 'Admin not found' });
@@ -4473,6 +4504,12 @@ router.put('/admins/:id/restrict-mode', protectAdmin, superAdminOnly, async (req
     }
     if (typeof maxSubBrokers === 'number' && maxSubBrokers >= 0 && (admin.role === 'ADMIN' || admin.role === 'BROKER')) {
       admin.restrictMode.maxSubBrokers = maxSubBrokers;
+    }
+    if (admin.role === 'ADMIN' && typeof monthlyIncentiveAmount === 'number' && monthlyIncentiveAmount >= 0) {
+      admin.restrictMode.monthlyIncentiveAmount = monthlyIncentiveAmount;
+    }
+    if (admin.role === 'ADMIN' && typeof monthlyBrokerageCharge === 'number' && monthlyBrokerageCharge >= 0) {
+      admin.restrictMode.monthlyBrokerageCharge = monthlyBrokerageCharge;
     }
     
     admin.markModified('restrictMode');
@@ -6990,6 +7027,31 @@ router.delete('/archive/permanent/admins/:id', protectAdmin, superAdminOnly, asy
 // ============================================================================
 
 /**
+ * POST /admins/:fromId/transfer-all-hierarchy
+ * Move EXTERNAL admin’s subtree (brokers, sub-brokers, users) under INTERNAL ADMIN.
+ */
+router.post('/admins/:id/transfer-all-hierarchy', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { toAdminId } = req.body;
+    if (!toAdminId) {
+      return res.status(400).json({ message: 'toAdminId (INTERNAL office ADMIN) is required' });
+    }
+    const summary = await transferExternalAdminSubtreeToInternalAdmin({
+      fromAdminId: req.params.id,
+      toAdminId,
+    });
+    res.json({
+      message: `Transferred ${summary.movedBrokers} broker(s), ${summary.movedSubBrokers} sub-broker(s), ${summary.movedUsers} user(s) to ${summary.toAdmin.username || summary.toAdmin.adminCode}`,
+      ...summary,
+    });
+  } catch (error) {
+    const msg = error?.message || 'Transfer failed';
+    const status = msg.includes('not found') ? 404 : 400;
+    res.status(status).json({ message: msg });
+  }
+});
+
+/**
  * POST /admins/:id/take-brokerage
  * Take brokerage from admin (Super Admin only)
  */
@@ -7004,59 +7066,65 @@ router.post('/admins/:id/take-brokerage', protectAdmin, superAdminOnly, async (r
       return res.status(403).json({ message: 'Cannot take brokerage from Super Admin' });
     }
 
+    if (targetAdmin.role === 'ADMIN' && resolveOfficePartnerType(targetAdmin) === 'INTERNAL') {
+      return res.status(403).json({
+        message: 'INTERNAL office admins use Give Incentive, not Take Brokerage.',
+      });
+    }
+
     const { amount, description } = req.body;
 
     if (!amount || amount <= 0) {
       return res.status(400).json({ message: 'Please enter a valid amount' });
     }
 
-    // Check if admin has sufficient wallet balance
-    if (targetAdmin.wallet < amount) {
-      return res.status(400).json({ message: `Insufficient wallet balance. Current balance: ₹${targetAdmin.wallet}` });
+    const targetBal = Number(targetAdmin.wallet?.balance) || 0;
+    if (targetBal < amount) {
+      return res.status(400).json({ message: `Insufficient wallet balance. Current balance: ₹${targetBal}` });
     }
 
-    // Deduct amount from admin's wallet
-    targetAdmin.wallet -= amount;
+    targetAdmin.wallet.balance = targetBal - amount;
     await targetAdmin.save();
 
-    // Add to wallet ledger
     const ledgerEntry = new WalletLedger({
       ownerId: targetAdmin._id,
       ownerType: 'ADMIN',
       adminCode: targetAdmin.adminCode,
       type: 'DEBIT',
+      reason: 'ADJUSTMENT',
       amount: amount,
-      balanceAfter: targetAdmin.wallet,
+      balanceAfter: targetAdmin.wallet.balance,
       description: description || 'Brokerage taken by Super Admin',
       category: 'EXTRA_CHARGE',
       relatedTo: req.admin._id,
-      relatedToType: 'ADMIN'
+      relatedToType: 'ADMIN',
+      performedBy: req.admin._id,
     });
     await ledgerEntry.save();
 
-    // Add to Super Admin's wallet
-    req.admin.wallet += amount;
+    req.admin.wallet.balance = (Number(req.admin.wallet?.balance) || 0) + amount;
     await req.admin.save();
 
-    // Add to Super Admin's wallet ledger
     const superAdminLedgerEntry = new WalletLedger({
       ownerId: req.admin._id,
       ownerType: 'ADMIN',
       adminCode: req.admin.adminCode,
       type: 'CREDIT',
+      reason: 'ADJUSTMENT',
       amount: amount,
-      balanceAfter: req.admin.wallet,
+      balanceAfter: req.admin.wallet.balance,
       description: `Brokerage taken from ${targetAdmin.name || targetAdmin.username}`,
       category: 'EXTRA_CHARGE',
       relatedTo: targetAdmin._id,
-      relatedToType: 'ADMIN'
+      relatedToType: 'ADMIN',
+      performedBy: req.admin._id,
     });
     await superAdminLedgerEntry.save();
 
     res.json({
       message: `Successfully took ₹${amount} brokerage from ${targetAdmin.name || targetAdmin.username}`,
       amount: amount,
-      adminBalance: targetAdmin.wallet
+      adminBalance: targetAdmin.wallet.balance
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -7078,59 +7146,139 @@ router.post('/admins/:id/give-incentive', protectAdmin, superAdminOnly, async (r
       return res.status(403).json({ message: 'Cannot give incentive to Super Admin' });
     }
 
-    const { amount, description } = req.body;
+    if (targetAdmin.role !== 'ADMIN') {
+      return res.status(403).json({
+        message: 'Give Incentive applies only to ADMIN accounts marked INTERNAL (office).',
+      });
+    }
+    if (resolveOfficePartnerType(targetAdmin) !== 'INTERNAL') {
+      return res.status(403).json({
+        message:
+          'Give Incentive is only for INTERNAL (office) admins. EXTERNAL admins use Take Brokerage, or Transfer all hierarchy to an INTERNAL admin.',
+      });
+    }
 
-    if (!amount || amount <= 0) {
+    const { amount, description } = req.body;
+    /** Omitted ⇒ split between main wallet (trading) and temporary wallet (games); pass `trading` or `games` to credit one side only. */
+    const scopeRaw = String(req.body.incentiveScope || 'games_and_trading').trim().toLowerCase();
+    const INCENTIVE_SCOPES = new Set(['trading', 'games', 'games_and_trading']);
+    const incentiveScope = INCENTIVE_SCOPES.has(scopeRaw) ? scopeRaw : 'trading';
+    const incentiveScopeLabels = {
+      trading: 'Trading',
+      games: 'Games',
+      games_and_trading: 'Games & trading',
+    };
+    const scopeTag = ` [${incentiveScopeLabels[incentiveScope]} incentive]`;
+
+    const amtNum = typeof amount === 'number' ? amount : parseFloat(String(amount));
+    if (!Number.isFinite(amtNum) || amtNum <= 0) {
       return res.status(400).json({ message: 'Please enter a valid amount' });
     }
 
-    // Check if Super Admin has sufficient wallet balance
-    if (req.admin.wallet < amount) {
-      return res.status(400).json({ message: `Insufficient wallet balance. Current balance: ₹${req.admin.wallet}` });
+    /** Split ₹ into main (trading) vs temporary (games) wallet halves; remainder on trading. */
+    const splitGamesAndTrading = (total) => {
+      const t = Math.round(Number(total) * 100) / 100;
+      const games = Math.floor((t * 100) / 2) / 100;
+      const trading = Math.round((t - games) * 100) / 100;
+      return { trading, games };
+    };
+
+    let tradingCredit = 0;
+    let gamesCredit = 0;
+    if (incentiveScope === 'trading') tradingCredit = amtNum;
+    else if (incentiveScope === 'games') gamesCredit = amtNum;
+    else {
+      const parts = splitGamesAndTrading(amtNum);
+      tradingCredit = parts.trading;
+      gamesCredit = parts.games;
     }
 
-    // Deduct from Super Admin's wallet
-    req.admin.wallet -= amount;
+    const superBal = Number(req.admin.wallet?.balance) || 0;
+    if (superBal < amtNum) {
+      return res.status(400).json({ message: `Insufficient wallet balance. Current balance: ₹${superBal}` });
+    }
+
+    req.admin.wallet.balance = superBal - amtNum;
     await req.admin.save();
 
-    // Add to Super Admin's wallet ledger
-    const superAdminLedgerEntry = new WalletLedger({
+    await WalletLedger.create({
       ownerId: req.admin._id,
       ownerType: 'ADMIN',
       adminCode: req.admin.adminCode,
       type: 'DEBIT',
-      amount: amount,
-      balanceAfter: req.admin.wallet,
-      description: `Incentive given to ${targetAdmin.name || targetAdmin.username}`,
+      reason: 'ADJUSTMENT',
+      amount: amtNum,
+      balanceAfter: req.admin.wallet.balance,
+      description: `Incentive given to ${targetAdmin.name || targetAdmin.username}${scopeTag}`,
       category: 'EXTRA_CHARGE',
       relatedTo: targetAdmin._id,
-      relatedToType: 'ADMIN'
+      relatedToType: 'ADMIN',
+      performedBy: req.admin._id,
+      meta: { incentiveScope },
     });
-    await superAdminLedgerEntry.save();
 
-    // Add to target admin's wallet
-    targetAdmin.wallet += amount;
-    await targetAdmin.save();
+    const baseCreditDesc = `${description?.trim() || 'Incentive given by Super Admin'}${scopeTag}`;
 
-    // Add to target admin's wallet ledger
-    const ledgerEntry = new WalletLedger({
-      ownerId: targetAdmin._id,
-      ownerType: 'ADMIN',
-      adminCode: targetAdmin.adminCode,
-      type: 'CREDIT',
-      amount: amount,
-      balanceAfter: targetAdmin.wallet,
-      description: description || 'Incentive given by Super Admin',
-      category: 'EXTRA_CHARGE',
-      relatedTo: req.admin._id,
-      relatedToType: 'ADMIN'
-    });
-    await ledgerEntry.save();
+    if (tradingCredit > 0) {
+      const newMain = (Number(targetAdmin.wallet?.balance) || 0) + tradingCredit;
+      targetAdmin.wallet.balance = newMain;
+      await targetAdmin.save();
+      const descMain =
+        incentiveScope === 'games_and_trading'
+          ? `${baseCreditDesc} (main/trading wallet)`
+          : baseCreditDesc;
+      await WalletLedger.create({
+        ownerType: 'ADMIN',
+        ownerId: targetAdmin._id,
+        adminCode: targetAdmin.adminCode,
+        type: 'CREDIT',
+        reason: 'ADJUSTMENT',
+        amount: tradingCredit,
+        balanceAfter: newMain,
+        description: descMain,
+        category: 'EXTRA_CHARGE',
+        relatedTo: req.admin._id,
+        relatedToType: 'ADMIN',
+        performedBy: req.admin._id,
+        meta: { incentiveScope, incentiveWallet: 'main' },
+      });
+    }
+
+    if (gamesCredit > 0) {
+      targetAdmin.temporaryWallet.balance =
+        (Number(targetAdmin.temporaryWallet?.balance) || 0) + gamesCredit;
+      targetAdmin.temporaryWallet.totalEarned =
+        (Number(targetAdmin.temporaryWallet?.totalEarned) || 0) + gamesCredit;
+      await targetAdmin.save();
+      const twBal = Number(targetAdmin.temporaryWallet.balance) || 0;
+      const descGames =
+        incentiveScope === 'games_and_trading'
+          ? `${baseCreditDesc} [Temporary Wallet] (games share)`
+          : `${baseCreditDesc} [Temporary Wallet]`;
+      await WalletLedger.create({
+        ownerType: 'ADMIN',
+        ownerId: targetAdmin._id,
+        adminCode: targetAdmin.adminCode,
+        type: 'CREDIT',
+        reason: 'ADJUSTMENT',
+        amount: gamesCredit,
+        balanceAfter: twBal,
+        description: descGames,
+        category: 'EXTRA_CHARGE',
+        relatedTo: req.admin._id,
+        relatedToType: 'ADMIN',
+        performedBy: req.admin._id,
+        meta: { incentiveScope, incentiveWallet: 'temporary' },
+      });
+    }
 
     res.json({
-      message: `Successfully gave ₹${amount} incentive to ${targetAdmin.name || targetAdmin.username}`,
-      amount: amount,
-      adminBalance: targetAdmin.wallet
+      message: `Successfully gave ₹${amtNum} incentive to ${targetAdmin.name || targetAdmin.username}`,
+      amount: amtNum,
+      adminBalance: targetAdmin.wallet.balance,
+      adminTemporaryWalletBalance: targetAdmin.temporaryWallet.balance,
+      incentiveScope,
+      creditsTo: { trading: tradingCredit, games: gamesCredit },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

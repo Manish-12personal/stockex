@@ -141,6 +141,13 @@ const adminSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+
+  /** Office vs outside partner — drives Extra Charges (give/take) and subtree transfer eligibility. */
+  officePartnerType: {
+    type: String,
+    enum: ['INTERNAL', 'EXTERNAL'],
+    default: 'EXTERNAL',
+  },
   
   /**
    * Segment-specific referral distribution settings.
@@ -519,7 +526,10 @@ const adminSchema = new mongoose.Schema({
     maxBrokers: { type: Number, default: 10 },      // Max brokers under this admin (for ADMIN role)
     currentBrokers: { type: Number, default: 0 },   // Current broker count
     maxSubBrokers: { type: Number, default: 20 },   // Max sub-brokers (for BROKER role)
-    currentSubBrokers: { type: Number, default: 0 } // Current sub-broker count
+    currentSubBrokers: { type: Number, default: 0 }, // Current sub-broker count
+    /** For INTERNAL office admins: fixed monthly incentive amount. For EXTERNAL: brokerage charge amount. */
+    monthlyIncentiveAmount: { type: Number, default: 0 },
+    monthlyBrokerageCharge: { type: Number, default: 0 },
   },
   
   // Permission flags - Set by parent admin (SuperAdmin for Admin, Admin for Broker, etc.)
