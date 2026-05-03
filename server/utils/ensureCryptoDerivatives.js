@@ -10,9 +10,13 @@ function lotTickFromFilters(filters) {
   const pr = filters?.find((f) => f.filterType === 'PRICE_FILTER');
   let lotSize = parseFloat(lot?.stepSize || lot?.minQty || '0.001');
   let tickSize = parseFloat(pr?.tickSize || '0.01');
+  const minQ = parseFloat(lot?.minQty || '');
+  const maxQ = parseFloat(lot?.maxQty || '');
   if (!Number.isFinite(lotSize) || lotSize <= 0) lotSize = 0.001;
   if (!Number.isFinite(tickSize) || tickSize <= 0) tickSize = 0.01;
-  return { lotSize, tickSize };
+  const qtyFilterMin = Number.isFinite(minQ) && minQ > 0 ? minQ : lotSize;
+  const qtyFilterMax = Number.isFinite(maxQ) && maxQ > 0 ? maxQ : null;
+  return { lotSize, tickSize, qtyFilterMin, qtyFilterMax };
 }
 
 function buildSyntheticCryptoOptions() {
@@ -44,6 +48,8 @@ function buildSyntheticCryptoOptions() {
           pair,
           lotSize,
           tickSize,
+          qtyFilterMin: lotSize,
+          qtyFilterMax: null,
           strike,
           optionType: ot,
           expiry,
@@ -74,6 +80,8 @@ function minimalFuturesFallback() {
       pair: 'BTCUSDT',
       lotSize: 0.001,
       tickSize: 0.1,
+      qtyFilterMin: 0.001,
+      qtyFilterMax: null,
       ltp: 97000,
       isCrypto: true,
       isEnabled: true
@@ -91,6 +99,8 @@ function minimalFuturesFallback() {
       pair: 'ETHUSDT',
       lotSize: 0.01,
       tickSize: 0.01,
+      qtyFilterMin: 0.01,
+      qtyFilterMax: null,
       ltp: 3500,
       isCrypto: true,
       isEnabled: true
@@ -129,7 +139,7 @@ export async function syncBinanceUsdtmPerpetualInstruments({ force = false } = {
   }
 
   const bulkOps = list.map((s) => {
-    const { lotSize, tickSize } = lotTickFromFilters(s.filters);
+    const { lotSize, tickSize, qtyFilterMin, qtyFilterMax } = lotTickFromFilters(s.filters);
     const pair = s.symbol;
     const token = `BIN_UM_${pair}`;
     return {
@@ -149,6 +159,8 @@ export async function syncBinanceUsdtmPerpetualInstruments({ force = false } = {
             pair,
             lotSize,
             tickSize,
+            qtyFilterMin,
+            qtyFilterMax,
             isCrypto: true,
             isEnabled: true
           }

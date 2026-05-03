@@ -88,6 +88,17 @@ const instrumentSchema = new mongoose.Schema({
     type: Number,
     default: 0.05
   },
+
+  /** Binance LOT_SIZE minQty (base quantity). Set from futures exchangeInfo when synced. */
+  qtyFilterMin: {
+    type: Number,
+    default: null
+  },
+  /** Binance LOT_SIZE maxQty (base quantity). */
+  qtyFilterMax: {
+    type: Number,
+    default: null
+  },
   
   // Live price data (updated via WebSocket)
   ltp: {

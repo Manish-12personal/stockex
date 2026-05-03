@@ -7,6 +7,10 @@ import Admin from '../models/Admin.js';
 import { protectUser as protect, protectAdmin } from '../middleware/auth.js';
 import { orderIsUsdSpot } from '../utils/tradingUsdSpot.js';
 import {
+  isBinanceCryptoOrder,
+  assertBinanceCryptoQuantityValidated,
+} from '../utils/binanceCryptoQty.js';
+import {
   buildInstrumentDenyContext,
   assertHierarchyInstrumentNotDenied,
 } from '../services/instrumentRestrictionService.js';
@@ -127,7 +131,11 @@ router.post('/margin-preview', protect, async (req, res) => {
       }
     }
     const instrumentDoc = orInst.length
-      ? await Instrument.findOne({ $or: orInst }).select('tradingDefaults exchange segment displaySegment symbol category pair name').lean()
+      ? await Instrument.findOne({ $or: orInst })
+          .select(
+            'tradingDefaults exchange segment displaySegment symbol category pair name lotSize qtyFilterMin qtyFilterMax instrumentType'
+          )
+          .lean()
       : null;
 
     const fullUser = await User.findById(req.user._id).populate({
@@ -152,14 +160,20 @@ router.post('/margin-preview', protect, async (req, res) => {
     leverage = TradeService.capLeverageFromInstrument(instrumentDoc, leverage, isIntraday, isOptionBuy);
     
     const price = req.body.price || 0;
+    const bnCryptoPreview = isBinanceCryptoOrder({ ...req.body, segment });
     let lotSize = req.body.lotSize || TradingService.getLotSize(symbol, category, req.body.exchange);
-    const segLotPreview = TradeService.segmentCryptoLotSizePerUnitLot(segmentSettings);
+    const segLotPreview = !bnCryptoPreview
+      ? TradeService.segmentCryptoLotSizePerUnitLot(segmentSettings)
+      : null;
     const segPrev = String(segment || '').toUpperCase();
     if (
       segLotPreview != null &&
       (segPrev === 'CRYPTOFUT' || segPrev === 'CRYPTOOPT' || segPrev === 'CRYPTO' || req.body.exchange === 'BINANCE')
     ) {
       lotSize = segLotPreview;
+    }
+    if (bnCryptoPreview && instrumentDoc?.lotSize > 0) {
+      lotSize = instrumentDoc.lotSize;
     }
     const quantity =
       req.body.quantity != null && req.body.quantity !== '' && Number.isFinite(Number(req.body.quantity))
@@ -276,33 +290,26 @@ router.post('/margin-preview', protect, async (req, res) => {
     const segmentMaxBid = segmentSettings?.quantitySettings?.maxBid;
     const maxBid = instrumentMaxBid || segmentMaxBid || 0;
     
-    // Binance spot: optional 0.25-lot steps when client sends cryptoLotStepOrder (right-panel "Lots" mode)
-    const CRYPTO_LOT_MIN_STEP = 0.25;
-    const isCryptoUsdSpotForMargin =
-      orderIsUsdSpot({ ...req.body, segment, instrumentType }) && req.body.isCrypto && req.body.exchange === 'BINANCE';
-    const isQuarterLotMode = req.body.cryptoLotStepOrder === true;
     let lotsValid;
     let lotsError = null;
-    if (isCryptoUsdSpotForMargin && isQuarterLotMode) {
-      if (quantity <= 0) {
+    if (bnCryptoPreview) {
+      try {
+        assertBinanceCryptoQuantityValidated({
+          symbol,
+          qty: quantity,
+          instrument: instrumentDoc,
+          segmentSettings,
+          scriptSettings,
+        });
+        lotsValid = Number.isFinite(quantity) && quantity > 0;
+      } catch (e) {
         lotsValid = false;
-        lotsError = 'Enter a valid size';
-      } else if (effectivePreviewLots < CRYPTO_LOT_MIN_STEP) {
-        lotsValid = false;
-        lotsError = `Minimum ${CRYPTO_LOT_MIN_STEP} lot`;
-      } else if (effectivePreviewLots > maxLots) {
-        lotsValid = false;
-        lotsError = `Maximum ${maxLots} lots per order`;
-      } else {
-        const x = effectivePreviewLots / CRYPTO_LOT_MIN_STEP;
-        const isStep = Math.abs(x - Math.round(x)) < 1e-7;
-        lotsValid = isStep;
-        if (!isStep) {
-          lotsError = 'Lots must be in steps of 0.25 (e.g. 0.25, 0.5, 1, 1.25)';
-        }
+        lotsError = e?.message || 'Invalid quantity';
       }
-    } else if (isCryptoUsdSpotForMargin) {
-      lotsValid = quantity > 0 && effectivePreviewLots <= maxLots;
+    } else if (orderIsUsdSpot({ ...req.body, segment, instrumentType })) {
+      lotsValid =
+        quantity > 0 &&
+        (lotSize <= 0 || !Number.isFinite(effectivePreviewLots) || effectivePreviewLots <= maxLots);
       if (quantity > 0 && !lotsValid) {
         lotsError = `Exceeds maximum ${maxLots} lots for this order`;
       }

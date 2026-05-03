@@ -9,6 +9,10 @@ import SystemSettings from '../models/SystemSettings.js';
 import { getUsdInrRate } from '../utils/usdInr.js';
 import { orderIsUsdSpot, orderIsForex } from '../utils/tradingUsdSpot.js';
 import {
+  isBinanceCryptoOrder,
+  assertBinanceCryptoQuantityValidated,
+} from '../utils/binanceCryptoQty.js';
+import {
   adminReceivesHierarchyBrokerage,
   resolveHierarchyBrokerageRecipient,
 } from '../utils/adminBrokerageEligibility.js';
@@ -876,47 +880,44 @@ class TradeService {
       }
     }
     const segU = String(tradeData.segment || '').toUpperCase();
-    const segCryptoLot = this.segmentCryptoLotSizePerUnitLot(segmentSettings);
+    const segCryptoLot = !isBinanceCryptoOrder(tradeData)
+      ? this.segmentCryptoLotSizePerUnitLot(segmentSettings)
+      : null;
     if (
       segCryptoLot != null &&
       (segU === 'CRYPTOFUT' || segU === 'CRYPTOOPT' || segU === 'CRYPTO' || tradeData.isCrypto)
     ) {
       lotSize = segCryptoLot;
     }
+    if (isBinanceCryptoOrder(tradeData) && instrumentDoc?.lotSize > 0) {
+      lotSize = instrumentDoc.lotSize;
+    }
     const qty = Number(tradeData.quantity) || 0;
-    const lots =
+    let lots =
       tradeData.lots != null && tradeData.lots !== '' && Number.isFinite(Number(tradeData.lots))
         ? Number(tradeData.lots)
         : lotSize > 0
           ? (orderIsUsdSpot(tradeData) ? qty / lotSize : Math.ceil(qty / lotSize))
           : 1;
     
-    // Validate lot limits from user settings (USD spot: fractional lots handled below)
     const maxLots = scriptSettings?.lotSettings?.maxLots || segmentSettings.maxLots || 50;
     const minLots = scriptSettings?.lotSettings?.minLots || segmentSettings.minLots || 1;
-    
-    if (!orderIsUsdSpot(tradeData)) {
+
+    if (isBinanceCryptoOrder(tradeData)) {
+      assertBinanceCryptoQuantityValidated({
+        symbol: tradeData.symbol,
+        qty,
+        instrument: instrumentDoc,
+        segmentSettings,
+        scriptSettings,
+      });
+      lots = lotSize > 0 ? qty / lotSize : qty;
+    } else if (!orderIsUsdSpot(tradeData)) {
       if (lots < minLots) {
         throw new Error(`Minimum ${minLots} lots required for ${tradeData.symbol}`);
       }
       if (lots > maxLots) {
         throw new Error(`Maximum ${maxLots} lots allowed for ${tradeData.symbol}`);
-      }
-    } else if (tradeData.isCrypto && tradeData.exchange === 'BINANCE' && tradeData.cryptoLotStepOrder) {
-      const CRYPTO_LOT_MIN_STEP = 0.25;
-      const el = lotSize > 0 ? qty / lotSize : lots;
-      if (qty <= 0) {
-        throw new Error('Invalid order quantity');
-      }
-      if (el < CRYPTO_LOT_MIN_STEP) {
-        throw new Error(`Minimum ${CRYPTO_LOT_MIN_STEP} lot for ${tradeData.symbol}`);
-      }
-      if (el > maxLots) {
-        throw new Error(`Maximum ${maxLots} lots allowed for ${tradeData.symbol}`);
-      }
-      const x = el / CRYPTO_LOT_MIN_STEP;
-      if (Math.abs(x - Math.round(x)) > 1e-6) {
-        throw new Error('Lot size must be in steps of 0.25 (e.g. 0.25, 0.5, 1)');
       }
     } else if (orderIsUsdSpot(tradeData) && (!tradeData.quantity || tradeData.quantity <= 0)) {
       throw new Error('Invalid order quantity');

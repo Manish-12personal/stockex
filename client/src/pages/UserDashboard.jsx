@@ -127,13 +127,6 @@ const instrumentsData = {
   }
 };
 
-/** USDT spot "Lots" mode: step 0.25 in lot count (0.25, 0.5, 1, 1.25, …) */
-const CRYPTO_LOT_MIN_STEP = 0.25;
-function roundCryptoLotsToStep(n) {
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.round(n / CRYPTO_LOT_MIN_STEP) * CRYPTO_LOT_MIN_STEP;
-}
-
 /** Path segment for GET /api/binance/candles/:symbol (must not produce e.g. DOGEUSDTUSDT). */
 function binanceCandleSymbol(instrument) {
   if (!instrument) return '';
@@ -3898,8 +3891,7 @@ const TradingPanel = ({
   
   // Crypto: amount-mode = USD notional (converted to ₹ for wallet/API); units = base qty; lots = stepped lots
   const [cryptoAmount, setCryptoAmount] = useState('150');
-  const [cryptoInputMode, setCryptoInputMode] = useState('amount'); // 'amount' | 'units' | 'lots' (lots = crypto only)
-  const [cryptoLotInput, setCryptoLotInput] = useState('1');
+  const [cryptoInputMode, setCryptoInputMode] = useState('amount'); // 'amount' | 'units'
   
   const isCryptoOnly = !!(instrument?.isCrypto || instrument?.segment === 'CRYPTO' || instrument?.exchange === 'BINANCE');
   const isForex = isForexInstrument(instrument);
@@ -3925,21 +3917,20 @@ const TradingPanel = ({
     cryptoUnitPrice > 0 && instrument
       ? spotPxToDisplayedInr(instrument, cryptoUnitPrice, usdRate)
       : 0;
-  const baseQtyPerCryptoLot = marginPreview?.lotSize != null && Number(marginPreview.lotSize) > 0
-    ? Number(marginPreview.lotSize)
-    : 1;
+  const baseQtyPerCryptoLot =
+    isCryptoOnly && instrument?.lotSize > 0
+      ? Number(instrument.lotSize)
+      : marginPreview?.lotSize != null && Number(marginPreview.lotSize) > 0
+        ? Number(marginPreview.lotSize)
+        : 1;
   const cryptoUnits =
-    isCryptoOnly && cryptoInputMode === 'lots'
-      ? roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0) * baseQtyPerCryptoLot
-      : cryptoInputMode === 'amount'
-        ? cryptoUnitNotionalInr > 0
-          ? ((parseFloat(cryptoAmount) || 0) * (isCryptoOnly ? usdRate : 1)) / cryptoUnitNotionalInr
-          : 0
-        : parseFloat(cryptoAmount) || 0;
+    cryptoInputMode === 'amount'
+      ? cryptoUnitNotionalInr > 0
+        ? ((parseFloat(cryptoAmount) || 0) * (isCryptoOnly ? usdRate : 1)) / cryptoUnitNotionalInr
+        : 0
+      : parseFloat(cryptoAmount) || 0;
   const cryptoTotalCost =
-    isCryptoOnly && cryptoInputMode === 'lots'
-    ? (cryptoUnitNotionalInr > 0 ? cryptoUnits * cryptoUnitNotionalInr : 0)
-    : cryptoInputMode === 'amount'
+    cryptoInputMode === 'amount'
       ? (isCryptoOnly ? (parseFloat(cryptoAmount) || 0) * usdRate : parseFloat(cryptoAmount) || 0)
       : cryptoUnitNotionalInr > 0
         ? (parseFloat(cryptoAmount) || 0) * cryptoUnitNotionalInr
@@ -3988,14 +3979,6 @@ const TradingPanel = ({
     };
     if (user?.token) fetchSettings();
   }, [user?.token, instrument?.exchange, isUsdSpot, isForex]);
-
-  useEffect(() => {
-    if (isForex && cryptoInputMode === 'lots') setCryptoInputMode('amount');
-  }, [isForex, cryptoInputMode, instrument?.token, instrument?.pair, instrument?.symbol]);
-
-  useEffect(() => {
-    setCryptoLotInput('1');
-  }, [instrument?.token, instrument?.pair, instrument?.symbol]);
 
   // When instrument changes, seed price + limit (crypto spot = USDT; forex/US₹ spot = ₹)
   useEffect(() => {
@@ -4106,9 +4089,8 @@ const TradingPanel = ({
                 : parseInt(lots || 0));  // Other segments: direct quantity
 
   const buildMarginPreviewBody = (sideLower) => {
-    const usdSpotLots = isUsdSpot && isCryptoOnly && cryptoInputMode === 'lots'
-      ? roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0)
-      : null;
+    const cryptoStep =
+      isCryptoOnly && instrument?.lotSize > 0 ? Number(instrument.lotSize) : 1;
     const body = {
       symbol: instrument.symbol,
       tradingSymbol: instrument.tradingSymbol || instrument.symbol,
@@ -4124,7 +4106,7 @@ const TradingPanel = ({
       productType,
       side: String(sideLower || orderType).toUpperCase(),
       quantity: totalQuantity,
-      lotSize: isUsdSpot ? 1 : lotSize,
+      lotSize: isUsdSpot ? cryptoStep : lotSize,
       price: isUsdSpot ? Number(livePrice) : parseFloat(price),
       leverage: 1,
       isCrypto: isCryptoOnly,
@@ -4132,11 +4114,6 @@ const TradingPanel = ({
     };
     if (!isUsdSpot) {
       body.lots = parseInt(lots, 10);
-    } else if (usdSpotLots != null) {
-      body.lots = usdSpotLots;
-      body.cryptoLotStepOrder = true;
-    } else {
-      body.cryptoLotStepOrder = false;
     }
     return body;
   };
@@ -4165,7 +4142,7 @@ const TradingPanel = ({
 
     const debounce = setTimeout(fetchMarginPreview, 300);
     return () => clearTimeout(debounce);
-  }, [instrument, lots, price, productType, orderType, user, totalQuantity, lotSize, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice, cryptoInputMode, cryptoLotInput]);
+  }, [instrument, lots, price, productType, orderType, user, totalQuantity, lotSize, usdRate, isUsdSpot, isForex, isCryptoOnly, livePrice, cryptoInputMode, cryptoAmount]);
 
   // Place order (optional explicitSide when confirming from modal with opposite side vs current stripe highlight)
   const handlePlaceOrder = async (explicitSide) => {
@@ -4234,7 +4211,7 @@ const TradingPanel = ({
         orderType: orderMode,
         side: sideLower.toUpperCase(),
         quantity: isUsdSpot ? cryptoUnits : totalQuantity,
-        lotSize: isUsdSpot ? baseQtyPerCryptoLot : lotSize,
+        lotSize: isUsdSpot ? (instrument?.lotSize > 0 ? Number(instrument.lotSize) : baseQtyPerCryptoLot) : lotSize,
         price: isUsdSpot ? livePrice : parseFloat(price),
         bidPrice: liveBid,
         askPrice: liveAsk,
@@ -4258,11 +4235,8 @@ const TradingPanel = ({
       };
       if (!isUsdSpot) {
         orderData.lots = parseInt(lots, 10);
-      } else if (isCryptoOnly && cryptoInputMode === 'lots') {
-        orderData.lots = roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0);
-        orderData.cryptoLotStepOrder = true;
       }
-      
+
       console.log('Placing order:', orderData);
 
       // Add limit price for LIMIT orders
@@ -4377,15 +4351,15 @@ const TradingPanel = ({
   const confirmMinVolumeLabel =
     !isUsdSpot && marginPreview?.minLots != null && Number(lotSize) > 0
       ? `${marginPreview.minLots * Number(lotSize)} qty (min ${marginPreview.minLots} lot)`
-      : isUsdSpot && isCryptoOnly && cryptoInputMode === 'lots'
-        ? `${CRYPTO_LOT_MIN_STEP} lot min`
+      : isUsdSpot && isCryptoOnly && Number(baseQtyPerCryptoLot) > 0
+        ? `Exchange step ${baseQtyPerCryptoLot}`
         : !isUsdSpot && marginPreview?.minLots != null
           ? `${marginPreview.minLots} lot(s)`
           : '—';
 
   const confirmVolumeStepLabel =
-    isUsdSpot && isCryptoOnly && cryptoInputMode === 'lots'
-      ? `${CRYPTO_LOT_MIN_STEP} lot`
+    isUsdSpot && isCryptoOnly && Number(baseQtyPerCryptoLot) > 0
+      ? `Step ${baseQtyPerCryptoLot}`
       : !isUsdSpot && inputMode === 'quantity'
         ? '1 qty'
         : !isUsdSpot
@@ -4642,8 +4616,8 @@ const TradingPanel = ({
         {/* Crypto / Forex: USD-quote, INR notional */}
         {isUsdSpot ? (
           <div>
-            {/* Crypto: amount / units / lots (0.25 lot step). Forex: amount / units only */}
-            <div className={`grid gap-2 mb-3 ${isCryptoOnly ? 'grid-cols-3' : 'grid-cols-2'}`}>
+            {/* Crypto / forex: amount or base units (exchange step enforced server-side for Binance crypto). */}
+            <div className="grid gap-2 mb-3 grid-cols-2">
               <button
                 type="button"
                 onClick={() => setCryptoInputMode('amount')}
@@ -4662,17 +4636,6 @@ const TradingPanel = ({
               >
                 {isForex ? '◆' : '₿'} Units
               </button>
-              {isCryptoOnly && (
-                <button
-                  type="button"
-                  onClick={() => setCryptoInputMode('lots')}
-                  className={`py-2 rounded text-sm font-medium transition ${
-                    cryptoInputMode === 'lots' ? 'bg-orange-600 text-white' : 'bg-dark-700 text-gray-400'
-                  }`}
-                >
-                  Lots
-                </button>
-              )}
             </div>
             
             <label className="block text-xs text-gray-400 mb-2">
@@ -4680,63 +4643,23 @@ const TradingPanel = ({
                 ? isCryptoOnly
                   ? 'Amount (USD)'
                   : 'Amount (INR)'
-                : cryptoInputMode === 'units'
-                  ? `${instrument?.symbol} Units`
-                  : `Lots (min ${CRYPTO_LOT_MIN_STEP}, step ${CRYPTO_LOT_MIN_STEP} × ${baseQtyPerCryptoLot} ${instrument?.symbol} / lot)`}
+                : `${instrument?.symbol} Units`}
             </label>
-            {isCryptoOnly && cryptoInputMode === 'lots' ? (
-              <div>
-                <input
-                  type="number"
-                  value={cryptoLotInput}
-                  onChange={(e) => setCryptoLotInput(e.target.value)}
-                  onBlur={() => {
-                    const r = roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0);
-                    if (r > 0) setCryptoLotInput(String(r));
-                  }}
-                  min={CRYPTO_LOT_MIN_STEP}
-                  step={CRYPTO_LOT_MIN_STEP}
-                  placeholder="e.g. 0.25, 1, 1.5"
-                  className="w-full bg-dark-700 border border-dark-600 rounded px-3 py-3 text-lg font-bold focus:outline-none focus:border-orange-500"
-                />
-                <div className="flex gap-1 mt-2 flex-wrap">
-                  {[0.25, 0.5, 0.75, 1, 1.25, 2, 2.5, 3].map((l) => (
-                    <button
-                      type="button"
-                      key={l}
-                      onClick={() => {
-                        setCryptoInputMode('lots');
-                        setCryptoLotInput(String(l));
-                      }}
-                      className={`flex-1 min-w-[40px] py-1 text-xs rounded ${
-                        roundCryptoLotsToStep(parseFloat(cryptoLotInput) || 0) === l && cryptoInputMode === 'lots'
-                          ? 'bg-orange-600'
-                          : 'bg-dark-600 hover:bg-dark-500'
-                      }`}
-                    >
-                      {l}L
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-                  {cryptoInputMode === 'amount' ? (isCryptoOnly ? '$' : '₹') : ''}
-                </span>
-                <input
-                  type="number"
-                  value={cryptoAmount}
-                  onChange={(e) => setCryptoAmount(e.target.value)}
-                  placeholder={cryptoInputMode === 'amount' ? (isCryptoOnly ? 'USD notional' : 'Enter INR amount') : 'Enter units'}
-                  className={`w-full bg-dark-700 border border-dark-600 rounded px-3 py-3 text-lg font-bold focus:outline-none focus:border-orange-500 ${cryptoInputMode === 'amount' ? 'pl-8' : ''}`}
-                  step="any"
-                />
-              </div>
-            )}
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                {cryptoInputMode === 'amount' ? (isCryptoOnly ? '$' : '₹') : ''}
+              </span>
+              <input
+                type="number"
+                value={cryptoAmount}
+                onChange={(e) => setCryptoAmount(e.target.value)}
+                placeholder={cryptoInputMode === 'amount' ? (isCryptoOnly ? 'USD notional' : 'Enter INR amount') : 'Enter units'}
+                className={`w-full bg-dark-700 border border-dark-600 rounded px-3 py-3 text-lg font-bold focus:outline-none focus:border-orange-500 ${cryptoInputMode === 'amount' ? 'pl-8' : ''}`}
+                step="any"
+              />
+            </div>
             
             {/* Quick notional presets: USD for crypto wallet path, ₹ for forex */}
-            {!(isCryptoOnly && cryptoInputMode === 'lots') && (
             <div className="flex gap-1 mt-2 flex-wrap">
               {(isCryptoOnly ? [100, 250, 500, 1000, 2500, 5000] : [5000, 10000, 25000, 50000, 100000]).map((amt) => (
                 <button
@@ -4755,7 +4678,6 @@ const TradingPanel = ({
                 </button>
               ))}
             </div>
-            )}
             
             {/* Show conversion */}
             <div className="bg-dark-600 rounded p-3 mt-3 space-y-1">

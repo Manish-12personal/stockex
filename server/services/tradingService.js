@@ -25,6 +25,10 @@ import {
   buildInstrumentDenyContext,
   assertHierarchyInstrumentNotDenied,
 } from './instrumentRestrictionService.js';
+import {
+  isBinanceCryptoOrder,
+  assertBinanceCryptoQuantityValidated,
+} from '../utils/binanceCryptoQty.js';
 
 /** Read one segment entry from User.segmentPermissions (Map or plain object after lean). */
 function getUserSegmentPerm(user, segmentKey) {
@@ -670,8 +674,9 @@ class TradingService {
     const isCryptoWallet = orderIsCrypto(orderData);
     const isForexWallet = orderIsForex(orderData);
     const usdInr = isUsdSpot ? getUsdInrRate() : 1;
+    const isBinanceCrypto = isBinanceCryptoOrder(orderData);
 
-    // Get lot size: segment crypto mapping (reference lots ÷ quantity) for BINANCE/CRYPTO; else DB / request
+    // Get lot size: Binance crypto uses instrument.exchange step only (qty-only); legacy segment lot mapping skipped.
     let lotSize = isUsdSpot
       ? (orderData.lotSize > 0 ? Number(orderData.lotSize) : 1)
       : (orderData.lotSize || 1);
@@ -679,7 +684,8 @@ class TradingService {
       lotSize = await this.getLotSizeAsync(orderData.symbol, orderData.token, orderData.exchange);
     }
     const segU = String(orderData.segment || '').toUpperCase();
-    const segCryptoLot = TradeService.segmentCryptoLotSizePerUnitLot(segmentSettings);
+    const segCryptoLot =
+      !isBinanceCrypto ? TradeService.segmentCryptoLotSizePerUnitLot(segmentSettings) : null;
     if (
       segCryptoLot != null &&
       (segU === 'CRYPTOFUT' ||
@@ -688,6 +694,10 @@ class TradingService {
         orderData.exchange === 'BINANCE')
     ) {
       lotSize = segCryptoLot;
+    }
+
+    if (isBinanceCrypto && instrument?.lotSize > 0) {
+      lotSize = Number(instrument.lotSize);
     }
 
     // For USD spot: use fractional quantity directly
@@ -699,34 +709,41 @@ class TradingService {
     // Check if frontend sent quantity directly (quantity mode) - quantity won't equal lots * lotSize
     const isQuantityMode = orderData.quantity && orderData.quantity !== (lots * lotSize);
     const inrNotional = orderData.cryptoAmount || orderData.forexAmount;
-    const totalQuantity = isUsdSpot
+    let totalQuantity = isUsdSpot
       ? (orderData.quantity ||
           (orderData.price > 0 && inrNotional
             ? inrNotional / (orderData.price * usdInr)
             : 0))
       : (orderData.quantity || lots * lotSize);
     
-    if (isUsdSpot && lotSize > 0) {
+    if (isUsdSpot && lotSize > 0 && !isBinanceCrypto) {
       lots = totalQuantity / lotSize;
     }
-    if (isUsdSpot && isCryptoWallet && orderData.cryptoLotStepOrder) {
-      const CRYPTO_LOT_MIN_STEP = 0.25;
-      const el = lotSize > 0 ? totalQuantity / lotSize : 0;
-      if (el < CRYPTO_LOT_MIN_STEP) {
-        throw new Error(`Minimum ${CRYPTO_LOT_MIN_STEP} lot for ${orderData.symbol}`);
+    if (isBinanceCrypto) {
+      let tq = Number(orderData.quantity);
+      if (!(Number.isFinite(tq) && tq > 0)) {
+        tq = totalQuantity;
       }
-      const maxLotsAllowed = scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots || 1000;
-      if (el > maxLotsAllowed) {
-        throw new Error(`Maximum ${maxLotsAllowed} lots per order for ${orderData.symbol}`);
+      if (!(Number.isFinite(tq) && tq > 0) && orderData.price > 0 && inrNotional) {
+        tq = inrNotional / (orderData.price * getUsdInrRate());
       }
-      const x = el / CRYPTO_LOT_MIN_STEP;
-      if (Math.abs(x - Math.round(x)) > 1e-6) {
-        throw new Error('Lot size must be in steps of 0.25 (e.g. 0.25, 0.5, 1)');
+      totalQuantity = tq;
+      assertBinanceCryptoQuantityValidated({
+        symbol: orderData.symbol,
+        qty: totalQuantity,
+        instrument,
+        segmentSettings,
+        scriptSettings,
+      });
+      if (lotSize > 0) {
+        lots = totalQuantity / lotSize;
+      } else {
+        lots = totalQuantity;
       }
     }
-    
+
     // Skip lot validation for USD spot (uses INR notional, not lots)
-    if (!isUsdSpot) {
+    if (!isUsdSpot && !isBinanceCrypto) {
       // Validate lot limits from user settings
       // Script settings override segment settings, segment settings are the default
       const maxLots = scriptSettings?.lotSettings?.maxLots || segmentSettings?.maxLots || 50;
@@ -766,7 +783,7 @@ class TradingService {
           throw new Error(`Maximum ${maxLots} lots allowed for ${orderData.symbol}. Your limit is ${maxLots} lots.`);
         }
       }
-    } else {
+    } else if (isUsdSpot && !isBinanceCrypto) {
       console.log('USD spot trade:', { quantity: totalQuantity, price: orderData.price, inrNotional });
     }
 
