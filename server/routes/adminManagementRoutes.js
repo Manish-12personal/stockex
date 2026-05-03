@@ -1,3 +1,18 @@
+/**
+ * Admin Management Routes
+ * 
+ * Clean architecture implementation for comprehensive admin and user management.
+ * Handles admin hierarchy, user management, fund operations, and system settings.
+ * 
+ * Route Groups:
+ * 1. Admin Hierarchy - Admin, broker, and sub-broker management
+ * 2. User Management - User creation, updates, and hierarchy management
+ * 3. Fund Operations - Fund requests, transfers, and wallet management
+ * 4. System Settings - Configuration and platform settings
+ * 5. Game Management - Gaming operations and jackpot management
+ * 6. Analytics & Reporting - Statistics and reporting functions
+ */
+
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import Admin from '../models/Admin.js';
@@ -19,6 +34,7 @@ import BtcNumberBet from '../models/BtcNumberBet.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
 import brokerageRestrictionRoutes from './brokerageRestrictionRoutes.js';
+import referralEligibilityRoutes from './referralEligibilityRoutes.js';
 import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
 import GameTransactionSlip from '../models/GameTransactionSlip.js';
 import { resolveNiftyBracketTrade } from '../services/niftyBracketResolve.js';
@@ -69,57 +85,11 @@ import {
 } from '../services/platformChargeService.js';
 import { sanitizeInstrumentDenylist } from '../services/instrumentRestrictionService.js';
 import { sanitizeGameDenylist } from '../services/gameRestrictionService.js';
+import { protectAdmin, superAdminOnly } from '../middleware/auth.js';
 
 const router = express.Router();
 
-function normalizeRestrictionsPayload(body) {
-  if (!body || typeof body !== 'object') return {};
-  const restrictions = { ...body };
-  restrictions.instrumentDenylist = sanitizeInstrumentDenylist(body.instrumentDenylist);
-  restrictions.gameDenylist = sanitizeGameDenylist(body.gameDenylist);
-  return restrictions;
-}
-
-/** Plain JSON for API clients (avoids Mongoose subdoc serialization quirks on deny arrays). */
-async function getRestrictionsResponsePayload(adminId) {
-  const row = await Admin.findById(adminId).select('restrictions updatedAt').lean();
-  if (!row) return { restrictions: {}, updatedAt: null };
-  return {
-    restrictions: row.restrictions ? JSON.parse(JSON.stringify(row.restrictions)) : {},
-    updatedAt: row.updatedAt ?? null,
-  };
-}
-
-// Generate JWT token
-const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
-};
-
-// Auth middleware - validates admin token
-const protectAdmin = async (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Not authorized' });
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.admin = await Admin.findById(decoded.id).select('-password');
-    
-    if (!req.admin) return res.status(401).json({ message: 'Admin not found' });
-    if (req.admin.status !== 'ACTIVE') return res.status(401).json({ message: 'Account suspended' });
-    
-    next();
-  } catch (error) {
-    res.status(401).json({ message: 'Not authorized' });
-  }
-};
-
-// Super Admin only middleware
-const superAdminOnly = (req, res, next) => {
-  if (req.admin.role !== 'SUPER_ADMIN') {
-    return res.status(403).json({ message: 'Super Admin access required' });
-  }
-  next();
-};
+// ==================== HELPER FUNCTIONS ====================
 
 // Hierarchy levels for permission checks
 const HIERARCHY_LEVELS = {
@@ -180,13 +150,44 @@ function resolveOfficePartnerType(adminDoc) {
   return adminDoc?.officePartnerType === 'INTERNAL' ? 'INTERNAL' : 'EXTERNAL';
 }
 
+// Generate JWT token (for internal use)
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+};
+
+// ==================== MIDDLEWARE COMPOSITION ====================
+
+/**
+ * Authentication middleware combinations
+ */
+const adminAuth = [protectAdmin];
+const superAdminAuth = [protectAdmin, superAdminOnly];
+
+function normalizeRestrictionsPayload(body) {
+  if (!body || typeof body !== 'object') return {};
+  const restrictions = { ...body };
+  restrictions.instrumentDenylist = sanitizeInstrumentDenylist(body.instrumentDenylist);
+  restrictions.gameDenylist = sanitizeGameDenylist(body.gameDenylist);
+  return restrictions;
+}
+
+/** Plain JSON for API clients (avoids Mongoose subdoc serialization quirks on deny arrays). */
+async function getRestrictionsResponsePayload(adminId) {
+  const row = await Admin.findById(adminId).select('restrictions updatedAt').lean();
+  if (!row) return { restrictions: {}, updatedAt: null };
+  return {
+    restrictions: row.restrictions ? JSON.parse(JSON.stringify(row.restrictions)) : {},
+    updatedAt: row.updatedAt ?? null,
+  };
+}
+
 // ==================== SUPER ADMIN ROUTES ====================
 
 // Get all subordinates (admins/brokers/sub-brokers) based on hierarchy
 // SUPER_ADMIN sees all ADMINs, BROKERs, SUB_BROKERs (created by them or their descendants)
 // ADMIN sees BROKERs and SUB_BROKERs created by them or their descendants
 // BROKER sees SUB_BROKERs created by them
-router.get('/admins', protectAdmin, async (req, res) => {
+router.get('/admins', ...adminAuth, async (req, res) => {
   try {
     let query = {};
     const allowedChildRoles = getAllowedChildRoles(req.admin.role);
@@ -208,28 +209,48 @@ router.get('/admins', protectAdmin, async (req, res) => {
       return res.json([]);
     }
     
+    console.log(`[AdminManagement] Query for admins:`, JSON.stringify(query, null, 2));
+    
     const admins = await Admin.find(query)
       .select('-password -pin')
       .populate('parentId', 'name adminCode role')
       .sort({ createdAt: -1 });
     
+    console.log(`[AdminManagement] Found ${admins.length} admins`);
+    
     // Get user counts for each admin
     const adminData = await Promise.all(admins.map(async (admin) => {
-      const userCount = await User.countDocuments({ admin: admin._id });
-      const activeUsers = await User.countDocuments({ admin: admin._id, isActive: true });
-      return {
-        ...admin.toObject(),
-        stats: {
-          ...admin.stats,
-          totalUsers: userCount,
-          activeUsers
-        }
-      };
+      try {
+        const userCount = await User.countDocuments({ admin: admin._id });
+        const activeUsers = await User.countDocuments({ admin: admin._id, isActive: true });
+        return {
+          ...admin.toObject(),
+          stats: {
+            ...admin.stats,
+            totalUsers: userCount,
+            activeUsers
+          }
+        };
+      } catch (userError) {
+        console.error(`[AdminManagement] Error getting user counts for admin ${admin._id}:`, userError);
+        return {
+          ...admin.toObject(),
+          stats: {
+            ...admin.stats,
+            totalUsers: 0,
+            activeUsers: 0
+          }
+        };
+      }
     }));
     
     res.json(adminData);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('[AdminManagement] Error in /admins endpoint:', error);
+    res.status(500).json({ 
+      message: 'Failed to retrieve admins',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -7938,5 +7959,8 @@ router.post('/release-temporary-funds', protectAdmin, superAdminOnly, async (req
 
 // Use brokerage restriction routes
 router.use('/brokerage-restriction', brokerageRestrictionRoutes);
+
+// Use referral eligibility routes
+router.use('/referral-eligibility', referralEligibilityRoutes);
 
 export default router;

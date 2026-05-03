@@ -1,3 +1,17 @@
+/**
+ * Admin Routes
+ * 
+ * Clean architecture implementation for admin-specific operations and authentication.
+ * Handles admin login, profile management, user management, and administrative functions.
+ * 
+ * Route Groups:
+ * 1. Authentication - Admin login, logout, and session management
+ * 2. Profile Management - Admin profile updates and settings
+ * 3. User Management - Admin's user operations and hierarchy management
+ * 4. Analytics - Admin-specific analytics and reporting
+ * 5. Settings - Admin configuration and preferences
+ */
+
 import express from 'express';
 import {
   alignSegmentDefaultsMap,
@@ -15,7 +29,24 @@ import { protectAdmin, generateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Get admin branding by referral code (public endpoint for login page)
+// ==================== MIDDLEWARE COMPOSITION ====================
+
+/**
+ * Authentication middleware combinations
+ */
+const adminAuth = [protectAdmin];
+
+// ==================== PUBLIC ROUTES ====================
+
+/**
+ * @route   GET /api/admins/branding/:refCode
+ * @desc    Get admin branding information by referral code
+ * @access  Public
+ * @param   refCode - Admin referral code
+ * @returns Branding information
+ * 
+ * Use Case: Display branding on login/signup page
+ */
 router.get('/branding/:refCode', async (req, res) => {
   try {
     const admin = await Admin.findOne({ referralCode: req.params.refCode });

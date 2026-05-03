@@ -1,6 +1,12 @@
 import User from '../models/User.js';
 import Referral from '../models/Referral.js';
 import { creditReferralPercentOfTotalStake } from './referralGameStakeCredit.js';
+import { 
+  processConditionalReferralPayout 
+} from './referralPayoutService.js';
+import { 
+  trackHierarchyEarnings 
+} from './superAdminEarningsService.js';
 
 /**
  * Jackpot referral: winPercent × total prize pool (bank) that session — matches admin "% of bank".
@@ -64,41 +70,51 @@ export async function creditReferralTradingReward(referredUserId, brokerageAmoun
       }
     }
 
-    const referrer = await User.findById(referredUser.referredBy);
-    if (!referrer) {
-      return { credited: false, reason: 'Referrer not found' };
+    // Track Super Admin earnings from this hierarchy
+    try {
+      await trackHierarchyEarnings(referredUser.admin, brokerageAmount, 'trading');
+    } catch (error) {
+      console.error(`[ReferralTrading] Error tracking Super Admin earnings:`, error);
     }
 
-    referrer.wallet.cashBalance += brokerageAmount;
-    referrer.wallet.tradingBalance += brokerageAmount;
-    referrer.wallet.realizedPnL += brokerageAmount;
-    referrer.wallet.todayRealizedPnL += brokerageAmount;
-    referrer.wallet.transactions.push({
-      type: 'credit',
-      amount: brokerageAmount,
-      description: `Referral bonus: Brokerage from ${referredUser.username}'s first winning trade`,
-      createdAt: new Date(),
-    });
-    referrer.referralStats.totalReferralEarnings = (referrer.referralStats.totalReferralEarnings || 0) + brokerageAmount;
-    await referrer.save();
-
-    await Referral.findOneAndUpdate(
-      { referredUser: referredUserId },
+    // Process referral commission with eligibility check
+    const payoutResult = await processConditionalReferralPayout(
+      referredUserId,
+      brokerageAmount,
+      'trading',
       {
-        $set: {
-          'firstTradingWin.credited': true,
-          'firstTradingWin.amount': brokerageAmount,
-          'firstTradingWin.creditedAt': new Date(),
-        },
-        $inc: { earnings: brokerageAmount },
+        tradeId,
+        referredUsername: referredUser.username,
+        type: 'first_trading_win'
       }
     );
 
-    referredUser.referralStats.firstTradingWin = true;
-    referredUser.referralStats.totalReferralEarnings = (referredUser.referralStats.totalReferralEarnings || 0) + brokerageAmount;
-    await referredUser.save();
+    if (payoutResult.success) {
+      // Update referral record for first trading win
+      await Referral.findOneAndUpdate(
+        { referredUser: referredUserId },
+        {
+          $set: {
+            'firstTradingWin.credited': true,
+            'firstTradingWin.amount': brokerageAmount,
+            'firstTradingWin.creditedAt': new Date(),
+          },
+          $inc: { earnings: brokerageAmount },
+        }
+      );
 
-    return { credited: true, amount: brokerageAmount };
+      referredUser.referralStats.firstTradingWin = true;
+      referredUser.referralStats.totalReferralEarnings = (referredUser.referralStats.totalReferralEarnings || 0) + brokerageAmount;
+      await referredUser.save();
+
+      return { credited: true, amount: brokerageAmount };
+    } else if (payoutResult.held) {
+      console.log(`[ReferralTrading] Referral commission held: ${payoutResult.reason}`);
+      return { credited: false, held: true, reason: payoutResult.reason };
+    } else {
+      console.log(`[ReferralTrading] Referral commission failed: ${payoutResult.reason}`);
+      return { credited: false, reason: payoutResult.reason };
+    }
   } catch (error) {
     console.error('Error crediting referral trading reward:', error);
     return { credited: false, reason: 'Error', error: error.message };

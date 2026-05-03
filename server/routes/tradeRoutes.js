@@ -1,3 +1,17 @@
+/**
+ * Trade Routes
+ * 
+ * Clean architecture implementation for trading operations and market management.
+ * Handles trade execution, market state management, and trading analytics.
+ * 
+ * Route Groups:
+ * 1. Market State - Market status and segment timing management
+ * 2. Trade Operations - Order placement, modification, and cancellation
+ * 3. Position Management - Position tracking and management
+ * 4. Trade Analytics - Trading statistics and reporting
+ * 5. Market Data - Real-time market information
+ */
+
 import express from 'express';
 import Trade from '../models/Trade.js';
 import MarketState from '../models/MarketState.js';
@@ -17,9 +31,33 @@ export const setTradeSocketIO = (socketIO) => {
   io = socketIO;
 };
 
+// ==================== MIDDLEWARE COMPOSITION ====================
+
+/**
+ * Authentication middleware combinations
+ */
+const superAdminAuth = [protectAdmin, superAdminOnly];
+const adminAuth = [protectAdmin];
+const userAuth = [protectUser];
+
 // ==================== MARKET STATE ROUTES ====================
 
-// Get market state
+/**
+ * @route   GET /api/trade/market-state
+ * @desc    Get current market state and segment information
+ * @access  Public
+ * @returns Market state object with segment timings and status
+ * 
+ * Example Response:
+ * {
+ *   "isMarketOpen": true,
+ *   "closedMessage": "",
+ *   "segments": {
+ *     "EQUITY": { "isOpen": true, "tradingStartTime": "09:15" },
+ *     "FNO": { "isOpen": true, "tradingStartTime": "09:15" }
+ *   }
+ * }
+ */
 router.get('/market-state', async (req, res) => {
   try {
     const state = await MarketState.getState();
@@ -29,8 +67,16 @@ router.get('/market-state', async (req, res) => {
   }
 });
 
-// Update market state (Super Admin only)
-router.put('/market-state', protectAdmin, superAdminOnly, async (req, res) => {
+/**
+ * @route   PUT /api/trade/market-state
+ * @desc    Update overall market status (Super Admin only)
+ * @access  Super Admin only
+ * @body    { isMarketOpen, closedMessage? }
+ * @returns Updated market state
+ * 
+ * Use Case: Open/close market for trading
+ */
+router.put('/market-state', ...superAdminAuth, async (req, res) => {
   try {
     const { isMarketOpen, closedMessage } = req.body;
     const state = await MarketState.setMarketStatus(isMarketOpen, req.admin._id);
@@ -46,8 +92,17 @@ router.put('/market-state', protectAdmin, superAdminOnly, async (req, res) => {
   }
 });
 
-// Update segment timings (Super Admin only)
-router.put('/market-state/segment/:segment', protectAdmin, superAdminOnly, async (req, res) => {
+/**
+ * @route   PUT /api/trade/market-state/segment/:segment
+ * @desc    Update segment-specific timings and settings (Super Admin only)
+ * @access  Super Admin only
+ * @param   segment - Market segment (EQUITY, FNO, MCX, CRYPTO)
+ * @body    { isOpen?, dataStartTime?, tradingStartTime?, tradingEndTime?, dataEndTime?, intradaySquareOffTime?, preMarketDataOnly?, closedDays? }
+ * @returns Updated market state
+ * 
+ * Use Case: Configure trading hours for different market segments
+ */
+router.put('/market-state/segment/:segment', ...superAdminAuth, async (req, res) => {
   try {
     const { segment } = req.params;
     const { isOpen, dataStartTime, tradingStartTime, tradingEndTime, dataEndTime, intradaySquareOffTime, preMarketDataOnly, closedDays } = req.body;
@@ -79,8 +134,16 @@ router.put('/market-state/segment/:segment', protectAdmin, superAdminOnly, async
   }
 });
 
-// Toggle segment status (Super Admin only)
-router.put('/market-state/segment/:segment/toggle', protectAdmin, superAdminOnly, async (req, res) => {
+/**
+ * @route   PUT /api/trade/market-state/segment/:segment/toggle
+ * @desc    Toggle segment open/closed status (Super Admin only)
+ * @access  Super Admin only
+ * @param   segment - Market segment (EQUITY, FNO, MCX, CRYPTO)
+ * @returns Updated market state
+ * 
+ * Use Case: Quick toggle for segment trading status
+ */
+router.put('/market-state/segment/:segment/toggle', ...superAdminAuth, async (req, res) => {
   try {
     const { segment } = req.params;
     
@@ -101,7 +164,15 @@ router.put('/market-state/segment/:segment/toggle', protectAdmin, superAdminOnly
   }
 });
 
-// Check if trading is allowed for a segment
+/**
+ * @route   GET /api/trade/market-state/trading-status/:segment
+ * @desc    Check if trading is currently allowed for a segment
+ * @access  Public
+ * @param   segment - Market segment (EQUITY, FNO, MCX, CRYPTO)
+ * @returns Trading status object
+ * 
+ * Use Case: Verify if trading is allowed before placing orders
+ */
 router.get('/market-state/trading-status/:segment', async (req, res) => {
   try {
     const { segment } = req.params;
@@ -114,8 +185,16 @@ router.get('/market-state/trading-status/:segment', async (req, res) => {
 
 // ==================== USER TRADING ROUTES ====================
 
-// Place a new trade
-router.post('/trade', protectUser, async (req, res) => {
+/**
+ * @route   POST /api/trade/trade
+ * @desc    Place a new trade order
+ * @access  User only
+ * @body    Trade order details
+ * @returns Created trade object
+ * 
+ * Use Case: User places new trading order
+ */
+router.post('/trade', ...userAuth, async (req, res) => {
   try {
     // Check if user is in read-only mode
     if (req.user.isReadOnly) {

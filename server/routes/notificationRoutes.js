@@ -1,3 +1,16 @@
+/**
+ * Notification Routes
+ * 
+ * Clean architecture implementation for notification management and delivery.
+ * Handles notification creation, delivery, and management across user and admin interfaces.
+ * 
+ * Route Groups:
+ * 1. Admin Notifications - Create and manage system notifications
+ * 2. User Notifications - Retrieve and manage user notifications
+ * 3. Media Management - Handle notification images and attachments
+ * 4. Delivery - Notification delivery and tracking
+ */
+
 import express from 'express';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
@@ -11,6 +24,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const router = express.Router();
+
+// ==================== MIDDLEWARE COMPOSITION ====================
+
+/**
+ * Authentication middleware combinations
+ */
+const adminAuth = [protectAdmin];
+const userAuth = [protectUser];
 
 // Configure multer for image upload
 const storage = multer.diskStorage({

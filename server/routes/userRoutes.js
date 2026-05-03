@@ -1,4 +1,149 @@
+/**
+ * User Routes
+ * 
+ * Clean architecture implementation for user operations and gaming activities.
+ * Handles user authentication, gaming operations, fund management, and trading activities.
+ * 
+ * Route Groups:
+ * 1. Authentication - User login, logout, and session management
+ * 2. User Management - Profile updates and user operations
+ * 3. Gaming Operations - Number betting, jackpot games, and bracket trading
+ * 4. Fund Management - Fund requests, transfers, and wallet operations
+ * 5. Trading Activities - User trading operations and position management
+ * 6. Notifications - User notifications and alerts
+ */
+
 import express from 'express';
+import { protectUser, protectAdmin, generateToken, generateSessionToken } from '../middleware/auth.js';
+import {
+  validateUserRegistration,
+  validateUserLogin,
+  validateProfileUpdate,
+  validatePasswordChange,
+  validateWalletTransfer,
+  validateFundRequest,
+  validateNotificationOperation,
+  validateGameQuery,
+  rejectIfHierarchyGameDenied,
+  validateGameAccess
+} from '../middleware/userMiddleware.js';
+import {
+  validateGameBet,
+  validateDepositRequest,
+  validateWithdrawRequest,
+  validateDemoRegistration,
+  validateParentInfo,
+  validatePositionClose,
+  validatePagination
+} from '../middleware/validationMiddleware.js';
+
+// ==================== CONTROLLER IMPORTS ====================
+
+// Authentication Controllers
+import {
+  registerUser,
+  registerDemoUser,
+  loginUser,
+  logoutUser,
+  getParentInfo
+} from '../controllers/authController.js';
+
+// Profile Controllers
+import {
+  getUserProfile,
+  updateUserProfile,
+  changeUserPassword
+} from '../controllers/profileController.js';
+
+// Financial Controllers
+import {
+  getUserWallet,
+  getPlatformChargeStatus,
+  submitDepositRequest,
+  submitWithdrawRequest,
+  walletTransfer,
+  getWalletTransferHistory,
+  getReferralEarnings,
+  getBankDetails
+} from '../controllers/financialController.js';
+
+// Gaming Controllers
+import {
+  placeGameBet,
+  getGameWalletLedger,
+  getGameTodayNet,
+  getGameLiveActivity,
+  getGameRecentWinners,
+  getGameStats,
+  getGameHistory
+} from '../controllers/gamingController.js';
+
+// Notification Controllers
+import {
+  getUserNotifications,
+  markNotificationRead,
+  markNotificationUnread,
+  markAllNotificationsRead,
+  getNotificationSettings,
+  updateNotificationSettings,
+  getNotificationStats
+} from '../controllers/notificationController.js';
+
+// Trading Controllers
+import {
+  getUserPositions,
+  getUserTrades,
+  getUserTradingStats,
+  getUserTradingPerformance,
+  getUserTradingSummary,
+  closePosition,
+  getPositionDetails
+} from '../controllers/tradingController.js';
+
+// Public Controllers
+import {
+  getBrokerInfoByReferralCode,
+  getCertifiedBrokers
+} from '../controllers/userController.js';
+
+// ==================== SERVICE IMPORTS ====================
+
+import {
+  distributeWinBrokerage,
+  computeNiftyJackpotGrossHierarchyBreakdown,
+  creditNiftyJackpotGrossHierarchyFromPool,
+} from '../services/gameProfitDistribution.js';
+import {
+  resolveNiftyBracketTrade
+} from '../services/niftyBracketResolve.js';
+import { autoSettleBtcUpDown } from '../services/gamesAutoSettlement.js';
+import { getDummyNiftyWhenMarketClosedForTesting } from '../utils/dummyNiftyLtp.js';
+import {
+  isNiftyJackpotBiddingHoursBypassedForTesting,
+  isNiftyBracketBiddingHoursBypassedForTesting,
+} from '../utils/niftyJackpotTestMode.js';
+import { isCurrentTimeWithinBracketBiddingIST } from '../utils/niftyBracketBiddingWindow.js';
+import { 
+  createTransactionSlip, 
+  addDebitEntry, 
+  findTransactionSlipByTransactionId,
+  addCreditEntry,
+  addBrokerageDistributionEntries
+} from '../services/gameTransactionSlipService.js';
+import { getTodayISTString, startOfISTDayFromKey, endOfISTDayFromKey } from '../utils/istDate.js';
+import {
+  sumUpDownSideTicketsInWindow,
+  sumBracketSideTicketsInDay,
+} from '../utils/gameStakeSideLimits.js';
+import { plainSegmentDefaultsMap } from '../utils/commissionTypeUnit.js';
+import TradeService from '../services/tradeService.js';
+import {
+  assertHierarchyGameNotDeniedForUserId,
+  getMergedGameDenylistForPrincipal,
+} from '../services/gameRestrictionService.js';
+
+// ==================== MODEL IMPORTS ====================
+
 import User from '../models/User.js';
 import Admin from '../models/Admin.js';
 import SystemSettings from '../models/SystemSettings.js';
@@ -12,22 +157,19 @@ import GameResult from '../models/GameResult.js';
 import NiftyNumberBet from '../models/NiftyNumberBet.js';
 import BtcNumberBet from '../models/BtcNumberBet.js';
 import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
-import { getDummyNiftyWhenMarketClosedForTesting } from '../utils/dummyNiftyLtp.js';
-import {
-  isNiftyJackpotBiddingHoursBypassedForTesting,
-  isNiftyBracketBiddingHoursBypassedForTesting,
-} from '../utils/niftyJackpotTestMode.js';
-import { isCurrentTimeWithinBracketBiddingIST } from '../utils/niftyBracketBiddingWindow.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
-import { protectUser, protectAdmin, generateToken, generateSessionToken } from '../middleware/auth.js';
+import GamesWalletLedger from '../models/GamesWalletLedger.js';
+import WalletLedger from '../models/WalletLedger.js';
+import WalletTransferService from '../services/walletTransferService.js';
+import { buildUserPlatformChargeStatus } from '../services/platformChargeService.js';
+import { getMarketData } from '../services/zerodhaWebSocket.js';
+import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
 import {
-  distributeWinBrokerage,
-  computeNiftyJackpotGrossHierarchyBreakdown,
-  creditNiftyJackpotGrossHierarchyFromPool,
-} from '../services/gameProfitDistribution.js';
-import { resolveNiftyBracketTrade } from '../services/niftyBracketResolve.js';
-import { autoSettleBtcUpDown } from '../services/gamesAutoSettlement.js';
+  niftyResultSecForWindow,
+} from '../../lib/niftyUpDownWindows.js';
+import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate, atomicGamesWalletDebit } from '../utils/gamesWallet.js';
+import { recordGamesWalletLedger, GAMES_WALLET_GAME_LABELS } from '../utils/gamesWalletLedger.js';
 import { creditReferralPerWinFromGameSettings } from '../services/referralPerWin.js';
 import { getNextBracketSettlementDateIST } from '../utils/niftyBracketSettlementTime.js';
 import {
@@ -52,56 +194,111 @@ import { resolveBtcUpDownPriceAtIstRef } from '../utils/btcUpDownOpenPrice.js';
 import {
   validateNiftyUpDownBetPlacement,
   getNiftyUpDownWindowState,
-  niftyResultSecForWindow,
 } from '../../lib/niftyUpDownWindows.js';
-import { ensureGamesWallet, touchGamesWallet, atomicGamesWalletUpdate, atomicGamesWalletDebit } from '../utils/gamesWallet.js';
-import { recordGamesWalletLedger, GAMES_WALLET_GAME_LABELS } from '../utils/gamesWalletLedger.js';
-import GamesWalletLedger from '../models/GamesWalletLedger.js';
-import WalletLedger from '../models/WalletLedger.js';
 import { sendOTP, verifyOTP } from '../services/otpService.js';
-import WalletTransferService from '../services/walletTransferService.js';
-import { buildUserPlatformChargeStatus } from '../services/platformChargeService.js';
-import { getMarketData } from '../services/zerodhaWebSocket.js';
-import { fetchNifty50LastPriceFromKite } from '../utils/kiteNiftyQuote.js';
-import {
-  sortJackpotBidsByDistanceToReference,
-  resolveNiftyJackpotSpotPrice,
-  getBidTimeMs,
-} from '../utils/niftyJackpotRank.js';
-import { resolveJackpotPrizePercentForRank } from '../utils/niftyJackpotPrize.js';
-import { buildNiftyJackpotIstDayQuery } from '../utils/niftyJackpotDayScope.js';
-import UpDownWindowSettlement from '../models/UpDownWindowSettlement.js';
-import { settleUpDownFromPrices, computeUpDownWinPayout } from '../utils/upDownSettlementMath.js';
-import { 
-  createTransactionSlip, 
-  addDebitEntry, 
-  findTransactionSlipByTransactionId,
-  addCreditEntry,
-  addBrokerageDistributionEntries
-} from '../services/gameTransactionSlipService.js';
-import { getTodayISTString, startOfISTDayFromKey, endOfISTDayFromKey } from '../utils/istDate.js';
-import {
-  sumUpDownSideTicketsInWindow,
-  sumBracketSideTicketsInDay,
-} from '../utils/gameStakeSideLimits.js';
-import { plainSegmentDefaultsMap } from '../utils/commissionTypeUnit.js';
-import TradeService from '../services/tradeService.js';
-import {
-  assertHierarchyGameNotDeniedForUserId,
-  getMergedGameDenylistForPrincipal,
-} from '../services/gameRestrictionService.js';
 
 const router = express.Router();
 
-async function rejectIfHierarchyGameDenied(res, userId, gameKey) {
-  try {
-    await assertHierarchyGameNotDeniedForUserId(userId, gameKey);
-    return false;
-  } catch (e) {
-    res.status(403).json({ message: e.message });
-    return true;
-  }
-}
+// ==================== MIDDLEWARE COMPOSITION ====================
+
+/**
+ * Authentication middleware combinations
+ */
+const userAuth = [protectUser];
+const adminAuth = [protectAdmin];
+
+// ==================== PUBLIC ROUTES ====================
+
+/**
+ * @route   GET /api/users/broker-info/:referralCode
+ * @desc    Get broker information by referral code
+ * @access  Public
+ * @param   referralCode - Broker referral code
+ * @returns Broker information
+ */
+router.get('/broker-info/:referralCode', getBrokerInfoByReferralCode);
+
+/**
+ * @route   GET /api/users/certified-brokers
+ * @desc    Get certified brokers for landing page
+ * @access  Public
+ * @returns Array of certified brokers
+ */
+router.get('/certified-brokers', getCertifiedBrokers);
+
+// ==================== AUTHENTICATION ROUTES ====================
+
+/**
+ * @route   POST /api/users/register
+ * @desc    Register a new user
+ * @access  Public
+ * @body    User registration data
+ * @returns Created user information
+ */
+router.post('/register', validateUserRegistration, registerUser);
+
+/**
+ * @route   POST /api/users/login
+ * @desc    User login
+ * @access  Public
+ * @body    Login credentials
+ * @returns Authentication tokens and user data
+ */
+router.post('/login', validateUserLogin, loginUser);
+
+/**
+ * @route   POST /api/users/logout
+ * @desc    User logout
+ * @access  User only
+ * @returns Logout success message
+ */
+router.post('/logout', ...userAuth, logoutUser);
+
+// ==================== USER PROFILE ROUTES ====================
+
+/**
+ * @route   GET /api/users/profile
+ * @desc    Get user profile
+ * @access  User only
+ * @returns User profile information
+ */
+router.get('/profile', ...userAuth, getUserProfile);
+
+/**
+ * @route   PUT /api/users/profile
+ * @desc    Update user profile
+ * @access  User only
+ * @body    Profile update data
+ * @returns Updated user information
+ */
+router.put('/profile', ...userAuth, validateProfileUpdate, updateUserProfile);
+
+/**
+ * @route   POST /api/users/change-password
+ * @desc    Change user password
+ * @access  User only
+ * @body    Password change data
+ * @returns Password change success message
+ */
+router.post('/change-password', ...userAuth, validatePasswordChange, changeUserPassword);
+
+// ==================== WALLET ROUTES ====================
+
+/**
+ * @route   GET /api/users/wallet
+ * @desc    Get user wallet information
+ * @access  User only
+ * @returns Wallet balance and information
+ */
+router.get('/wallet', ...userAuth, getUserWallet);
+
+/**
+ * @route   GET /api/users/platform-charge-status
+ * @desc    Get platform charge status
+ * @access  User only
+ * @returns Platform charge information
+ */
+router.get('/platform-charge-status', ...userAuth, getPlatformChargeStatus);
 
 const CRYPTO_SPREAD_SEGMENT_CHAIN = ['CRYPTO', 'CRYPTOFUT', 'CRYPTOOPT'];
 

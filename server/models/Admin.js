@@ -549,6 +549,13 @@ const adminSchema = new mongoose.Schema({
     },
   },
   
+  // Referral eligibility settings - control when referral commissions are paid
+  referralEligibility: {
+    enabled: { type: Boolean, default: true },           // Enable referral eligibility checks
+    thresholdAmount: { type: Number, default: 1000 },    // Threshold amount (1000 per crore)
+    thresholdUnit: { type: String, default: 'PER_CRORE' }, // Unit: 'PER_CRORE' or 'ABSOLUTE'
+  },
+  
   // Permission flags - Set by parent admin (SuperAdmin for Admin, Admin for Broker, etc.)
   // Controls what this admin can modify vs locked to default values
   permissions: {

@@ -17,6 +17,9 @@ import {
   resolveHierarchyBrokerageRecipient,
 } from '../utils/adminBrokerageEligibility.js';
 import { resolvePattiSplitForTrade, splitByChildPercent } from './pattiTradeSettlement.js';
+import { 
+  trackHierarchyEarnings 
+} from './superAdminEarningsService.js';
 
 /**
  * Checks if any admin in the hierarchy chain is marked as a franchise root.
@@ -1411,6 +1414,13 @@ class TradeService {
           hierarchyChain.find((h) => h.role === 'SUPER_ADMIN')?.admin ||
           (await Admin.findOne({ role: 'SUPER_ADMIN', status: 'ACTIVE' }));
         if (saSink) {
+          // Track Super Admin earnings from this hierarchy
+          try {
+            await trackHierarchyEarnings(directAdmin._id, divertedToSuperAdmin, 'trading');
+          } catch (error) {
+            console.error(`[distributeBrokerage] Error tracking Super Admin earnings:`, error);
+          }
+          
           await this.creditBrokerageToAdmin(
             saSink,
             divertedToSuperAdmin,

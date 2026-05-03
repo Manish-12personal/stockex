@@ -32,6 +32,7 @@ import adminBtcJackpotRoutes from './routes/adminBtcJackpotRoutes.js';
 import User from './models/User.js';
 import Trade from './models/Trade.js';
 import MarketState from './models/MarketState.js';
+import SuperAdminHierarchyEarnings from './models/SuperAdminHierarchyEarnings.js';
 import TradingService from './services/tradingService.js';
 import { runGamesAutoSettlementTick, autoSettleBtcUpDown } from './services/gamesAutoSettlement.js';
 import { btcJackpotAutoTick } from './jobs/btcJackpotScheduler.js';
