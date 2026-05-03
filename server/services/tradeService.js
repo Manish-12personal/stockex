@@ -1376,7 +1376,7 @@ class TradeService {
           continue;
         }
         
-        if (!adminReceivesHierarchyBrokerage(admin)) {
+        if (!adminReceivesHierarchyBrokerage(admin, 'trading')) {
           divertedToSuperAdmin += amount;
           continue;
         }

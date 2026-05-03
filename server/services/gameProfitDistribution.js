@@ -167,7 +167,7 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
       if (creditedProfitRoles.has(role)) continue;
       creditedProfitRoles.add(role);
 
-      if (!adminReceivesHierarchyBrokerage(admin)) {
+      if (!adminReceivesHierarchyBrokerage(admin, 'games')) {
         divertedToSuperAdmin += shareAmount;
         continue;
       }
@@ -771,7 +771,7 @@ export async function creditNiftyJackpotGrossHierarchyFromPool(userId, user, bre
       creditedGrossRoles.add(role);
       
       // Check if admin is eligible to receive brokerage
-      if (!adminReceivesHierarchyBrokerage(admin)) {
+      if (!adminReceivesHierarchyBrokerage(admin, 'games')) {
         console.log(`[${logTag}] Admin ${admin.username || admin.adminCode} (${role}) gross hierarchy diverted to SuperAdmin: receivesHierarchyBrokerage=${admin.receivesHierarchyBrokerage}, status=${admin.status}, amount=₹${shareAmount.toFixed(2)}`);
         divertedGrossHierarchyToSuperAdmin += shareAmount;
         continue;

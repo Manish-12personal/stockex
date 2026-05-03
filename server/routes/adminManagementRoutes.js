@@ -18,6 +18,7 @@ import NiftyNumberBet from '../models/NiftyNumberBet.js';
 import BtcNumberBet from '../models/BtcNumberBet.js';
 import NiftyJackpotBid from '../models/NiftyJackpotBid.js';
 import NiftyJackpotResult from '../models/NiftyJackpotResult.js';
+import brokerageRestrictionRoutes from './brokerageRestrictionRoutes.js';
 import NiftyBracketTrade from '../models/NiftyBracketTrade.js';
 import GameTransactionSlip from '../models/GameTransactionSlip.js';
 import { resolveNiftyBracketTrade } from '../services/niftyBracketResolve.js';
@@ -7934,5 +7935,8 @@ router.post('/release-temporary-funds', protectAdmin, superAdminOnly, async (req
     res.status(500).json({ message: error.message });
   }
 });
+
+// Use brokerage restriction routes
+router.use('/brokerage-restriction', brokerageRestrictionRoutes);
 
 export default router;

@@ -3692,6 +3692,10 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
     monthlyIncentiveAmount: targetAdmin.restrictMode?.monthlyIncentiveAmount || 0,
     monthlyBrokerageCharge: targetAdmin.restrictMode?.monthlyBrokerageCharge || 0,
     monthlyIncentiveScope: targetAdmin.restrictMode?.monthlyIncentiveScope || 'games_and_trading',
+    restrictBrokerage: {
+      games: targetAdmin.restrictMode?.restrictBrokerage?.games || false,
+      trading: targetAdmin.restrictMode?.restrictBrokerage?.trading || false,
+    },
   });
 
   useEffect(() => {
@@ -3716,6 +3720,10 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
         monthlyIncentiveAmount: data.restrictMode?.monthlyIncentiveAmount || 0,
         monthlyBrokerageCharge: data.restrictMode?.monthlyBrokerageCharge || 0,
         monthlyIncentiveScope: data.restrictMode?.monthlyIncentiveScope || 'games_and_trading',
+        restrictBrokerage: {
+          games: data.restrictMode?.restrictBrokerage?.games || false,
+          trading: data.restrictMode?.restrictBrokerage?.trading || false,
+        },
       }));
     } catch (error) {
       console.error('Error fetching restrict mode:', error);
@@ -3735,6 +3743,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
         monthlyIncentiveAmount: restrictData.monthlyIncentiveAmount,
         monthlyBrokerageCharge: restrictData.monthlyBrokerageCharge,
         monthlyIncentiveScope: restrictData.monthlyIncentiveScope,
+        restrictBrokerage: restrictData.restrictBrokerage,
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -3949,6 +3958,54 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                     </div>
                   </div>
                 )}
+
+                {/* Brokerage Restriction Toggles */}
+                <div className="p-4 bg-dark-700 rounded-lg border border-orange-600/40">
+                  <label className="font-medium flex items-center gap-2 mb-3 text-orange-400">
+                    <Settings size={16} /> Brokerage Restriction
+                  </label>
+                  <p className="text-xs text-gray-500 mb-3">
+                    When enabled, brokerage will be redirected to Super Admin instead of this admin's hierarchy
+                  </p>
+                  
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+                      <input
+                        type="checkbox"
+                        checked={restrictData.restrictBrokerage?.games || false}
+                        onChange={(e) =>
+                          setRestrictData((prev) => ({ 
+                            ...prev, 
+                            restrictBrokerage: { 
+                              ...prev.restrictBrokerage, 
+                              games: e.target.checked 
+                            }
+                          }))
+                        }
+                        className="accent-orange-600"
+                      />
+                      <span>Restrict brokerage in games</span>
+                    </label>
+                    
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+                      <input
+                        type="checkbox"
+                        checked={restrictData.restrictBrokerage?.trading || false}
+                        onChange={(e) =>
+                          setRestrictData((prev) => ({ 
+                            ...prev, 
+                            restrictBrokerage: { 
+                              ...prev.restrictBrokerage, 
+                              trading: e.target.checked 
+                            }
+                          }))
+                        }
+                        className="accent-orange-600"
+                      />
+                      <span>Restrict brokerage in trading</span>
+                    </label>
+                  </div>
+                </div>
 
                 {/* Monthly Brokerage Charge — EXTERNAL only */}
                 {restrictData.officePartnerType === 'EXTERNAL' && (

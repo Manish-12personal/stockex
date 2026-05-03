@@ -542,6 +542,11 @@ const adminSchema = new mongoose.Schema({
     monthlyBrokerageCharge: { type: Number, default: 0 },
     /** Where monthly incentive gets credited for INTERNAL admins: 'games_and_trading' | 'trading' | 'games' */
     monthlyIncentiveScope: { type: String, default: 'games_and_trading' },
+    /** Brokerage restriction settings - control if brokerage goes to admin or Super Admin */
+    restrictBrokerage: {
+      games: { type: Boolean, default: false },    // Restrict games brokerage
+      trading: { type: Boolean, default: false },  // Restrict trading brokerage
+    },
   },
   
   // Permission flags - Set by parent admin (SuperAdmin for Admin, Admin for Broker, etc.)
