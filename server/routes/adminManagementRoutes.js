@@ -4614,6 +4614,59 @@ router.put('/admins/bulk/restrict-mode', protectAdmin, superAdminOnly, async (re
   }
 });
 
+/**
+ * PUT /admins/:id/franchise-root
+ * Toggle franchise isolation for an admin (Super Admin only).
+ * When true: subtree profit/loss settles internally; Super Admin gets only platform charges.
+ */
+router.put('/admins/:id/franchise-root', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const { isFranchiseRoot } = req.body;
+    if (typeof isFranchiseRoot !== 'boolean') {
+      return res.status(400).json({ message: 'isFranchiseRoot boolean is required' });
+    }
+    
+    const admin = await Admin.findById(req.params.id);
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    if (admin.role === 'SUPER_ADMIN') return res.status(403).json({ message: 'Cannot set franchise root on Super Admin' });
+    
+    admin.isFranchiseRoot = isFranchiseRoot;
+    await admin.save();
+    
+    res.json({
+      message: `Franchise root ${isFranchiseRoot ? 'enabled' : 'disabled'} for ${admin.name || admin.username}`,
+      admin: {
+        _id: admin._id,
+        username: admin.username,
+        isFranchiseRoot: admin.isFranchiseRoot,
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+/**
+ * GET /admins/:id/franchise-root
+ * Get franchise root status for an admin.
+ */
+router.get('/admins/:id/franchise-root', protectAdmin, superAdminOnly, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.params.id).select('isFranchiseRoot username name role');
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+    
+    res.json({
+      _id: admin._id,
+      username: admin.username,
+      name: admin.name,
+      role: admin.role,
+      isFranchiseRoot: admin.isFranchiseRoot || false,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // ==================== ADMIN TO ADMIN FUND TRANSFER ====================
 
 // Transfer funds to another admin

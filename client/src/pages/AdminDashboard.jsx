@@ -1564,6 +1564,25 @@ const AdminManagement = () => {
     }
   };
 
+  // Toggle Franchise Root (Super Admin Only)
+  const handleToggleFranchiseRoot = async (targetAdmin) => {
+    const newValue = !targetAdmin.isFranchiseRoot;
+    const action = newValue ? 'enable' : 'disable';
+    if (!confirm(`Franchise Root: ${action} for "${targetAdmin.name || targetAdmin.username}"?\n\nWhen ENABLED:\n• This admin's subtree forms an isolated unit\n• Trading/games profit/loss settles within subtree only\n• Super Admin gets only platform charges from these users\n\nContinue?`)) return;
+    
+    try {
+      await axios.put(`/api/admin/manage/admins/${targetAdmin._id}/franchise-root`, {
+        isFranchiseRoot: newValue,
+      }, {
+        headers: { Authorization: `Bearer ${admin.token}` }
+      });
+      alert(`Franchise root ${action}d successfully for ${targetAdmin.name || targetAdmin.username}`);
+      fetchAdmins();
+    } catch (error) {
+      alert(error.response?.data?.message || 'Error toggling franchise root');
+    }
+  };
+
   // Login As Admin (Super Admin Only) - Opens in new tab
   const handleLoginAsAdmin = async (targetAdminId) => {
     try {
@@ -2112,6 +2131,19 @@ const AdminManagement = () => {
                       title="Set user/broker limits"
                     >
                       <Lock size={16} /> Limits
+                    </button>
+                  )}
+                  {isSuperAdmin && adm.role === 'ADMIN' && (
+                    <button
+                      onClick={() => handleToggleFranchiseRoot(adm)}
+                      className={`px-3 py-2 rounded text-sm flex items-center gap-1 ${
+                        adm.isFranchiseRoot
+                          ? 'bg-purple-600 hover:bg-purple-700'
+                          : 'bg-slate-600 hover:bg-slate-700'
+                      }`}
+                      title={adm.isFranchiseRoot ? 'Franchise root (isolated) - click to disable' : 'Make franchise root (isolated subtree)'}
+                    >
+                      <Building2 size={16} /> {adm.isFranchiseRoot ? 'Franchise ON' : 'Franchise'}
                     </button>
                   )}
                   <button

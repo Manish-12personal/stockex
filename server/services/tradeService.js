@@ -18,6 +18,19 @@ import {
 } from '../utils/adminBrokerageEligibility.js';
 import { resolvePattiSplitForTrade, splitByChildPercent } from './pattiTradeSettlement.js';
 
+/**
+ * Checks if any admin in the hierarchy chain is marked as a franchise root.
+ * Returns the franchise root admin if found, null otherwise.
+ */
+function findFranchiseRootInChain(hierarchyChain) {
+  for (const { admin } of hierarchyChain) {
+    if (admin.isFranchiseRoot === true) {
+      return admin;
+    }
+  }
+  return null;
+}
+
 class TradeService {
   
   // Check if market is open for trading
@@ -1346,11 +1359,23 @@ class TradeService {
         if (hasSuperAdmin && saShare > 0) distributions.SUPER_ADMIN = totalBrokerage * (saShare / 100);
       }
       
+      // Check for franchise root in hierarchy
+      const franchiseRoot = findFranchiseRootInChain(hierarchyChain);
+      
       // Credit brokerage to each admin in hierarchy (company employees → Super Admin pool)
       let divertedToSuperAdmin = 0;
+      let divertedToFranchiseRoot = 0;
+      
       for (const { admin, role } of hierarchyChain) {
         const amount = distributions[role] || 0;
         if (amount <= 0) continue;
+        
+        // If franchise root exists and this is SUPER_ADMIN, divert to franchise root instead
+        if (role === 'SUPER_ADMIN' && franchiseRoot) {
+          divertedToFranchiseRoot += amount;
+          continue;
+        }
+        
         if (!adminReceivesHierarchyBrokerage(admin)) {
           divertedToSuperAdmin += amount;
           continue;
@@ -1361,6 +1386,24 @@ class TradeService {
           trade,
           `${role} share (${((amount / totalBrokerage) * 100).toFixed(1)}%)`
         );
+      }
+      
+      // Handle franchise root diversion (SA share goes to franchise root instead)
+      if (divertedToFranchiseRoot > 0 && franchiseRoot) {
+        franchiseRoot.temporaryWallet.balance = (franchiseRoot.temporaryWallet.balance || 0) + divertedToFranchiseRoot;
+        franchiseRoot.temporaryWallet.totalEarned = (franchiseRoot.temporaryWallet.totalEarned || 0) + divertedToFranchiseRoot;
+        await franchiseRoot.save();
+        await WalletLedger.create({
+          ownerType: 'ADMIN',
+          ownerId: franchiseRoot._id,
+          adminCode: franchiseRoot.adminCode,
+          type: 'CREDIT',
+          reason: 'TRADE_PNL',
+          amount: divertedToFranchiseRoot,
+          balanceAfter: franchiseRoot.temporaryWallet.balance,
+          description: `Trading brokerage — franchise root diversion (₹${divertedToFranchiseRoot.toFixed(2)}) [Temporary Wallet]`,
+          meta: { franchiseRootDiversion: true, tradeId: trade?._id },
+        });
       }
 
       if (divertedToSuperAdmin > 0) {

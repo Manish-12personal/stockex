@@ -148,6 +148,16 @@ const adminSchema = new mongoose.Schema({
     enum: ['INTERNAL', 'EXTERNAL'],
     default: 'EXTERNAL',
   },
+
+  /**
+   * Franchise root: when true, this admin's subtree (brokers/sub-brokers/users) forms an isolated unit.
+   * Trading/games win-loss settles within the subtree only. Super Admin gets only platform charges,
+   * not hierarchy profit shares from this tree.
+   */
+  isFranchiseRoot: {
+    type: Boolean,
+    default: false,
+  },
   
   /**
    * Segment-specific referral distribution settings.
