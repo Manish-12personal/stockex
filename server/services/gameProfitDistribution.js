@@ -8,16 +8,11 @@ import { debitBtcUpDownSuperAdminPool } from '../utils/btcUpDownSuperAdminPool.j
 import { adminReceivesHierarchyBrokerage } from '../utils/adminBrokerageEligibility.js';
 
 /**
- * Checks if any admin in the hierarchy chain is marked as a franchise root.
- * Returns the franchise root admin if found, null otherwise.
- * When a franchise root exists, Super Admin profit shares are diverted to that root instead.
+ * NOTE: Franchise root logic is not applicable for games - games profit/loss always goes to Super Admin
+ * This function is kept for reference but not used in games distribution
  */
 function findFranchiseRootInChain(hierarchyChain) {
-  for (const { admin } of hierarchyChain) {
-    if (admin.isFranchiseRoot === true) {
-      return admin;
-    }
-  }
+  // Always return null for games - franchise root only applies to trading
   return null;
 }
 
@@ -158,14 +153,13 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
     if (hasAdmin && adShare > 0) distributions.ADMIN = parseFloat((amount * adShare / 100).toFixed(2));
     if (hasSuperAdmin && saShare > 0) distributions.SUPER_ADMIN = parseFloat((amount * saShare / 100).toFixed(2));
 
-    // Check for franchise root in hierarchy
-    const franchiseRoot = findFranchiseRootInChain(hierarchyChain);
+    // NOTE: Franchise root logic is not applicable for games
+    // Games profit/loss always goes to Super Admin, franchise root only applies to trading
     
     // Credit each admin in hierarchy (one payout per role bucket — duplicate roles in chain must not double-pay)
     let totalDistributed = 0;
     const creditedProfitRoles = new Set();
     let divertedToSuperAdmin = 0;
-    let divertedToFranchiseRoot = 0;
     
     for (const { admin, role } of hierarchyChain) {
       const shareAmount = distributions[role] || 0;
@@ -178,11 +172,8 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
         continue;
       }
 
-      // If franchise root exists and this is SUPER_ADMIN, divert to franchise root instead
-      if (role === 'SUPER_ADMIN' && franchiseRoot) {
-        divertedToFranchiseRoot += shareAmount;
-        continue;
-      }
+      // NOTE: Franchise root logic is not applicable for games
+      // Games profit/loss always goes to Super Admin, franchise root only applies to trading
 
       // Credit to temporary wallet instead of main wallet (except for SUPER_ADMIN)
       if (role === 'SUPER_ADMIN') {
@@ -211,25 +202,8 @@ export async function distributeGameProfit(user, amount, gameName, refId, gameKe
       totalDistributed += shareAmount;
     }
 
-    // Handle franchise root diversion (SA share goes to franchise root instead)
-    if (divertedToFranchiseRoot > 0 && franchiseRoot) {
-      franchiseRoot.temporaryWallet.balance = (franchiseRoot.temporaryWallet.balance || 0) + divertedToFranchiseRoot;
-      franchiseRoot.temporaryWallet.totalEarned = (franchiseRoot.temporaryWallet.totalEarned || 0) + divertedToFranchiseRoot;
-      await franchiseRoot.save();
-      await WalletLedger.create({
-        ownerType: 'ADMIN',
-        ownerId: franchiseRoot._id,
-        adminCode: franchiseRoot.adminCode,
-        type: 'CREDIT',
-        reason: 'GAME_PROFIT',
-        amount: divertedToFranchiseRoot,
-        balanceAfter: franchiseRoot.temporaryWallet.balance,
-        description: `${gameName} profit — franchise root diversion from subtree (₹${divertedToFranchiseRoot.toFixed(2)}) [Temporary Wallet]`,
-        reference: refId ? { type: 'Manual', id: null } : undefined,
-        meta: { ...gameProfitLedgerMeta(divertedToFranchiseRoot, amount, 'USER_LOSS_POOL', gameKey, null, user._id), franchiseRootDiversion: true },
-      });
-      totalDistributed += divertedToFranchiseRoot;
-    }
+    // NOTE: Franchise root diversion is not applicable for games
+    // Games profit/loss always goes to Super Admin, franchise root only applies to trading
 
     if (divertedToSuperAdmin > 0) {
       const saInChain = hierarchyChain.find((h) => h.role === 'SUPER_ADMIN')?.admin;
@@ -421,13 +395,12 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
       };
     }
 
-    // Check for franchise root in hierarchy
-    const franchiseRoot = findFranchiseRootInChain(hierarchyChain);
+    // NOTE: Franchise root logic is not applicable for games
+    // Games profit/loss always goes to Super Admin, franchise root only applies to trading
     
     const creditedRolesWinBrk = new Set();
     let superAdminCreditedInChain = false;
     let divertedWinBrokerageToSuperAdmin = 0;
-    let divertedWinBrokerageToFranchiseRoot = 0;
     
     console.log(`[WinBrokerage] Distribution breakdown: SUB_BROKER=₹${distributions.SUB_BROKER || 0}, BROKER=₹${distributions.BROKER || 0}, ADMIN=₹${distributions.ADMIN || 0}, SUPER_ADMIN=₹${distributions.SUPER_ADMIN || 0}`);
     
@@ -454,12 +427,8 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
         continue;
       }
       
-      // If franchise root exists and this is SUPER_ADMIN, divert to franchise root instead
-      if (role === 'SUPER_ADMIN' && franchiseRoot) {
-        console.log(`[WinBrokerage] SUPER_ADMIN share diverted to franchise root ${franchiseRoot.username}: ₹${shareAmount.toFixed(2)}`);
-        divertedWinBrokerageToFranchiseRoot += shareAmount;
-        continue;
-      }
+      // NOTE: Franchise root logic is not applicable for games
+      // Games profit/loss always goes to Super Admin, franchise root only applies to trading
       
       console.log(`[WinBrokerage] CREDITING ${admin.username || admin.adminCode} (${role}): ₹${shareAmount.toFixed(2)} to TEMPORARY WALLET`);
       // Credit to temporary wallet instead of main wallet (except for SUPER_ADMIN)
@@ -486,24 +455,8 @@ export async function distributeWinBrokerage(userId, user, totalBrokerage, gameN
       if (role === 'SUPER_ADMIN') superAdminCreditedInChain = true;
     }
 
-    // Handle franchise root diversion for win brokerage
-    if (divertedWinBrokerageToFranchiseRoot > 0 && franchiseRoot) {
-      franchiseRoot.temporaryWallet.balance = (franchiseRoot.temporaryWallet.balance || 0) + divertedWinBrokerageToFranchiseRoot;
-      franchiseRoot.temporaryWallet.totalEarned = (franchiseRoot.temporaryWallet.totalEarned || 0) + divertedWinBrokerageToFranchiseRoot;
-      await franchiseRoot.save();
-      await WalletLedger.create({
-        ownerType: 'ADMIN',
-        ownerId: franchiseRoot._id,
-        adminCode: franchiseRoot.adminCode,
-        type: 'CREDIT',
-        reason: 'GAME_PROFIT',
-        amount: divertedWinBrokerageToFranchiseRoot,
-        balanceAfter: franchiseRoot.temporaryWallet.balance,
-        description: `${gameName} win brokerage — franchise root diversion (₹${divertedWinBrokerageToFranchiseRoot.toFixed(2)}) [Temporary Wallet]`,
-        meta: { ...gameProfitLedgerMeta(divertedWinBrokerageToFranchiseRoot, T, 'WIN_BROKERAGE', gameKey, transactionId, userId), franchiseRootDiversion: true },
-      });
-      totalDistributed += divertedWinBrokerageToFranchiseRoot;
-    }
+    // NOTE: Franchise root diversion is not applicable for games
+    // Games profit/loss always goes to Super Admin, franchise root only applies to trading
 
     if (divertedWinBrokerageToSuperAdmin > 0) {
       const saInChain = hierarchyChain.find((h) => h.role === 'SUPER_ADMIN')?.admin;
