@@ -4486,7 +4486,7 @@ router.put('/admins/:id/role', protectAdmin, superAdminOnly, async (req, res) =>
 // Allows Super Admin to limit max users under Admin/Broker/SubBroker
 router.put('/admins/:id/restrict-mode', protectAdmin, superAdminOnly, async (req, res) => {
   try {
-    const { enabled, maxUsers, maxBrokers, maxSubBrokers, monthlyIncentiveAmount, monthlyBrokerageCharge } = req.body;
+    const { enabled, maxUsers, maxBrokers, maxSubBrokers, monthlyIncentiveAmount, monthlyBrokerageCharge, monthlyIncentiveScope } = req.body;
     
     const admin = await Admin.findById(req.params.id);
     if (!admin) return res.status(404).json({ message: 'Admin not found' });
@@ -4510,6 +4510,9 @@ router.put('/admins/:id/restrict-mode', protectAdmin, superAdminOnly, async (req
     }
     if (admin.role === 'ADMIN' && typeof monthlyBrokerageCharge === 'number' && monthlyBrokerageCharge >= 0) {
       admin.restrictMode.monthlyBrokerageCharge = monthlyBrokerageCharge;
+    }
+    if (admin.role === 'ADMIN' && ['games_and_trading', 'trading', 'games'].includes(monthlyIncentiveScope)) {
+      admin.restrictMode.monthlyIncentiveScope = monthlyIncentiveScope;
     }
     
     admin.markModified('restrictMode');

@@ -530,6 +530,8 @@ const adminSchema = new mongoose.Schema({
     /** For INTERNAL office admins: fixed monthly incentive amount. For EXTERNAL: brokerage charge amount. */
     monthlyIncentiveAmount: { type: Number, default: 0 },
     monthlyBrokerageCharge: { type: Number, default: 0 },
+    /** Where monthly incentive gets credited for INTERNAL admins: 'games_and_trading' | 'trading' | 'games' */
+    monthlyIncentiveScope: { type: String, default: 'games_and_trading' },
   },
   
   // Permission flags - Set by parent admin (SuperAdmin for Admin, Admin for Broker, etc.)

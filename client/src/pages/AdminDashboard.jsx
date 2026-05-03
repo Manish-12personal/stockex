@@ -3317,14 +3317,16 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  /** Pre-fill amount from restrictMode presets when modal opens */
+  /** Pre-fill amount and scope from restrictMode presets when modal opens */
   useEffect(() => {
     if (partnerMode === 'INTERNAL') {
-      const preset = targetAdmin.restrictMode?.monthlyIncentiveAmount;
+      const presetAmt = targetAdmin.restrictMode?.monthlyIncentiveAmount;
+      const presetScope = targetAdmin.restrictMode?.monthlyIncentiveScope || 'games_and_trading';
       setFormData((prev) => ({
         ...prev,
-        amount: preset > 0 ? String(preset) : '',
+        amount: presetAmt > 0 ? String(presetAmt) : '',
         description: `Monthly incentive (${new Date().toLocaleDateString()})`,
+        incentiveScope: presetScope,
       }));
     } else if (partnerMode === 'EXTERNAL') {
       const preset = targetAdmin.restrictMode?.monthlyBrokerageCharge;
@@ -3334,7 +3336,7 @@ const ExtraChargesModal = ({ admin, targetAdmin, onClose, onHierarchyTransferred
         description: `Monthly brokerage charge (${new Date().toLocaleDateString()})`,
       }));
     }
-  }, [partnerMode, targetAdmin._id, targetAdmin.restrictMode?.monthlyIncentiveAmount, targetAdmin.restrictMode?.monthlyBrokerageCharge]);
+  }, [partnerMode, targetAdmin._id, targetAdmin.restrictMode?.monthlyIncentiveAmount, targetAdmin.restrictMode?.monthlyBrokerageCharge, targetAdmin.restrictMode?.monthlyIncentiveScope]);
 
   useEffect(() => {
     if (partnerMode !== 'EXTERNAL') return;
@@ -3657,6 +3659,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
     officePartnerType: targetAdmin.officePartnerType === 'INTERNAL' ? 'INTERNAL' : 'EXTERNAL',
     monthlyIncentiveAmount: targetAdmin.restrictMode?.monthlyIncentiveAmount || 0,
     monthlyBrokerageCharge: targetAdmin.restrictMode?.monthlyBrokerageCharge || 0,
+    monthlyIncentiveScope: targetAdmin.restrictMode?.monthlyIncentiveScope || 'games_and_trading',
   });
 
   useEffect(() => {
@@ -3680,6 +3683,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
         officePartnerType: prev.officePartnerType,
         monthlyIncentiveAmount: data.restrictMode?.monthlyIncentiveAmount || 0,
         monthlyBrokerageCharge: data.restrictMode?.monthlyBrokerageCharge || 0,
+        monthlyIncentiveScope: data.restrictMode?.monthlyIncentiveScope || 'games_and_trading',
       }));
     } catch (error) {
       console.error('Error fetching restrict mode:', error);
@@ -3698,6 +3702,7 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
         maxSubBrokers: restrictData.maxSubBrokers,
         monthlyIncentiveAmount: restrictData.monthlyIncentiveAmount,
         monthlyBrokerageCharge: restrictData.monthlyBrokerageCharge,
+        monthlyIncentiveScope: restrictData.monthlyIncentiveScope,
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -3869,8 +3874,8 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
 
                 {/* Monthly Incentive Amount — INTERNAL only */}
                 {restrictData.officePartnerType === 'INTERNAL' && (
-                  <div className="p-4 bg-dark-700 rounded-lg border border-green-600/40">
-                    <label className="font-medium flex items-center gap-2 mb-2 text-green-400">
+                  <div className="p-4 bg-dark-700 rounded-lg border border-green-600/40 space-y-3">
+                    <label className="font-medium flex items-center gap-2 text-green-400">
                       <DollarSign size={16} /> Monthly Incentive Amount (₹)
                     </label>
                     <input
@@ -3884,9 +3889,32 @@ const RestrictModeModal = ({ admin: targetAdmin, token, onClose, onSuccess }) =>
                       step="0.01"
                       placeholder="0.00"
                     />
-                    <p className="text-xs text-gray-500 mt-2">
-                      Pre-set monthly incentive for this INTERNAL office admin. Executed via Extra Charges.
+                    <p className="text-xs text-gray-500">
+                      Pre-set monthly incentive for this INTERNAL office admin.
                     </p>
+
+                    {/* Where to credit incentive */}
+                    <div className="pt-2 border-t border-dark-600">
+                      <label className="block text-sm text-green-400 mb-2">Where to credit incentive</label>
+                      <div className="flex flex-col gap-2">
+                        {[
+                          { id: 'games_and_trading', label: 'Games & trading (split to both wallets)' },
+                          { id: 'trading', label: 'Trading only (main wallet)' },
+                          { id: 'games', label: 'Games only (temporary wallet)' },
+                        ].map(({ id, label }) => (
+                          <label key={id} className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+                            <input
+                              type="radio"
+                              name="monthlyIncentiveScope"
+                              checked={restrictData.monthlyIncentiveScope === id}
+                              onChange={() => setRestrictData((prev) => ({ ...prev, monthlyIncentiveScope: id }))}
+                              className="accent-green-600"
+                            />
+                            <span>{label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
 
