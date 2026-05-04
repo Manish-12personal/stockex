@@ -39,9 +39,6 @@ export class ZerodhaOrchestrator {
       // Setup event handlers
       this.setupEventHandlers();
 
-      // Connection manager doesn't need explicit initialization
-      // It's already initialized in constructor
-
       this.isInitialized = true;
       this.loggerService.info('Zerodha orchestrator initialized successfully');
 
