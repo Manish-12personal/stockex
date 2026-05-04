@@ -160,32 +160,25 @@ class ZerodhaController {
         connected: true
       };
 
-      // Try to connect with orchestrator if available
-      if (this.orchestrator) {
-        try {
-          const result = await this.orchestrator.connect(apiKey, requestToken, {
-            apiSecret: apiSecret,
-            timeout: 30000
-          });
-
-          // Update session with actual result
-          this.session = {
-            apiKey,
-            accessToken: result.accessToken || requestToken,
-            userId: result.userId || 'default',
-            loginTime: new Date(),
-            connected: true
-          };
-
-          console.log('Zerodha connected successfully with orchestrator');
-          return result;
-        } catch (orchError) {
-          console.warn('Orchestrator failed, using basic session:', orchError.message);
-          // Continue with basic session
-        }
-      } else {
-        console.warn('Orchestrator not initialized, using basic session');
-      }
+      // Skip orchestrator for now to ensure fast response
+      // The basic session is sufficient for initial connection
+      console.log('Using fast basic session setup for immediate response');
+      
+      // Optional: Try orchestrator in background if needed later
+      // if (this.orchestrator) {
+      //   // Run orchestrator connection in background without blocking
+      //   setTimeout(async () => {
+      //     try {
+      //       await this.orchestrator.connect(apiKey, requestToken, {
+      //         apiSecret: apiSecret,
+      //         timeout: 5000
+      //       });
+      //       console.log('Background orchestrator connection completed');
+      //     } catch (error) {
+      //       console.warn('Background orchestrator connection failed:', error.message);
+      //     }
+      //   }, 1000);
+      // }
 
       await this.saveSession();
       console.log('Zerodha connected successfully with basic session');
