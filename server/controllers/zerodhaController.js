@@ -101,6 +101,37 @@ class ZerodhaController {
   }
 
   /**
+   * Get Zerodha login URL
+   */
+  async getLoginUrl(req, res) {
+    try {
+      const apiKey = process.env.ZERODHA_API_KEY;
+      
+      if (!apiKey) {
+        return res.status(500).json({
+          message: 'Zerodha API key not configured',
+          error: 'ZERODHA_API_KEY environment variable not set'
+        });
+      }
+
+      const loginUrl = `https://kite.zerodha.com/connect/login?v=3&api_key=${apiKey}`;
+      
+      res.json({
+        loginUrl,
+        apiKey: apiKey.substring(0, 8) + '...', // Partial API key for reference
+        message: 'Use this URL to connect to Zerodha'
+      });
+      
+    } catch (error) {
+      this.logger.error('Error generating login URL:', error);
+      res.status(500).json({
+        message: 'Failed to generate login URL',
+        error: error.message
+      });
+    }
+  }
+
+  /**
    * Connect to Zerodha
    */
   async connect(req, res) {

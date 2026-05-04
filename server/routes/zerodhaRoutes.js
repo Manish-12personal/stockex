@@ -43,6 +43,11 @@ router.use(handleZerodhaErrors);
  * Connection Management Routes
  */
 
+// Get Zerodha login URL (public endpoint)
+router.get('/login-url', 
+  zerodhaController.getLoginUrl
+);
+
 // Connect to Zerodha
 router.post('/connect', 
   protectAdmin, 
