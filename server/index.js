@@ -15,7 +15,7 @@ import userFundRoutes from './routes/userFundRoutes.js';
 import tradeRoutes, { setTradeSocketIO } from './routes/tradeRoutes.js';
 import instrumentRoutes from './routes/instrumentRoutes.js';
 import binanceRoutes from './routes/binanceRoutes.js';
-import zerodhaRoutes, { setSocketIO, restoreZerodhaTickerIfNeeded } from './routes/zerodhaRoutes.js';
+import zerodhaRoutes, { setSocketIO } from './routes/zerodhaRoutes.js';
 import { initZerodhaWebSocket, getTickerStatus } from './services/zerodhaWebSocket.js';
 import { initBinanceWebSocket } from './services/binanceWebSocket.js';
 import { initForexMarketService } from './services/forexMarketService.js';
@@ -174,8 +174,7 @@ const PORT = process.env.PORT || 5001;
     process.exit(1);
   }
 
-  await restoreZerodhaTickerIfNeeded();
-
+  
   console.log(`[stockex-api] Binding HTTP 0.0.0.0:${PORT}...`);
 
   httpServer.on('error', (err) => {
