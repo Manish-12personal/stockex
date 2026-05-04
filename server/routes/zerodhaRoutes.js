@@ -55,7 +55,7 @@ router.post('/disconnect',
 
 // Get connection status
 router.get('/status', 
-  protectAdmin, 
+  protectUser, 
   zerodhaController.getStatus
 );
 
