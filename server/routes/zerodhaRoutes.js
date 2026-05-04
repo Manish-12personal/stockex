@@ -188,19 +188,37 @@ router.get('/callback', async (req, res) => {
     
     console.log('Zerodha callback received with request_token:', request_token);
     
-    // For now, just return success - actual token handling will be implemented
-    res.json({
-      message: 'Zerodha callback received successfully',
-      request_token,
-      status: 'success'
-    });
+    // Get API key from environment
+    const apiKey = process.env.ZERODHA_API_KEY;
+    
+    if (!apiKey) {
+      return res.status(500).json({
+        message: 'Zerodha API key not configured',
+        error: 'Missing API key configuration'
+      });
+    }
+    
+    // Generate access token using request token
+    // This should connect to Zerodha and store the session
+    try {
+      // Use the controller to handle the connection
+      await zerodhaController.handleCallback(request_token);
+      
+      // Redirect to superadmin dashboard with success
+      res.redirect(`${process.env.FRONTEND_URL || 'https://stockex.com'}/superadmin/dashboard?zerodha=connected`);
+      
+    } catch (connectionError) {
+      console.error('Failed to connect to Zerodha:', connectionError);
+      
+      // Redirect to dashboard with error
+      res.redirect(`${process.env.FRONTEND_URL || 'https://stockex.com'}/superadmin/dashboard?zerodha=error`);
+    }
     
   } catch (error) {
     console.error('Zerodha callback error:', error);
-    res.status(500).json({
-      message: 'Failed to process Zerodha callback',
-      error: error.message
-    });
+    
+    // Redirect to dashboard with error
+    res.redirect(`${process.env.FRONTEND_URL || 'https://stockex.com'}/superadmin/dashboard?zerodha=error`);
   }
 });
 

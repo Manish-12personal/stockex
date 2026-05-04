@@ -97,13 +97,12 @@ class ZerodhaController {
       
     } catch (error) {
       this.logger.error('Failed to initialize Zerodha controller:', error);
-      // Don't throw error, just log it to prevent server crash
       console.error('Zerodha controller initialization failed, continuing without Zerodha:', error.message);
     }
   }
 
   /**
-   * Get Zerodha login URL
+   * Get login URL for Zerodha OAuth
    */
   async getLoginUrl(req, res) {
     try {
@@ -112,7 +111,7 @@ class ZerodhaController {
       if (!apiKey) {
         return res.status(500).json({
           message: 'Zerodha API key not configured',
-          error: 'ZERODHA_API_KEY environment variable not set'
+          error: 'Missing ZERODHA_API_KEY in environment variables'
         });
       }
 
@@ -120,16 +119,65 @@ class ZerodhaController {
       
       res.json({
         loginUrl,
-        apiKey: apiKey.substring(0, 8) + '...', // Partial API key for reference
+        apiKey,
         message: 'Use this URL to connect to Zerodha'
       });
       
     } catch (error) {
-      this.logger.error('Error generating login URL:', error);
+      if (this.logger) {
+        this.logger.error('Error getting login URL:', error);
+      } else {
+        console.error('Zerodha login URL error:', error);
+      }
+      
       res.status(500).json({
         message: 'Failed to generate login URL',
         error: error.message
       });
+    }
+  }
+
+  /**
+   * Handle Zerodha OAuth callback
+   */
+  async handleCallback(requestToken) {
+    try {
+      if (!this.orchestrator) {
+        throw new Error('Zerodha orchestrator not initialized');
+      }
+
+      const apiKey = process.env.ZERODHA_API_KEY;
+      const apiSecret = process.env.ZERODHA_API_SECRET;
+      
+      if (!apiKey || !apiSecret) {
+        throw new Error('Zerodha API credentials not configured');
+      }
+
+      console.log('Handling Zerodha callback with request token:', requestToken);
+      
+      // Connect to Zerodha using the request token
+      const result = await this.orchestrator.connect(apiKey, requestToken, {
+        apiSecret: apiSecret,
+        timeout: 30000
+      });
+
+      // Save session
+      this.session = {
+        apiKey,
+        accessToken: result.accessToken || requestToken,
+        userId: result.userId || 'default',
+        loginTime: new Date(),
+        connected: true
+      };
+
+      await this.saveSession();
+
+      console.log('Zerodha connected successfully');
+      return result;
+      
+    } catch (error) {
+      console.error('Error handling Zerodha callback:', error);
+      throw error;
     }
   }
 
@@ -215,29 +263,51 @@ class ZerodhaController {
    */
   async getStatus(req, res) {
     try {
-      // Add null check for orchestrator
-      if (!this.orchestrator) {
-        return res.json({
-          connected: false,
-          initialized: false,
+      // Check if we have a valid session
+      const hasSession = this.session && this.session.accessToken;
+      
+      let connectionStatus = {
+        connected: false,
+        initialized: false,
+        authenticated: !!req.user,
+        userType: req.userType || null,
+        timestamp: new Date(),
+        session: null,
+        instruments: [],
+        subscriptions: []
+      };
+
+      if (hasSession) {
+        connectionStatus = {
+          connected: true,
+          initialized: true,
           authenticated: !!req.user,
           userType: req.userType || null,
           timestamp: new Date(),
-          error: 'Zerodha orchestrator not initialized'
-        });
-      }
+          session: {
+            userId: this.session.userId,
+            loginTime: this.session.loginTime,
+            connected: this.session.connected
+          },
+          instruments: [], // This would be populated from actual data
+          subscriptions: [] // This would be populated from actual data
+        };
 
-      const status = this.orchestrator.getConnectionStatus();
+        // Try to get orchestrator status if available
+        if (this.orchestrator) {
+          try {
+            const orchestratorStatus = this.orchestrator.getConnectionStatus();
+            connectionStatus = {
+              ...connectionStatus,
+              ...orchestratorStatus
+            };
+          } catch (orchError) {
+            console.warn('Could not get orchestrator status:', orchError.message);
+          }
+        }
+      }
       
-      // Add user context if authenticated
-      const response = {
-        ...status,
-        authenticated: !!req.user,
-        userType: req.userType || null,
-        timestamp: new Date()
-      };
-      
-      res.json(response);
+      res.json(connectionStatus);
     } catch (error) {
       // Use console.log as fallback if logger is not available
       if (this.logger) {
@@ -250,7 +320,8 @@ class ZerodhaController {
         message: 'Failed to get connection status',
         error: error.message,
         authenticated: !!req.user,
-        userType: req.userType || null
+        userType: req.userType || null,
+        connected: false
       });
     }
   }
