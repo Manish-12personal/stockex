@@ -22,15 +22,22 @@ import {
   handleZerodhaErrors,
   validateSyncOperation
 } from '../middleware/zerodhaMiddleware.js';
-import zerodhaController from '../controllers/zerodhaController.js';
+import { safeHandler, getZerodhaController } from '../middleware/productionErrorHandler.js';
 
 const router = express.Router();
+
+// Get safe controller instance
+const zerodhaController = getZerodhaController();
 
 /**
  * Set Socket.IO instance for controller
  */
 export const setSocketIO = (socketIO) => {
-  zerodhaController.initialize(socketIO);
+  try {
+    zerodhaController.initialize(socketIO);
+  } catch (error) {
+    console.error('Failed to initialize Zerodha controller with Socket.IO:', error);
+  }
 };
 
 /**
@@ -45,7 +52,7 @@ router.use(handleZerodhaErrors);
 
 // Get Zerodha login URL (public endpoint)
 router.get('/login-url', 
-  zerodhaController.getLoginUrl
+  safeHandler(zerodhaController.getLoginUrl)
 );
 
 // Connect to Zerodha
@@ -53,26 +60,26 @@ router.post('/connect',
   protectAdmin, 
   superAdminOnly, 
   rateLimitZerodha(5, 60000), // 5 attempts per minute
-  zerodhaController.connect
+  safeHandler(zerodhaController.connect)
 );
 
 // Disconnect from Zerodha
 router.post('/disconnect', 
   protectAdmin, 
   superAdminOnly, 
-  zerodhaController.disconnect
+  safeHandler(zerodhaController.disconnect)
 );
 
 // Get connection status (optional auth - works with or without token)
 router.get('/status', 
   optionalAuth,  // ✅ Works with or without authentication
-  zerodhaController.getStatus
+  safeHandler(zerodhaController.getStatus)
 );
 
 // Get session info
 router.get('/session', 
   protectAdmin, 
-  zerodhaController.getSession
+  safeHandler(zerodhaController.getSession)
 );
 
 /**
@@ -86,7 +93,7 @@ router.post('/reset-and-sync',
   requireZerodhaSession,
   validateSyncOperation,
   rateLimitZerodha(2, 300000), // 2 attempts per 5 minutes
-  zerodhaController.resetAndSync
+  safeHandler(zerodhaController.resetAndSync)
 );
 
 // Get sync job status
@@ -94,14 +101,14 @@ router.get('/sync/status/:jobId',
   protectAdmin, 
   superAdminOnly,
   validateJobId,
-  zerodhaController.getSyncStatus
+  safeHandler(zerodhaController.getSyncStatus)
 );
 
 // Get all sync jobs
 router.get('/sync/jobs', 
   protectAdmin, 
   superAdminOnly,
-  zerodhaController.getSyncJobs
+  safeHandler(zerodhaController.getSyncJobs)
 );
 
 // Cancel sync job
@@ -109,7 +116,7 @@ router.post('/sync/cancel/:jobId',
   protectAdmin, 
   superAdminOnly,
   validateJobId,
-  zerodhaController.cancelSyncJob
+  safeHandler(zerodhaController.cancelSyncJob)
 );
 
 /**
@@ -122,7 +129,7 @@ router.post('/subscribe',
   requireZerodhaConnection,
   validateTokensArray,
   rateLimitZerodha(10, 60000), // 10 attempts per minute
-  zerodhaController.subscribeTokens
+  safeHandler(zerodhaController.subscribeTokens)
 );
 
 // Unsubscribe from tokens
@@ -131,14 +138,14 @@ router.post('/unsubscribe',
   requireZerodhaConnection,
   validateTokensArray,
   rateLimitZerodha(10, 60000), // 10 attempts per minute
-  zerodhaController.unsubscribeTokens
+  safeHandler(zerodhaController.unsubscribeTokens)
 );
 
 // Get subscription statistics
 router.get('/subscriptions', 
   protectAdmin, 
   requireZerodhaConnection,
-  zerodhaController.getSubscriptions
+  safeHandler(zerodhaController.getSubscriptions)
 );
 
 /**
@@ -150,7 +157,7 @@ router.get('/market-data',
   protectUser, 
   requireZerodhaConnection,
   rateLimitZerodha(100, 60000), // 100 requests per minute for users
-  zerodhaController.getMarketData
+  safeHandler(zerodhaController.getMarketData)
 );
 
 /**
@@ -160,7 +167,7 @@ router.get('/market-data',
 // Health check endpoint
 router.get('/health', 
   protectAdmin, 
-  zerodhaController.healthCheck
+  safeHandler(zerodhaController.healthCheck)
 );
 
 // Cleanup old jobs
@@ -168,7 +175,7 @@ router.post('/cleanup',
   protectAdmin, 
   superAdminOnly,
   rateLimitZerodha(5, 300000), // 5 attempts per 5 minutes
-  zerodhaController.cleanupJobs
+  safeHandler(zerodhaController.cleanupJobs)
 );
 
 export default router;
