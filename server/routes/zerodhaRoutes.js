@@ -171,4 +171,37 @@ router.post('/cleanup',
   zerodhaController.cleanupJobs
 );
 
+/**
+ * Zerodha OAuth Callback
+ * This is the callback URL that Zerodha redirects to after authentication
+ */
+router.get('/callback', async (req, res) => {
+  try {
+    const { request_token } = req.query;
+    
+    if (!request_token) {
+      return res.status(400).json({
+        message: 'Request token is required',
+        error: 'Missing request_token parameter'
+      });
+    }
+    
+    console.log('Zerodha callback received with request_token:', request_token);
+    
+    // For now, just return success - actual token handling will be implemented
+    res.json({
+      message: 'Zerodha callback received successfully',
+      request_token,
+      status: 'success'
+    });
+    
+  } catch (error) {
+    console.error('Zerodha callback error:', error);
+    res.status(500).json({
+      message: 'Failed to process Zerodha callback',
+      error: error.message
+    });
+  }
+});
+
 export default router;
