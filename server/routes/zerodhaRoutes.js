@@ -180,45 +180,53 @@ router.get('/callback', async (req, res) => {
     const { request_token } = req.query;
     
     if (!request_token) {
+      console.error('Missing request_token in callback');
       return res.status(400).json({
         message: 'Request token is required',
         error: 'Missing request_token parameter'
       });
     }
     
-    console.log('Zerodha callback received with request_token:', request_token);
+    console.log('Zerodha callback received with request token:', request_token);
     
-    // Get API key from environment
-    const apiKey = process.env.ZERODHA_API_KEY;
+    // Get frontend URL for redirect
+    const frontendUrl = process.env.FRONTEND_URL || 'https://stockex.com';
+    const successUrl = `${frontendUrl}/superadmin/dashboard?zerodha=connected`;
+    const errorUrl = `${frontendUrl}/superadmin/dashboard?zerodha=error`;
     
-    if (!apiKey) {
+    // Validate URLs to prevent chrome errors
+    if (!frontendUrl.startsWith('http')) {
+      console.error('Invalid frontend URL:', frontendUrl);
       return res.status(500).json({
-        message: 'Zerodha API key not configured',
-        error: 'Missing API key configuration'
+        message: 'Invalid frontend URL configuration',
+        error: 'Frontend URL must start with http/https'
       });
     }
     
-    // Generate access token using request token
-    // This should connect to Zerodha and store the session
+    // Handle the callback with controller
     try {
-      // Use the controller to handle the connection
       await zerodhaController.handleCallback(request_token);
+      console.log('Callback handled successfully, redirecting to:', successUrl);
       
-      // Redirect to superadmin dashboard with success
-      res.redirect(`${process.env.FRONTEND_URL || 'https://stockex.com'}/superadmin/dashboard?zerodha=connected`);
+      // Safe redirect
+      return res.redirect(successUrl);
       
     } catch (connectionError) {
       console.error('Failed to connect to Zerodha:', connectionError);
+      console.log('Redirecting to error URL:', errorUrl);
       
-      // Redirect to dashboard with error
-      res.redirect(`${process.env.FRONTEND_URL || 'https://stockex.com'}/superadmin/dashboard?zerodha=error`);
+      // Safe redirect even on error
+      return res.redirect(errorUrl);
     }
     
   } catch (error) {
     console.error('Zerodha callback error:', error);
     
-    // Redirect to dashboard with error
-    res.redirect(`${process.env.FRONTEND_URL || 'https://stockex.com'}/superadmin/dashboard?zerodha=error`);
+    // Always redirect to prevent chrome errors
+    const errorUrl = `${process.env.FRONTEND_URL || 'https://stockex.com'}/superadmin/dashboard?zerodha=error`;
+    console.log('Final fallback redirect to:', errorUrl);
+    
+    return res.redirect(errorUrl);
   }
 });
 
