@@ -593,4 +593,6 @@ class ZerodhaController {
 // Singleton instance
 const zerodhaController = new ZerodhaController();
 
+// Export both class and instance
+export { ZerodhaController };
 export default zerodhaController;
