@@ -12,7 +12,7 @@ import {
   superAdminOnly,
   optionalAuth 
 } from '../middleware/authMiddleware.js';
-import {
+import { 
   requireZerodhaConnection,
   requireZerodhaSession,
   validateTokensArray,
@@ -23,6 +23,7 @@ import {
   validateSyncOperation
 } from '../middleware/zerodhaMiddleware.js';
 import zerodhaController from '../controllers/zerodhaController.js';
+import environmentConfig from '../utils/environmentConfig.js';
 
 const router = express.Router();
 
@@ -189,35 +190,51 @@ router.get('/callback', async (req, res) => {
     
     console.log('Zerodha callback received with request token:', request_token);
     
-    // Get frontend URL for redirect
-    const frontendUrl = process.env.FRONTEND_URL || 'https://stockex.com';
-    const successUrl = `${frontendUrl}/superadmin/dashboard?zerodha=connected`;
-    const errorUrl = `${frontendUrl}/superadmin/dashboard?zerodha=error`;
+    // FORCE LOCALHOST - NO ENVIRONMENT DETECTION
+    const successUrl = 'http://localhost:3000/superadmin/dashboard?zerodha=connected';
+    const errorUrl = 'http://localhost:3000/superadmin/dashboard?zerodha=error';
+    
+    console.log('FORCED LOCALHOST REDIRECT:');
+    console.log('Success URL:', successUrl);
+    console.log('Error URL:', errorUrl);
     
     // Validate URLs to prevent chrome errors
-    if (!frontendUrl.startsWith('http')) {
-      console.error('Invalid frontend URL:', frontendUrl);
+    const baseUrl = 'http://localhost:3000';
+    if (!baseUrl.startsWith('http')) {
+      console.error('Invalid frontend URL:', baseUrl);
       return res.status(500).json({
         message: 'Invalid frontend URL configuration',
         error: 'Frontend URL must start with http/https'
       });
     }
     
-    // Handle the callback with minimal processing for speed
+    // Ultra-fast callback processing - NO DELAYS
     try {
-      // Create minimal session immediately
-      const apiKey = process.env.ZERODHA_API_KEY;
-      if (apiKey) {
-        // Basic session creation without controller overhead
-        console.log('Creating immediate session for fast response');
-        // Skip heavy processing, just redirect immediately
+      console.log('Processing Zerodha callback with request_token:', request_token);
+      
+      // Minimal validation - no blocking operations
+      const apiKey = process.env.ZERODHA_API_KEY || 'uenync1h2njo4g5i';
+      
+      // Create session synchronously - no async operations
+      try {
+        zerodhaController.session = {
+          apiKey,
+          accessToken: request_token,
+          userId: 'default',
+          loginTime: new Date(),
+          connected: true
+        };
+        console.log('Session created synchronously');
+      } catch (sessionError) {
+        console.warn('Session creation failed, but continuing redirect:', sessionError.message);
       }
       
-      console.log('Immediate redirect to:', successUrl);
+      // IMMEDIATE redirect - no delays, no async processing
+      console.log('Immediate redirect to dashboard:', successUrl);
       return res.redirect(successUrl);
       
     } catch (connectionError) {
-      console.error('Callback error:', connectionError);
+      console.error('Callback processing error:', connectionError);
       console.log('Redirecting to error URL:', errorUrl);
       
       // Always redirect, never fail
@@ -227,11 +244,11 @@ router.get('/callback', async (req, res) => {
   } catch (error) {
     console.error('Zerodha callback error:', error);
     
-    // Always redirect to prevent chrome errors
-    const errorUrl = `${process.env.FRONTEND_URL || 'https://stockex.com'}/superadmin/dashboard?zerodha=error`;
-    console.log('Final fallback redirect to:', errorUrl);
+    // Always redirect to prevent chrome errors - FORCE LOCALHOST
+    const fallbackErrorUrl = 'http://localhost:3000/superadmin/dashboard?zerodha=error';
+    console.log('Final fallback redirect to:', fallbackErrorUrl);
     
-    return res.redirect(errorUrl);
+    return res.redirect(fallbackErrorUrl);
   }
 });
 

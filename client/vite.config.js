@@ -16,10 +16,18 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       proxy: {
         '/api': {
-          // Use API base for HTTP proxy; do not use ws/wss URLs here (breaks /api calls)
           target: env.VITE_API_URL || 'http://localhost:5001',
-          changeOrigin: true
+          changeOrigin: true,
+          secure: false
+        },
+        '/socket.io': {
+          target: env.VITE_API_URL || 'http://localhost:5001',
+          changeOrigin: true,
+          ws: true
         }
+      },
+      hmr: {
+        port: 3000
       }
     }
   }
