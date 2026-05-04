@@ -162,17 +162,27 @@ class ZerodhaController {
   }
 
   /**
-   * Get connection status
+   * Get connection status (works with or without authentication)
    */
   async getStatus(req, res) {
     try {
       const status = this.orchestrator.getConnectionStatus();
-      res.json(status);
+      
+      // Add user context if authenticated
+      const response = {
+        ...status,
+        authenticated: !!req.user,
+        userType: req.userType || null,
+        timestamp: new Date()
+      };
+      
+      res.json(response);
     } catch (error) {
       this.logger.error('Error getting status:', error);
       res.status(500).json({
         message: 'Failed to get connection status',
-        error: error.message
+        error: error.message,
+        authenticated: false
       });
     }
   }

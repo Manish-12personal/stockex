@@ -6,7 +6,12 @@
  */
 
 import express from 'express';
-import { protectAdmin, protectUser, superAdminOnly } from '../middleware/auth.js';
+import { 
+  protectAdmin, 
+  protectUser, 
+  superAdminOnly,
+  optionalAuth 
+} from '../middleware/authMiddleware.js';
 import {
   requireZerodhaConnection,
   requireZerodhaSession,
@@ -53,9 +58,9 @@ router.post('/disconnect',
   zerodhaController.disconnect
 );
 
-// Get connection status
+// Get connection status (optional auth - works with or without token)
 router.get('/status', 
-  protectUser, 
+  optionalAuth,  // ✅ Works with or without authentication
   zerodhaController.getStatus
 );
 
