@@ -86,7 +86,9 @@ class ZerodhaController {
       );
 
       // Simple initialization without complex setup
-      this.orchestrator.isInitialized = true;
+      if (this.orchestrator) {
+        this.orchestrator.isInitialized = true;
+      }
       
       // Load existing session
       await this.loadSession();
@@ -144,15 +146,27 @@ class ZerodhaController {
         });
       }
 
-      this.logger.info('Connecting to Zerodha...', { userId });
+      if (this.logger) {
+        this.logger.info('Connecting to Zerodha...', { userId });
+      } else {
+        console.log('Connecting to Zerodha...', { userId });
+      }
 
       // Save session
       this.session = { apiKey, accessToken, userId, loginTime: new Date() };
       await this.saveSession();
 
+      // Check if orchestrator is available
+      if (!this.orchestrator) {
+        return res.status(500).json({
+          message: 'Zerodha orchestrator not initialized',
+          error: 'Service not available'
+        });
+      }
+
       // Connect with timeout
       const ticker = await this.orchestrator.connect(apiKey, accessToken, {
-        timeout: this.config.getConnectionTimeout()
+        timeout: this.config ? this.config.getConnectionTimeout() : 30000
       });
 
       res.json({
@@ -161,7 +175,11 @@ class ZerodhaController {
       });
 
     } catch (error) {
-      this.logger.error('Connection failed:', error);
+      if (this.logger) {
+        this.logger.error('Connection failed:', error);
+      } else {
+        console.error('Zerodha connection failed:', error);
+      }
       
       // Clear session on connection failure
       await this.clearSession();
@@ -197,6 +215,18 @@ class ZerodhaController {
    */
   async getStatus(req, res) {
     try {
+      // Add null check for orchestrator
+      if (!this.orchestrator) {
+        return res.json({
+          connected: false,
+          initialized: false,
+          authenticated: !!req.user,
+          userType: req.userType || null,
+          timestamp: new Date(),
+          error: 'Zerodha orchestrator not initialized'
+        });
+      }
+
       const status = this.orchestrator.getConnectionStatus();
       
       // Add user context if authenticated
@@ -209,11 +239,18 @@ class ZerodhaController {
       
       res.json(response);
     } catch (error) {
-      this.logger.error('Error getting status:', error);
+      // Use console.log as fallback if logger is not available
+      if (this.logger) {
+        this.logger.error('Error getting status:', error);
+      } else {
+        console.error('Zerodha status error:', error);
+      }
+      
       res.status(500).json({
         message: 'Failed to get connection status',
         error: error.message,
-        authenticated: false
+        authenticated: !!req.user,
+        userType: req.userType || null
       });
     }
   }
